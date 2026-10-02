@@ -11,14 +11,26 @@ android {
         applicationId = "com.huc.fasttype"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    signingConfigs {
+        create("huc") {
+            storeFile = file("huc.jks")
+            storePassword = "hucfasttype"
+            keyAlias = "huc"
+            keyPassword = "hucfasttype"
+        }
     }
 
     buildTypes {
-        release {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("huc")
+        }
+        getByName("release") {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("huc")
         }
     }
 
