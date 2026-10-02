@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">كتابة سريعة</string>
+    <string name="svc_desc">يراقب ما تكتبه ويبدّل الاختصارات المحفوظة بالكلمات الكاملة تلقائياً داخل أي تطبيق. لا يتم إرسال أي شيء خارج الجهاز.</string>
+</resources>
