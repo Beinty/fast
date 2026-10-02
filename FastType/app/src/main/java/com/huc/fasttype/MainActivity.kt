@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -294,7 +293,11 @@ class MainActivity : Activity() {
         test.setOnClickListener {
             val prefix = Store.callerPrefix.trim()
             val sample = if (prefix.isEmpty()) "أحمد" else "$prefix أحمد"
-            Speaker.say(this, sample, 1, AudioManager.STREAM_MUSIC)
+            Speaker.test(this, sample) { msg ->
+                runOnUiThread {
+                    Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                }
+            }
         }
         p.addView(test, lp(true, bottom = dp(12)))
 

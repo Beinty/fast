@@ -16,35 +16,58 @@ object Speaker {
     private var ready = false
 
     @Volatile
+    private var initFailed = false
+
+    @Volatile
     var arabicOk = true
         private set
 
-    private var pending: (() -> Unit)? = null
+    private var pending: ((Boolean) -> Unit)? = null
 
-    fun ensure(ctx: Context, onReady: (() -> Unit)? = null) {
+    fun ensure(ctx: Context, onDone: ((Boolean) -> Unit)? = null) {
         if (ready) {
-            onReady?.invoke()
+            onDone?.invoke(true)
             return
         }
-        if (onReady != null) pending = onReady
+
+        if (initFailed) {
+            try {
+                tts?.shutdown()
+            } catch (_: Exception) {
+            }
+            tts = null
+            initFailed = false
+        }
+
+        if (onDone != null) pending = onDone
         if (tts != null) return
 
         val app = ctx.applicationContext
         tts = TextToSpeech(app) { status ->
+            val cb = pending
+            pending = null
+
             if (status == TextToSpeech.SUCCESS) {
-                try {
+                arabicOk = try {
                     val r = tts?.setLanguage(Locale("ar"))
-                    arabicOk = r != TextToSpeech.LANG_MISSING_DATA &&
+                    val ok = r != TextToSpeech.LANG_MISSING_DATA &&
                         r != TextToSpeech.LANG_NOT_SUPPORTED
+                    if (!ok) {
+                        try {
+                            tts?.language = Locale.getDefault()
+                        } catch (_: Exception) {
+                        }
+                    }
+                    ok
                 } catch (_: Exception) {
-                    arabicOk = false
+                    false
                 }
                 ready = true
-                val p = pending
-                pending = null
-                p?.invoke()
+                cb?.invoke(true)
             } else {
-                pending = null
+                initFailed = true
+                ready = false
+                cb?.invoke(false)
             }
         }
     }
@@ -52,7 +75,21 @@ object Speaker {
     fun say(ctx: Context, text: String, times: Int, stream: Int) {
         if (text.isBlank()) return
         if (ready) speakNow(text, times, stream)
-        else ensure(ctx) { speakNow(text, times, stream) }
+        else ensure(ctx) { ok -> if (ok) speakNow(text, times, stream) }
+    }
+
+    /** Test path: reports what happened so the UI can show it. */
+    fun test(ctx: Context, text: String, report: (String) -> Unit) {
+        val run = {
+            speakNow(text, 1, AudioManager.STREAM_MUSIC)
+            if (arabicOk) report("جاري النطق — إذا ما سمعت شي، ارفع صوت الوسائط")
+            else report("محرك النطق ما يدعم العربية — نزّل العربية من: الإعدادات ← إمكانية الوصول ← تحويل النص إلى كلام")
+        }
+        if (ready) run()
+        else ensure(ctx) { ok ->
+            if (ok) run()
+            else report("ما لكيت محرك نطق بالجهاز — نصّب Speech Services by Google")
+        }
     }
 
     private fun speakNow(text: String, times: Int, stream: Int) {
@@ -85,6 +122,7 @@ object Speaker {
         }
         tts = null
         ready = false
+        initFailed = false
         pending = null
     }
 
