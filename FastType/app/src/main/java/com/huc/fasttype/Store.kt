@@ -19,6 +19,12 @@ object Store {
     private const val K_INSTANT = "instant"
     private const val K_ENABLED = "enabled"
 
+    private const val K_CALLER = "caller_speak"
+    private const val K_PREFIX = "caller_prefix"
+    private const val K_REPEAT = "caller_repeat"
+    private const val K_SAY_NUM = "caller_say_number"
+    private const val K_SILENT = "caller_respect_silent"
+
     @Volatile
     var items: List<Shortcut> = emptyList()
         private set
@@ -35,6 +41,26 @@ object Store {
     var enabled: Boolean = true
         private set
 
+    @Volatile
+    var callerSpeak: Boolean = false
+        private set
+
+    @Volatile
+    var callerPrefix: String = "مكالمة من"
+        private set
+
+    @Volatile
+    var callerRepeat: Int = 2
+        private set
+
+    @Volatile
+    var callerSayNumber: Boolean = true
+        private set
+
+    @Volatile
+    var callerRespectSilent: Boolean = true
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -43,6 +69,12 @@ object Store {
         setItems(parse(p.getString(K_ITEMS, "[]") ?: "[]"))
         instant = p.getBoolean(K_INSTANT, true)
         enabled = p.getBoolean(K_ENABLED, true)
+
+        callerSpeak = p.getBoolean(K_CALLER, false)
+        callerPrefix = p.getString(K_PREFIX, "مكالمة من") ?: "مكالمة من"
+        callerRepeat = p.getInt(K_REPEAT, 2).coerceIn(1, 5)
+        callerSayNumber = p.getBoolean(K_SAY_NUM, true)
+        callerRespectSilent = p.getBoolean(K_SILENT, true)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -64,6 +96,31 @@ object Store {
     fun setEnabled(ctx: Context, v: Boolean) {
         enabled = v
         prefs(ctx).edit().putBoolean(K_ENABLED, v).apply()
+    }
+
+    fun setCallerSpeak(ctx: Context, v: Boolean) {
+        callerSpeak = v
+        prefs(ctx).edit().putBoolean(K_CALLER, v).apply()
+    }
+
+    fun setCallerPrefix(ctx: Context, v: String) {
+        callerPrefix = v
+        prefs(ctx).edit().putString(K_PREFIX, v).apply()
+    }
+
+    fun setCallerRepeat(ctx: Context, v: Int) {
+        callerRepeat = v.coerceIn(1, 5)
+        prefs(ctx).edit().putInt(K_REPEAT, callerRepeat).apply()
+    }
+
+    fun setCallerSayNumber(ctx: Context, v: Boolean) {
+        callerSayNumber = v
+        prefs(ctx).edit().putBoolean(K_SAY_NUM, v).apply()
+    }
+
+    fun setCallerRespectSilent(ctx: Context, v: Boolean) {
+        callerRespectSilent = v
+        prefs(ctx).edit().putBoolean(K_SILENT, v).apply()
     }
 
     fun serialize(list: List<Shortcut>): String {

@@ -1,8 +1,15 @@
 package com.huc.fasttype
 
 import android.accessibilityservice.AccessibilityService
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.media.AudioManager
+import android.os.Build
 import android.os.Bundle
+import android.telephony.TelephonyManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -11,13 +18,71 @@ class ExpanderService : AccessibilityService() {
     private var lastSelfText: String? = null
     private var lastSelfAt: Long = 0L
 
+    private var lastRingNumber: String? = null
+    private var lastRingAt: Long = 0L
+    private var receiverOn = false
+
     private val prefListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> Store.load(this) }
+
+    private val callReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            if (intent == null) return
+            if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
+
+            val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE) ?: return
+
+            if (state != TelephonyManager.EXTRA_STATE_RINGING) {
+                Speaker.stop()
+                return
+            }
+
+            if (!Store.callerSpeak) return
+
+            val number = try {
+                intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+            } catch (_: Exception) {
+                null
+            }
+
+            val now = System.currentTimeMillis()
+            if (number == lastRingNumber && now - lastRingAt < 4000) return
+            lastRingNumber = number
+            lastRingAt = now
+
+            if (Store.callerRespectSilent && isSilent()) return
+
+            val text = Speaker.buildAnnouncement(this@ExpanderService, number)
+            Speaker.say(this@ExpanderService, text, Store.callerRepeat, Speaker.ringStream())
+        }
+    }
+
+    private fun isSilent(): Boolean {
+        return try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.ringerMode != AudioManager.RINGER_MODE_NORMAL
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         Store.load(this)
         Store.prefs(this).registerOnSharedPreferenceChangeListener(prefListener)
+
+        if (!receiverOn) {
+            val filter = IntentFilter(TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    registerReceiver(callReceiver, filter, Context.RECEIVER_EXPORTED)
+                } else {
+                    registerReceiver(callReceiver, filter)
+                }
+                receiverOn = true
+            } catch (_: Exception) {
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -25,6 +90,14 @@ class ExpanderService : AccessibilityService() {
             Store.prefs(this).unregisterOnSharedPreferenceChangeListener(prefListener)
         } catch (_: Exception) {
         }
+        if (receiverOn) {
+            try {
+                unregisterReceiver(callReceiver)
+            } catch (_: Exception) {
+            }
+            receiverOn = false
+        }
+        Speaker.shutdown()
         super.onDestroy()
     }
 

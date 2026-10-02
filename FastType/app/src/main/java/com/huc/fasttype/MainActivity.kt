@@ -1,14 +1,19 @@
 package com.huc.fasttype
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -16,8 +21,10 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
@@ -30,16 +37,35 @@ class MainActivity : Activity() {
     private val MUT = Color.parseColor("#9AA0A6")
     private val ACC = Color.parseColor("#1D9E75")
     private val RED = Color.parseColor("#E24B4A")
+    private val WARN = Color.parseColor("#BA7517")
+    private val CHIP = Color.parseColor("#13241F")
 
     private val REQ_EXPORT = 11
     private val REQ_IMPORT = 12
+    private val REQ_PERMS = 21
+
+    private val PERMS = arrayOf(
+        Manifest.permission.READ_PHONE_STATE,
+        Manifest.permission.READ_CONTACTS,
+        Manifest.permission.READ_CALL_LOG
+    )
 
     private lateinit var status: TextView
     private lateinit var countView: TextView
     private lateinit var list: ListView
     private lateinit var adapter: Adapter
 
+    private lateinit var tabShortcuts: TextView
+    private lateinit var tabCaller: TextView
+    private lateinit var panelShortcuts: LinearLayout
+    private lateinit var panelCaller: ScrollView
+
+    private lateinit var permBanner: TextView
+    private lateinit var repeatValue: TextView
+    private lateinit var callerNote: TextView
+
     private var data: MutableList<Shortcut> = mutableListOf()
+    private var onCallerTab = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -59,28 +85,65 @@ class MainActivity : Activity() {
         root.addView(title)
 
         val sub = TextView(this)
-        sub.text = "HUC — استبدال الاختصارات داخل أي تطبيق"
+        sub.text = "HUC"
         sub.setTextColor(MUT)
         sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         sub.setPadding(0, dp(2), 0, dp(14))
         root.addView(sub)
+
+        val tabs = LinearLayout(this)
+        tabs.orientation = LinearLayout.HORIZONTAL
+        tabShortcuts = makeTab("الاختصارات") { showTab(false) }
+        tabCaller = makeTab("نطق المتصل") { showTab(true) }
+        val tp1 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        tp1.marginEnd = dp(4)
+        val tp2 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        tp2.marginStart = dp(4)
+        tabs.addView(tabShortcuts, tp1)
+        tabs.addView(tabCaller, tp2)
+        root.addView(tabs, lp(true, bottom = dp(14)))
+
+        val content = FrameLayout(this)
+        panelShortcuts = buildShortcutsPanel()
+        panelCaller = buildCallerPanel()
+        content.addView(panelShortcuts)
+        content.addView(panelCaller)
+        root.addView(
+            content,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        )
+
+        setContentView(root)
+        showTab(false)
+        refreshCount()
+    }
+
+    // ---------- tab 1 : shortcuts ----------
+
+    private fun buildShortcutsPanel(): LinearLayout {
+        val p = LinearLayout(this)
+        p.orientation = LinearLayout.VERTICAL
+        p.layoutDirection = View.LAYOUT_DIRECTION_RTL
 
         status = TextView(this)
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         status.setPadding(dp(12), dp(12), dp(12), dp(12))
         status.background = round(CARD)
         status.setOnClickListener { openAccessibilitySettings() }
-        root.addView(status, lp(matchW = true, bottom = dp(10)))
+        p.addView(status, lp(true, bottom = dp(10)))
 
-        val swEnabled = switchRow("تشغيل الاستبدال", Store.enabled) { v ->
-            Store.setEnabled(this, v)
-        }
-        root.addView(swEnabled, lp(matchW = true, bottom = dp(8)))
-
-        val swInstant = switchRow("تبديل فوري (بدون انتظار المسافة)", Store.instant) { v ->
-            Store.setInstant(this, v)
-        }
-        root.addView(swInstant, lp(matchW = true, bottom = dp(14)))
+        p.addView(
+            switchRow("تشغيل الاستبدال", null, Store.enabled) { Store.setEnabled(this, it) },
+            lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "تبديل فوري",
+                "مطفي = يتبدل بعد المسافة أو الانتر",
+                Store.instant
+            ) { Store.setInstant(this, it) },
+            lp(true, bottom = dp(14))
+        )
 
         val bar = LinearLayout(this)
         bar.orientation = LinearLayout.HORIZONTAL
@@ -89,11 +152,13 @@ class MainActivity : Activity() {
         countView = TextView(this)
         countView.setTextColor(MUT)
         countView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        bar.addView(countView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-
+        bar.addView(
+            countView,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
         bar.addView(smallButton("تصدير") { exportFile() })
         bar.addView(smallButton("استيراد") { importFile() })
-        root.addView(bar, lp(matchW = true, bottom = dp(8)))
+        p.addView(bar, lp(true, bottom = dp(8)))
 
         list = ListView(this)
         list.divider = null
@@ -102,18 +167,194 @@ class MainActivity : Activity() {
         list.adapter = adapter
         list.setOnItemClickListener { _, _, pos, _ -> editDialog(pos) }
         list.setOnItemLongClickListener { _, _, pos, _ -> deleteDialog(pos); true }
-        root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        p.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         val add = Button(this)
         add.text = "+  إضافة اختصار"
         add.setTextColor(Color.WHITE)
         add.background = round(ACC)
         add.setOnClickListener { editDialog(-1) }
-        root.addView(add, lp(matchW = true, top = dp(10)))
+        p.addView(add, lp(true, top = dp(10)))
 
-        setContentView(root)
-        refreshCount()
+        return p
     }
+
+    // ---------- tab 2 : caller announce ----------
+
+    private fun buildCallerPanel(): ScrollView {
+        val sv = ScrollView(this)
+        sv.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        val p = LinearLayout(this)
+        p.orientation = LinearLayout.VERTICAL
+        p.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        p.addView(
+            switchRow(
+                "نطق اسم المتصل",
+                "يحچي اسم المتصل وقت الرنين",
+                Store.callerSpeak
+            ) {
+                Store.setCallerSpeak(this, it)
+                if (it && !permsOk()) requestPermissions(PERMS, REQ_PERMS)
+                refreshPermBanner()
+            },
+            lp(true, bottom = dp(10))
+        )
+
+        permBanner = TextView(this)
+        permBanner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        permBanner.setPadding(dp(12), dp(12), dp(12), dp(12))
+        permBanner.background = round(CARD)
+        permBanner.setOnClickListener {
+            if (!permsOk()) requestPermissions(PERMS, REQ_PERMS)
+            else openAppDetails()
+        }
+        p.addView(permBanner, lp(true, bottom = dp(12)))
+
+        val prefixLabel = TextView(this)
+        prefixLabel.text = "النص قبل الاسم"
+        prefixLabel.setTextColor(MUT)
+        prefixLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        prefixLabel.setPadding(dp(4), 0, dp(4), dp(6))
+        p.addView(prefixLabel)
+
+        val prefixIn = EditText(this)
+        prefixIn.setText(Store.callerPrefix)
+        prefixIn.setSingleLine(true)
+        prefixIn.setTextColor(TXT)
+        prefixIn.background = round(CARD)
+        prefixIn.setPadding(dp(12), dp(10), dp(12), dp(10))
+        prefixIn.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) {
+                Store.setCallerPrefix(this@MainActivity, s?.toString() ?: "")
+            }
+
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        p.addView(prefixIn, lp(true, bottom = dp(12)))
+
+        val rep = LinearLayout(this)
+        rep.orientation = LinearLayout.HORIZONTAL
+        rep.gravity = Gravity.CENTER_VERTICAL
+        rep.background = round(CARD)
+        rep.setPadding(dp(12), dp(10), dp(12), dp(10))
+
+        val repLabel = TextView(this)
+        repLabel.text = "عدد مرات التكرار"
+        repLabel.setTextColor(TXT)
+        repLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        rep.addView(
+            repLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+
+        val minus = stepButton("−") {
+            Store.setCallerRepeat(this, Store.callerRepeat - 1)
+            repeatValue.text = Store.callerRepeat.toString()
+        }
+        repeatValue = TextView(this)
+        repeatValue.text = Store.callerRepeat.toString()
+        repeatValue.setTextColor(TXT)
+        repeatValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+        repeatValue.gravity = Gravity.CENTER
+        repeatValue.minWidth = dp(28)
+        val plus = stepButton("+") {
+            Store.setCallerRepeat(this, Store.callerRepeat + 1)
+            repeatValue.text = Store.callerRepeat.toString()
+        }
+        rep.addView(minus)
+        rep.addView(repeatValue)
+        rep.addView(plus)
+        p.addView(rep, lp(true, bottom = dp(8)))
+
+        p.addView(
+            switchRow(
+                "نطق الرقم إذا مو محفوظ",
+                "يقرا الرقم رقم رقم",
+                Store.callerSayNumber
+            ) { Store.setCallerSayNumber(this, it) },
+            lp(true, bottom = dp(8))
+        )
+
+        p.addView(
+            switchRow(
+                "اسكت بالوضع الصامت",
+                "ما ينطق إذا الجهاز صامت أو اهتزاز",
+                Store.callerRespectSilent
+            ) { Store.setCallerRespectSilent(this, it) },
+            lp(true, bottom = dp(14))
+        )
+
+        val test = Button(this)
+        test.text = "تجربة الصوت"
+        test.setTextColor(Color.WHITE)
+        test.background = round(ACC)
+        test.setOnClickListener {
+            val prefix = Store.callerPrefix.trim()
+            val sample = if (prefix.isEmpty()) "أحمد" else "$prefix أحمد"
+            Speaker.say(this, sample, 1, AudioManager.STREAM_MUSIC)
+        }
+        p.addView(test, lp(true, bottom = dp(12)))
+
+        callerNote = TextView(this)
+        callerNote.setTextColor(MUT)
+        callerNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        callerNote.setPadding(dp(4), 0, dp(4), dp(16))
+        p.addView(callerNote, lp(true))
+
+        sv.addView(p)
+        return sv
+    }
+
+    private fun showTab(caller: Boolean) {
+        onCallerTab = caller
+        panelShortcuts.visibility = if (caller) View.GONE else View.VISIBLE
+        panelCaller.visibility = if (caller) View.VISIBLE else View.GONE
+        styleTab(tabShortcuts, !caller)
+        styleTab(tabCaller, caller)
+        if (caller) refreshPermBanner()
+    }
+
+    private fun refreshPermBanner() {
+        val ok = permsOk()
+        if (ok) {
+            permBanner.text = "الأذونات ممنوحة"
+            permBanner.setTextColor(ACC)
+        } else {
+            permBanner.text = "يحتاج إذن الهاتف وجهات الاتصال — اضغط للمنح"
+            permBanner.setTextColor(WARN)
+        }
+
+        callerNote.text = if (isServiceOn())
+            "الخدمة شغالة. إذا ما سمعت الاسم، تأكد إن صوت الرنين مرفوع، وإن محرك النطق يدعم العربية من إعدادات النظام ← إمكانية الوصول ← تحويل النص إلى كلام."
+        else
+            "تنبيه: خدمة إمكانية الوصول مطفية. نطق المتصل ما يشتغل بدونها — شغّلها من تبويب الاختصارات."
+    }
+
+    private fun permsOk(): Boolean =
+        PERMS.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_PERMS) refreshPermBanner()
+    }
+
+    private fun openAppDetails() {
+        try {
+            val i = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            i.data = Uri.parse("package:$packageName")
+            startActivity(i)
+        } catch (_: Exception) {
+        }
+    }
+
+    // ---------- shared ----------
 
     override fun onResume() {
         super.onResume()
@@ -123,6 +364,7 @@ class MainActivity : Activity() {
         else
             "الخدمة متوقفة — اضغط هنا لتفعيل إمكانية الوصول"
         status.setTextColor(if (on) ACC else RED)
+        if (onCallerTab) refreshPermBanner()
     }
 
     private fun isServiceOn(): Boolean {
@@ -136,7 +378,7 @@ class MainActivity : Activity() {
     private fun openAccessibilitySettings() {
         try {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             toast("ما كدرت أفتح الإعدادات")
         }
     }
@@ -267,7 +509,7 @@ class MainActivity : Activity() {
             trig.setTextColor(ACC)
             trig.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             trig.setPadding(dp(8), dp(3), dp(8), dp(3))
-            trig.background = round(Color.parseColor("#13241F"))
+            trig.background = round(CHIP)
             row.addView(trig)
 
             val arrow = TextView(this@MainActivity)
@@ -290,24 +532,70 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun switchRow(label: String, value: Boolean, cb: (Boolean) -> Unit): View {
+    // ---------- small builders ----------
+
+    private fun makeTab(label: String, cb: () -> Unit): TextView {
+        val t = TextView(this)
+        t.text = label
+        t.gravity = Gravity.CENTER
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        t.setPadding(0, dp(10), 0, dp(10))
+        t.setOnClickListener { cb() }
+        return t
+    }
+
+    private fun styleTab(t: TextView, active: Boolean) {
+        t.background = round(if (active) ACC else CARD)
+        t.setTextColor(if (active) Color.WHITE else MUT)
+    }
+
+    private fun switchRow(
+        label: String,
+        subLabel: String?,
+        value: Boolean,
+        cb: (Boolean) -> Unit
+    ): View {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
         row.gravity = Gravity.CENTER_VERTICAL
         row.background = round(CARD)
-        row.setPadding(dp(12), dp(6), dp(12), dp(6))
+        row.setPadding(dp(12), dp(8), dp(12), dp(8))
+
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
 
         val t = TextView(this)
         t.text = label
         t.setTextColor(TXT)
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        row.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        col.addView(t)
+
+        if (subLabel != null) {
+            val s = TextView(this)
+            s.text = subLabel
+            s.setTextColor(MUT)
+            s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            col.addView(s)
+        }
+
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
         val sw = Switch(this)
         sw.isChecked = value
         sw.setOnCheckedChangeListener { _, v -> cb(v) }
         row.addView(sw)
         return row
+    }
+
+    private fun stepButton(label: String, cb: () -> Unit): TextView {
+        val t = TextView(this)
+        t.text = label
+        t.setTextColor(ACC)
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
+        t.gravity = Gravity.CENTER
+        t.setPadding(dp(14), dp(2), dp(14), dp(2))
+        t.setOnClickListener { cb() }
+        return t
     }
 
     private fun smallButton(label: String, cb: () -> Unit): Button {
