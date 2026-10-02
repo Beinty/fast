@@ -122,8 +122,46 @@ object Speaker {
         }
     }
 
+    fun applyProfile() {
+        val e = tts ?: return
+        try {
+            e.setSpeechRate(Store.callerRate)
+            e.setPitch(Store.callerPitch)
+        } catch (_: Exception) {
+        }
+        val vn = Store.callerVoice
+        if (vn.isNotBlank()) {
+            try {
+                e.voices?.firstOrNull { it.name == vn }?.let { e.voice = it }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /** Arabic voices offered by the current engine, best-effort. */
+    fun arabicVoices(ctx: Context, cb: (List<String>) -> Unit) {
+        val run = {
+            val list = try {
+                (tts?.voices ?: emptySet()).filter {
+                    it.locale?.language.equals("ar", true)
+                }.map { it.name }.distinct().sorted()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            cb(list)
+        }
+        if (ready) run() else ensure(ctx) { ok -> if (ok) run() else cb(emptyList()) }
+    }
+
+    /** Short sample on the media stream, for previewing a voice choice. */
+    fun preview(ctx: Context, text: String) {
+        if (ready) speakNow(text, 1, AudioManager.STREAM_MUSIC)
+        else ensure(ctx) { ok -> if (ok) speakNow(text, 1, AudioManager.STREAM_MUSIC) }
+    }
+
     private fun speakNow(text: String, times: Int, stream: Int) {
         val engine = tts ?: return
+        applyProfile()
         val params = Bundle()
         params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, stream)
         val n = times.coerceIn(1, 5)

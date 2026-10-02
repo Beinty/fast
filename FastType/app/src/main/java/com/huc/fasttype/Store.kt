@@ -25,6 +25,9 @@ object Store {
     private const val K_SAY_NUM = "caller_say_number"
     private const val K_SILENT = "caller_respect_silent"
     private const val K_LAST_EVENT = "last_event"
+    private const val K_VOICE = "caller_voice"
+    private const val K_RATE = "caller_rate"
+    private const val K_PITCH = "caller_pitch"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -66,6 +69,18 @@ object Store {
     var lastEvent: String = ""
         private set
 
+    @Volatile
+    var callerVoice: String = ""
+        private set
+
+    @Volatile
+    var callerRate: Float = 1.0f
+        private set
+
+    @Volatile
+    var callerPitch: Float = 1.0f
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -81,6 +96,9 @@ object Store {
         callerSayNumber = p.getBoolean(K_SAY_NUM, true)
         callerRespectSilent = p.getBoolean(K_SILENT, true)
         lastEvent = p.getString(K_LAST_EVENT, "") ?: ""
+        callerVoice = p.getString(K_VOICE, "") ?: ""
+        callerRate = p.getFloat(K_RATE, 1.0f)
+        callerPitch = p.getFloat(K_PITCH, 1.0f)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -127,6 +145,21 @@ object Store {
     fun setCallerRespectSilent(ctx: Context, v: Boolean) {
         callerRespectSilent = v
         prefs(ctx).edit().putBoolean(K_SILENT, v).apply()
+    }
+
+    fun setCallerVoice(ctx: Context, v: String) {
+        callerVoice = v
+        prefs(ctx).edit().putString(K_VOICE, v).apply()
+    }
+
+    fun setCallerRate(ctx: Context, v: Float) {
+        callerRate = v.coerceIn(0.5f, 2.0f)
+        prefs(ctx).edit().putFloat(K_RATE, callerRate).apply()
+    }
+
+    fun setCallerPitch(ctx: Context, v: Float) {
+        callerPitch = v.coerceIn(0.5f, 2.0f)
+        prefs(ctx).edit().putFloat(K_PITCH, callerPitch).apply()
     }
 
     fun setLastEvent(ctx: Context, v: String) {

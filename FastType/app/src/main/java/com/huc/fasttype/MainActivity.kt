@@ -24,9 +24,11 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import java.util.Locale
 
 class MainActivity : Activity() {
 
@@ -268,6 +270,43 @@ class MainActivity : Activity() {
         rep.addView(repeatValue)
         rep.addView(plus)
         p.addView(rep, lp(true, bottom = dp(8)))
+
+        val voiceRow = LinearLayout(this)
+        voiceRow.orientation = LinearLayout.HORIZONTAL
+        voiceRow.gravity = Gravity.CENTER_VERTICAL
+        voiceRow.background = round(CARD)
+        voiceRow.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val voiceLabel = TextView(this)
+        voiceLabel.text = "اختيار الصوت"
+        voiceLabel.setTextColor(TXT)
+        voiceLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        voiceRow.addView(
+            voiceLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val voiceArrow = TextView(this)
+        voiceArrow.text = "اختر ›"
+        voiceArrow.setTextColor(ACC)
+        voiceArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        voiceRow.addView(voiceArrow)
+        voiceRow.setOnClickListener { pickVoice() }
+        p.addView(voiceRow, lp(true, bottom = dp(8)))
+
+        p.addView(
+            sliderRow("سرعة الكلام", Store.callerRate) { v ->
+                Store.setCallerRate(this, v)
+                previewVoice()
+            },
+            lp(true, bottom = dp(8))
+        )
+
+        p.addView(
+            sliderRow("نبرة الصوت", Store.callerPitch) { v ->
+                Store.setCallerPitch(this, v)
+                previewVoice()
+            },
+            lp(true, bottom = dp(8))
+        )
 
         p.addView(
             switchRow(
@@ -552,6 +591,81 @@ class MainActivity : Activity() {
     }
 
     // ---------- small builders ----------
+
+    private fun previewVoice() {
+        val prefix = Store.callerPrefix.trim()
+        val sample = if (prefix.isEmpty()) "أحمد" else "$prefix أحمد"
+        Speaker.preview(this, sample)
+    }
+
+    private fun pickVoice() {
+        toast("جاري قراءة الأصوات المتاحة…")
+        Speaker.arabicVoices(this) { names ->
+            runOnUiThread {
+                if (names.isEmpty()) {
+                    toast("ما لكيت أصوات عربية — تأكد إن محرك Google هو المحرك المفضل")
+                    return@runOnUiThread
+                }
+                val labels = names.mapIndexed { i, n ->
+                    val kind = if (n.contains("network", true)) "إنترنت" else "محلي"
+                    "صوت ${i + 1}  ($kind)"
+                }.toTypedArray()
+                val current = names.indexOf(Store.callerVoice)
+                AlertDialog.Builder(this)
+                    .setTitle("اختر الصوت — اضغط لتسمعه")
+                    .setSingleChoiceItems(labels, current) { _, which ->
+                        Store.setCallerVoice(this, names[which])
+                        previewVoice()
+                    }
+                    .setPositiveButton("تم", null)
+                    .setNeutralButton("الافتراضي") { _, _ ->
+                        Store.setCallerVoice(this, "")
+                        previewVoice()
+                    }
+                    .show()
+            }
+        }
+    }
+
+    private fun sliderRow(label: String, value: Float, cb: (Float) -> Unit): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.VERTICAL
+        row.background = round(CARD)
+        row.setPadding(dp(12), dp(10), dp(12), dp(6))
+
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+
+        val t = TextView(this)
+        t.text = label
+        t.setTextColor(TXT)
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        head.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val valView = TextView(this)
+        valView.setTextColor(MUT)
+        valView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        valView.text = String.format(Locale.US, "%.1f", value)
+        head.addView(valView)
+        row.addView(head)
+
+        val bar = SeekBar(this)
+        bar.max = 150
+        bar.progress = ((value - 0.5f) * 100f).toInt().coerceIn(0, 150)
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, p: Int, fromUser: Boolean) {
+                valView.text = String.format(Locale.US, "%.1f", 0.5f + p / 100f)
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                cb(0.5f + (sb?.progress ?: 50) / 100f)
+            }
+        })
+        row.addView(bar, lp(true))
+        return row
+    }
 
     private fun makeTab(label: String, cb: () -> Unit): TextView {
         val t = TextView(this)
