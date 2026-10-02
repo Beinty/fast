@@ -17,6 +17,7 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.text.SimpleDateFormat
+import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
 
@@ -31,6 +32,7 @@ class ExpanderService : AccessibilityService() {
     private var telCb: Any? = null
 
     private var spokenAt: Long = 0L
+    private var ringing = false
     private val handler = Handler(Looper.getMainLooper())
 
     private val prefListener =
@@ -38,7 +40,7 @@ class ExpanderService : AccessibilityService() {
             if (key != "last_event") Store.load(this)
         }
 
-    // ---------- call announcement ----------
+    // ================= call announcement =================
 
     private val callReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -52,13 +54,11 @@ class ExpanderService : AccessibilityService() {
                 null
             }
 
-            note("بث: $state | رقم: ${if (number.isNullOrBlank()) "لا" else "نعم"}")
-
             if (state != TelephonyManager.EXTRA_STATE_RINGING) {
-                Speaker.stop()
+                endRing()
                 return
             }
-            onRinging(number, "بث")
+            startRing(number, "بث")
         }
     }
 
@@ -68,49 +68,161 @@ class ExpanderService : AccessibilityService() {
             val tm = getSystemService(TelephonyManager::class.java) ?: return
             val cb = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                 override fun onCallStateChanged(state: Int) {
-                    when (state) {
-                        TelephonyManager.CALL_STATE_RINGING -> {
-                            note("مستمع: رنين")
-                            handler.postDelayed({
-                                if (System.currentTimeMillis() - spokenAt > 2500) {
-                                    onRinging(null, "مستمع")
-                                }
-                            }, 1300)
-                        }
-
-                        else -> Speaker.stop()
-                    }
+                    if (state == TelephonyManager.CALL_STATE_RINGING) startRing(null, "مستمع")
+                    else endRing()
                 }
             }
             tm.registerTelephonyCallback(mainExecutor, cb)
             telCb = cb
-            note("المستمع مسجّل")
         } catch (e: Exception) {
             note("فشل تسجيل المستمع: ${e.javaClass.simpleName}")
         }
     }
 
-    private fun onRinging(number: String?, source: String) {
-        if (!Store.callerSpeak) {
-            note("$source: الميزة مطفية")
+    private fun startRing(number: String?, source: String) {
+        if (!Store.callerSpeak) return
+        if (System.currentTimeMillis() - spokenAt < 6000) return
+
+        ringing = true
+
+        if (!number.isNullOrBlank()) {
+            note("$source: رقم من النظام")
+            announceFor(number, null, source)
             return
         }
 
-        val now = System.currentTimeMillis()
-        if (now - spokenAt < 2500) {
-            note("$source: تجاهل (مكرر)")
-            return
-        }
+        // No number from the system — read the incoming-call screen instead.
+        scheduleScan(600, source)
+        scheduleScan(1400, source)
+        scheduleScan(2400, source)
+        scheduleScan(3600, source)
+    }
 
+    private fun scheduleScan(delay: Long, source: String) {
+        handler.postDelayed({
+            if (!ringing) return@postDelayed
+            if (System.currentTimeMillis() - spokenAt < 6000) return@postDelayed
+
+            val found = scanCallScreen()
+            if (found != null) {
+                announceFor(found.number, found.name, "$source+شاشة")
+            } else if (delay >= 3600) {
+                note("$source: ما لكيت اسم بالشاشة")
+                speak("مكالمة واردة", "$source: نص عام")
+            }
+        }, delay)
+    }
+
+    private fun endRing() {
+        ringing = false
+        handler.removeCallbacksAndMessages(null)
+        Speaker.stop()
+    }
+
+    private class Found(val name: String?, val number: String?)
+
+    private fun announceFor(number: String?, screenName: String?, source: String) {
         if (Store.callerRespectSilent && isSilent()) {
             note("$source: صامت — ما نطق")
             return
         }
 
-        val text = Speaker.buildAnnouncement(this, number)
-        spokenAt = now
-        note("$source: ينطق → $text")
+        val prefix = Store.callerPrefix.trim()
+        val saved = Speaker.contactName(this, number)
+
+        val who = when {
+            !saved.isNullOrBlank() -> saved
+            !screenName.isNullOrBlank() -> screenName
+            Store.callerSayNumber && !number.isNullOrBlank() -> Speaker.spellNumber(number)
+            else -> null
+        }
+
+        val text = if (who.isNullOrBlank()) "مكالمة واردة"
+        else if (prefix.isEmpty()) who else "$prefix $who"
+
+        speak(text, "$source: ${if (who.isNullOrBlank()) "بدون اسم" else who}")
+    }
+
+    private fun speak(text: String, logMsg: String) {
+        if (Store.callerRespectSilent && isSilent()) {
+            note("$logMsg — لكن الجهاز صامت")
+            return
+        }
+        spokenAt = System.currentTimeMillis()
+        note(logMsg)
         Speaker.announce(this, text, Store.callerRepeat)
+    }
+
+    // --------- read the incoming-call screen ---------
+
+    private val uiWords = setOf(
+        "مكالمة واردة", "رفض", "قبول", "رد", "تجاهل", "إسكات", "رسالة", "تذكير",
+        "incoming call", "decline", "accept", "answer", "ignore", "silence",
+        "message", "remind", "reject", "slide to answer", "swipe up to answer",
+        "calling", "mobile", "جوال", "هاتف", "منزل", "عمل", "work", "home"
+    )
+
+    private val numberRe = Regex("^[+]?[0-9][0-9 \\-()]{5,}$")
+
+    private fun scanCallScreen(): Found? {
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        try {
+            for (w in windows) {
+                val r = w.root ?: continue
+                roots.add(r)
+            }
+        } catch (_: Exception) {
+        }
+        try {
+            rootInActiveWindow?.let { roots.add(it) }
+        } catch (_: Exception) {
+        }
+        if (roots.isEmpty()) return null
+
+        var idName: String? = null
+        var number: String? = null
+        val others = ArrayList<String>()
+
+        for (root in roots) {
+            val pkg = root.packageName?.toString() ?: ""
+            val isCallUi = pkg.contains("incallui", true) || pkg.contains("dialer", true) ||
+                pkg.contains("telecom", true) || pkg.contains("phone", true) ||
+                pkg.contains("contacts", true)
+
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var seen = 0
+
+            while (queue.isNotEmpty() && seen < 500) {
+                val n = queue.poll() ?: continue
+                seen++
+
+                val raw = (n.text ?: n.contentDescription)?.toString()?.trim()
+                if (!raw.isNullOrBlank() && raw.length <= 60) {
+                    val low = raw.lowercase(Locale.ROOT)
+                    val isUi = uiWords.any { low == it || low.contains(it) }
+                    val vid = n.viewIdResourceName ?: ""
+
+                    if (numberRe.matches(raw)) {
+                        if (number == null) number = raw
+                    } else if (!isUi && raw.any { it.isLetter() }) {
+                        if (vid.contains("name", true) || vid.contains("caller", true)) {
+                            if (idName == null) idName = raw
+                        } else if (isCallUi) {
+                            others.add(raw)
+                        }
+                    }
+                }
+
+                for (i in 0 until n.childCount) {
+                    n.getChild(i)?.let { queue.add(it) }
+                }
+            }
+        }
+
+        val name = idName ?: others.firstOrNull()
+        if (name == null && number == null) return null
+        return Found(name, number)
     }
 
     private fun isSilent(): Boolean {
@@ -131,7 +243,7 @@ class ExpanderService : AccessibilityService() {
         }
     }
 
-    // ---------- lifecycle ----------
+    // ================= lifecycle =================
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -147,13 +259,13 @@ class ExpanderService : AccessibilityService() {
                     registerReceiver(callReceiver, filter)
                 }
                 receiverOn = true
-                note("الخدمة اشتغلت — البث مسجّل")
             } catch (e: Exception) {
                 note("فشل تسجيل البث: ${e.javaClass.simpleName}")
             }
         }
 
         registerTelephony()
+        note("الخدمة اشتغلت")
     }
 
     override fun onDestroy() {
@@ -176,13 +288,14 @@ class ExpanderService : AccessibilityService() {
             }
         }
         telCb = null
+        handler.removeCallbacksAndMessages(null)
         Speaker.shutdown()
         super.onDestroy()
     }
 
     override fun onInterrupt() {}
 
-    // ---------- text expansion ----------
+    // ================= text expansion =================
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
