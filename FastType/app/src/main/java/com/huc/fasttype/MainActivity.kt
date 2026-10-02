@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private lateinit var permBanner: TextView
     private lateinit var repeatValue: TextView
     private lateinit var callerNote: TextView
+    private lateinit var eventView: TextView
 
     private var data: MutableList<Shortcut> = mutableListOf()
     private var onCallerTab = false
@@ -301,6 +302,14 @@ class MainActivity : Activity() {
         }
         p.addView(test, lp(true, bottom = dp(12)))
 
+        eventView = TextView(this)
+        eventView.setTextColor(MUT)
+        eventView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        eventView.setPadding(dp(12), dp(10), dp(12), dp(10))
+        eventView.background = round(CARD)
+        eventView.setOnClickListener { refreshPermBanner() }
+        p.addView(eventView, lp(true, bottom = dp(10)))
+
         callerNote = TextView(this)
         callerNote.setTextColor(MUT)
         callerNote.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -329,6 +338,13 @@ class MainActivity : Activity() {
             permBanner.text = "يحتاج إذن الهاتف وجهات الاتصال — اضغط للمنح"
             permBanner.setTextColor(WARN)
         }
+
+        Store.load(this)
+        val ev = Store.lastEvent
+        eventView.text = if (ev.isBlank())
+            "آخر حدث مكالمة: (ما وصل شي بعد) — اضغط هنا للتحديث"
+        else
+            "آخر حدث مكالمة:\n$ev\n(اضغط للتحديث)"
 
         callerNote.text = if (isServiceOn())
             "الخدمة شغالة. إذا ما سمعت الاسم، تأكد إن صوت الرنين مرفوع، وإن محرك النطق يدعم العربية من إعدادات النظام ← إمكانية الوصول ← تحويل النص إلى كلام."

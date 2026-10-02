@@ -9,52 +9,108 @@ import android.content.SharedPreferences
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class ExpanderService : AccessibilityService() {
+
+    private val TAG = "HUCFT"
 
     private var lastSelfText: String? = null
     private var lastSelfAt: Long = 0L
 
-    private var lastRingNumber: String? = null
-    private var lastRingAt: Long = 0L
     private var receiverOn = false
+    private var telCb: Any? = null
+
+    private var spokenAt: Long = 0L
+    private val handler = Handler(Looper.getMainLooper())
 
     private val prefListener =
-        SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> Store.load(this) }
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key != "last_event") Store.load(this)
+        }
+
+    // ---------- call announcement ----------
 
     private val callReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: Intent?) {
             if (intent == null) return
             if (intent.action != TelephonyManager.ACTION_PHONE_STATE_CHANGED) return
 
-            val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE) ?: return
+            val state = intent.getStringExtra(TelephonyManager.EXTRA_STATE) ?: "?"
+            val number = try {
+                intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
+            } catch (e: Exception) {
+                null
+            }
+
+            note("بث: $state | رقم: ${if (number.isNullOrBlank()) "لا" else "نعم"}")
 
             if (state != TelephonyManager.EXTRA_STATE_RINGING) {
                 Speaker.stop()
                 return
             }
-
-            if (!Store.callerSpeak) return
-
-            val number = try {
-                intent.getStringExtra(TelephonyManager.EXTRA_INCOMING_NUMBER)
-            } catch (_: Exception) {
-                null
-            }
-
-            val now = System.currentTimeMillis()
-            if (number == lastRingNumber && now - lastRingAt < 4000) return
-            lastRingNumber = number
-            lastRingAt = now
-
-            if (Store.callerRespectSilent && isSilent()) return
-
-            val text = Speaker.buildAnnouncement(this@ExpanderService, number)
-            Speaker.say(this@ExpanderService, text, Store.callerRepeat, Speaker.ringStream())
+            onRinging(number, "بث")
         }
+    }
+
+    private fun registerTelephony() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        try {
+            val tm = getSystemService(TelephonyManager::class.java) ?: return
+            val cb = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
+                override fun onCallStateChanged(state: Int) {
+                    when (state) {
+                        TelephonyManager.CALL_STATE_RINGING -> {
+                            note("مستمع: رنين")
+                            handler.postDelayed({
+                                if (System.currentTimeMillis() - spokenAt > 2500) {
+                                    onRinging(null, "مستمع")
+                                }
+                            }, 1300)
+                        }
+
+                        else -> Speaker.stop()
+                    }
+                }
+            }
+            tm.registerTelephonyCallback(mainExecutor, cb)
+            telCb = cb
+            note("المستمع مسجّل")
+        } catch (e: Exception) {
+            note("فشل تسجيل المستمع: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun onRinging(number: String?, source: String) {
+        if (!Store.callerSpeak) {
+            note("$source: الميزة مطفية")
+            return
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - spokenAt < 2500) {
+            note("$source: تجاهل (مكرر)")
+            return
+        }
+
+        if (Store.callerRespectSilent && isSilent()) {
+            note("$source: صامت — ما نطق")
+            return
+        }
+
+        val text = Speaker.buildAnnouncement(this, number)
+        spokenAt = now
+        note("$source: ينطق → $text")
+        Speaker.announce(this, text, Store.callerRepeat)
     }
 
     private fun isSilent(): Boolean {
@@ -65,6 +121,17 @@ class ExpanderService : AccessibilityService() {
             false
         }
     }
+
+    private fun note(msg: String) {
+        Log.d(TAG, msg)
+        try {
+            val t = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
+            Store.setLastEvent(this, "$t — $msg")
+        } catch (_: Exception) {
+        }
+    }
+
+    // ---------- lifecycle ----------
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -80,9 +147,13 @@ class ExpanderService : AccessibilityService() {
                     registerReceiver(callReceiver, filter)
                 }
                 receiverOn = true
-            } catch (_: Exception) {
+                note("الخدمة اشتغلت — البث مسجّل")
+            } catch (e: Exception) {
+                note("فشل تسجيل البث: ${e.javaClass.simpleName}")
             }
         }
+
+        registerTelephony()
     }
 
     override fun onDestroy() {
@@ -97,11 +168,21 @@ class ExpanderService : AccessibilityService() {
             }
             receiverOn = false
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                val tm = getSystemService(TelephonyManager::class.java)
+                (telCb as? TelephonyCallback)?.let { tm?.unregisterTelephonyCallback(it) }
+            } catch (_: Exception) {
+            }
+        }
+        telCb = null
         Speaker.shutdown()
         super.onDestroy()
     }
 
     override fun onInterrupt() {}
+
+    // ---------- text expansion ----------
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return

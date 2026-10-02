@@ -24,6 +24,7 @@ object Store {
     private const val K_REPEAT = "caller_repeat"
     private const val K_SAY_NUM = "caller_say_number"
     private const val K_SILENT = "caller_respect_silent"
+    private const val K_LAST_EVENT = "last_event"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -61,6 +62,10 @@ object Store {
     var callerRespectSilent: Boolean = true
         private set
 
+    @Volatile
+    var lastEvent: String = ""
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -75,6 +80,7 @@ object Store {
         callerRepeat = p.getInt(K_REPEAT, 2).coerceIn(1, 5)
         callerSayNumber = p.getBoolean(K_SAY_NUM, true)
         callerRespectSilent = p.getBoolean(K_SILENT, true)
+        lastEvent = p.getString(K_LAST_EVENT, "") ?: ""
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -121,6 +127,11 @@ object Store {
     fun setCallerRespectSilent(ctx: Context, v: Boolean) {
         callerRespectSilent = v
         prefs(ctx).edit().putBoolean(K_SILENT, v).apply()
+    }
+
+    fun setLastEvent(ctx: Context, v: String) {
+        lastEvent = v
+        prefs(ctx).edit().putString(K_LAST_EVENT, v).apply()
     }
 
     fun serialize(list: List<Shortcut>): String {
