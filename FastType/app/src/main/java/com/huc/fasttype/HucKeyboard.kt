@@ -370,6 +370,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (vo.isListening) {
             vo.stop()
             kv?.listening = false
+            kv?.level = 0f
             showStrip("وقّفت")
             ui.postDelayed({ refreshSugg() }, 900)
             return
@@ -398,9 +399,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         showStrip("جاري تشغيل المايك…")
         voiceBase = ""
         voicePartial = 0
+        kv?.listening = true
         vo.start(arabic)
     }
 
+    /** Live text while the sentence is still being spoken; it gets replaced. */
     override fun onPartial(text: String) {
         ui.post {
             val ic = currentInputConnection ?: return@post
@@ -413,20 +416,31 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
     }
 
-    override fun onFinal(text: String) {
+    /** A finished sentence. The session stays open for the next one. */
+    override fun onSegment(text: String) {
         ui.post {
-            val ic = currentInputConnection
-            if (ic != null) {
-                ic.beginBatchEdit()
-                if (voicePartial > 0) ic.deleteSurroundingText(voicePartial, 0)
-                if (text.isNotEmpty()) ic.commitText("$text ", 1)
-                ic.endBatchEdit()
-            }
+            val ic = currentInputConnection ?: return@post
+            ic.beginBatchEdit()
+            if (voicePartial > 0) ic.deleteSurroundingText(voicePartial, 0)
+            if (text.isNotEmpty()) ic.commitText("$text ", 1)
+            ic.endBatchEdit()
+            voicePartial = 0
+            buffer.setLength(0)
+        }
+    }
+
+    override fun onFinal() {
+        ui.post {
             voicePartial = 0
             buffer.setLength(0)
             kv?.listening = false
+            kv?.level = 0f
             refreshSugg()
         }
+    }
+
+    override fun onLevel(rms: Float) {
+        kv?.level = rms
     }
 
     override fun onState(listening: Boolean, message: String) {
@@ -435,7 +449,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             if (message.isNotEmpty()) showStrip(message)
             if (!listening) {
                 voicePartial = 0
-                ui.postDelayed({ if (voice?.isListening != true) refreshSugg() }, 1400)
+                kv?.level = 0f
+                ui.postDelayed({ if (voice?.isListening != true) refreshSugg() }, 1600)
             }
         }
     }

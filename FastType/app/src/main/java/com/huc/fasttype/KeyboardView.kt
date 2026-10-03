@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 /**
  * The whole keyboard drawn on one Canvas. Key rectangles are measured once per layout
@@ -48,9 +49,41 @@ class KeyboardView(context: Context) : View(context) {
     /** Up to three strings for the prediction strip; index 1 is the middle zone. */
     var suggs: List<String> = emptyList()
 
-    /** Voice typing is running — the mic is drawn filled. */
+    /** Voice typing is running — the mic is drawn filled and the keys recede. */
     var listening = false
-        set(v) { field = v; invalidate() }
+        set(v) {
+            if (field == v) return
+            field = v
+            if (v) { pulse = 0f; handler.post(pulseRunnable) }
+            else handler.removeCallbacks(pulseRunnable)
+            invalidate()
+        }
+
+    /** Microphone loudness while listening, smoothed into the level meter. */
+    var level = 0f
+        set(v) {
+            field = v
+            smoothLevel += ((v.coerceIn(-2f, 10f) + 2f) / 12f - smoothLevel) * 0.35f
+        }
+
+    private var smoothLevel = 0f
+    private var pulse = 0f
+
+    /** Drives the ring around the mic while a session is open. */
+    private val pulseRunnable = object : Runnable {
+        override fun run() {
+            if (!listening) return
+            pulse += 0.045f
+            if (pulse > 1f) pulse -= 1f
+            invalidateStrip()
+            handler.postDelayed(this, 33)
+        }
+    }
+
+    private fun invalidateStrip() {
+        val top = (zonePad + panelPadTop).toInt()
+        invalidate(0, top - 2, width, (top + suggH).toInt() + 2)
+    }
 
     /**
      * The strip is showing a status line rather than suggestions. It is drawn across
@@ -110,6 +143,9 @@ class KeyboardView(context: Context) : View(context) {
         strokeJoin = Paint.Join.ROUND
     }
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    /** Recording red, the one colour that reads the same in every theme. */
+    private val REC = 0xFFD93025.toInt()
+
     private val rf = RectF()
     private val path = Path()
 
@@ -321,7 +357,14 @@ class KeyboardView(context: Context) : View(context) {
 
         if (page == Pages.EMOJI) drawEmoji(canvas)
 
-        for (row in rows) for (k in row) if (!k.spacer) drawKey(canvas, k)
+        if (listening) {
+            // the keys step back so the strip is clearly where the action is
+            canvas.saveLayerAlpha(0f, 0f, w, h, 120)
+            for (row in rows) for (k in row) if (!k.spacer) drawKey(canvas, k)
+            canvas.restore()
+        } else {
+            for (row in rows) for (k in row) if (!k.spacer) drawKey(canvas, k)
+        }
 
         if (outerH > 0f) drawOuterRow(canvas, w, h)
     }
@@ -375,16 +418,46 @@ class KeyboardView(context: Context) : View(context) {
         if (micInStrip) {
             val mcx = right - micW / 2f
             val mcy = (top + bottom) / 2f
+            val r = micW * 0.46f
+
             if (listening) {
-                bgPaint.color = theme.go
-                canvas.drawCircle(mcx, mcy, micW * 0.46f, bgPaint)
+                // a ring that swells and fades, so a live session is unmistakable
+                edgePaint.style = Paint.Style.STROKE
+                edgePaint.color = REC
+                edgePaint.strokeWidth = dp(2f)
+                edgePaint.alpha = ((1f - pulse) * 190f).toInt()
+                canvas.drawCircle(mcx, mcy, r + dp(4f) + pulse * dp(7f), edgePaint)
+                edgePaint.alpha = 255
+
+                bgPaint.color = REC
+                canvas.drawCircle(mcx, mcy, r, bgPaint)
+                drawLevel(canvas, mcx - micW * 0.75f, mcy, suggH)
             } else if (pressedZone == -2) {
                 bgPaint.color = theme.keyDown
-                canvas.drawCircle(mcx, mcy, micW * 0.46f, bgPaint)
+                canvas.drawCircle(mcx, mcy, r, bgPaint)
             }
-            icoPaint.color = if (listening) theme.goIcon else theme.outer
+
+            icoPaint.color = if (listening) 0xFFFFFFFF.toInt() else theme.outer
             icoPaint.strokeWidth = dp(1.7f)
             drawIcon(canvas, Ico.MIC, mcx, mcy, suggH * 0.46f)
+        }
+    }
+
+    /** Five little bars that ride the microphone level. */
+    private fun drawLevel(canvas: Canvas, rightX: Float, cy: Float, h: Float) {
+        val w = dp(2.5f)
+        val gap = dp(2.5f)
+        val base = h * 0.16f
+        val span = h * 0.30f
+        bgPaint.color = REC
+        for (i in 0 until 5) {
+            val wobble = 0.55f + 0.45f * sin(
+                (pulse * 6.283f) + i * 1.1f
+            )
+            val bh = base + span * smoothLevel * wobble
+            val x = rightX - i * (w + gap)
+            rf.set(x - w / 2f, cy - bh / 2f, x + w / 2f, cy + bh / 2f)
+            canvas.drawRoundRect(rf, w / 2f, w / 2f, bgPaint)
         }
     }
 

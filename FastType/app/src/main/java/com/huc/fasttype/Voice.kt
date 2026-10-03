@@ -39,10 +39,14 @@ class Voice(private val ctx: Context) {
     interface Sink {
         /** Called repeatedly with the best guess so far. */
         fun onPartial(text: String)
-        /** Called once with the finished text; empty when nothing was heard. */
-        fun onFinal(text: String)
+        /** One finished sentence. More may follow while the session is open. */
+        fun onSegment(text: String)
+        /** The session ended for good. */
+        fun onFinal()
         /** Listening started, stopped, or failed — [message] is already user-facing. */
         fun onState(listening: Boolean, message: String)
+        /** Microphone loudness, roughly -2..10, for the level meter. */
+        fun onLevel(rms: Float)
     }
 
     var sink: Sink? = null
@@ -56,6 +60,12 @@ class Voice(private val ctx: Context) {
     private var onDevice = false
     private var disconnects = 0
 
+    /** True between the two taps on the mic. Silence must not end a session. */
+    private var wanted = false
+    /** Set when nothing has been heard yet, so a dead engine still gives up. */
+    private var heardAnything = false
+    private var restarts = 0
+
     /** Recognition services on this phone, best first. Built once. */
     private var services: List<ComponentName>? = null
     private var serviceIndex = 0
@@ -64,7 +74,7 @@ class Voice(private val ctx: Context) {
     private val enTags = arrayOf("en-US", "en", "")
     private fun tags() = if (arabic) arTags else enTags
 
-    val isListening: Boolean get() = active
+    val isListening: Boolean get() = wanted
 
     fun hasPermission(): Boolean =
         ctx.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
@@ -94,9 +104,9 @@ class Voice(private val ctx: Context) {
                 val score = when {
                     si.packageName == GOOGLE -> 0
                     si.packageName.startsWith("com.google.android.as") -> 1
-                    // speech *synthesis*; its recognition service is a stub that
-                    // drops the connection, so it is the very last thing to try
-                    si.packageName == "com.google.android.tts" -> 90
+                    // "Google Speech Services" — it ships the recogniser that the
+                    // system voice screen itself uses, so it is a real candidate
+                    si.packageName == "com.google.android.tts" -> 10
                     si.packageName == ctx.packageName -> 95
                     else -> 50
                 }
@@ -115,13 +125,14 @@ class Voice(private val ctx: Context) {
     fun onDeviceAvailable(): Boolean =
         Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
 
-    /** Whether a package known to really do recognition is installed. */
-    fun hasRealEngine(): Boolean {
-        if (onDeviceAvailable()) return true
-        return engines().any {
-            it.packageName == GOOGLE || it.packageName.startsWith("com.google.android.as")
-        }
-    }
+    /**
+     * Whether anything on this phone might do recognition in the background. Every
+     * candidate is worth a try: a service that refuses simply falls through to the
+     * system voice screen, so being generous here costs nothing and may win the much
+     * better in-place experience.
+     */
+    fun hasRealEngine(): Boolean =
+        onDeviceAvailable() || engines().any { it.packageName != ctx.packageName }
 
     fun googleInstalled(): Boolean = try {
         ctx.packageManager.getPackageInfo(GOOGLE, 0); true
@@ -173,6 +184,8 @@ class Voice(private val ctx: Context) {
         lines.add("تطبيق Google: " + if (googleInstalled()) "منصّب ✓" else "مو منصّب ✗")
         lines.add("شاشة الإدخال الصوتي: " +
             if (screenAvailable()) "متوفرة ✓" else "ماكو ✗")
+        lines.add("التسجيل داخل الكيبورد: " +
+            if (hasRealEngine()) "راح يُجرّب ✓" else "ماكو محرك ✗")
         if (!hasRealEngine() && screenAvailable()) {
             lines.add("")
             lines.add("ماكو خدمة تعرّف بالخلفية، فالمايك راح يفتح")
@@ -200,6 +213,9 @@ class Voice(private val ctx: Context) {
     }
 
     fun start(useArabic: Boolean) {
+        wanted = true
+        heardAnything = false
+        restarts = 0
         Log.i(TAG, "start arabic=$useArabic perm=${hasPermission()} " +
             "default=${SpeechRecognizer.isRecognitionAvailable(ctx)} " +
             "onDev=${onDeviceAvailable()} sdk=${Build.VERSION.SDK_INT} " +
@@ -214,6 +230,7 @@ class Voice(private val ctx: Context) {
     }
 
     fun stop() {
+        wanted = false
         active = false
         teardown()
     }
@@ -270,16 +287,15 @@ class Voice(private val ctx: Context) {
                 Log.i(TAG, "ready — engine is listening")
                 active = true
                 disconnects = 0
-                sink?.onState(true, "تفضّل… أسمعك")
+                sink?.onState(true, "يسمعك…")
             }
 
             override fun onBeginningOfSpeech() { Log.i(TAG, "speech began") }
-            override fun onRmsChanged(v: Float) {}
+            override fun onRmsChanged(v: Float) { sink?.onLevel(v) }
             override fun onBufferReceived(b: ByteArray?) {}
 
             override fun onEndOfSpeech() {
                 Log.i(TAG, "speech ended")
-                sink?.onState(true, "لحظة…")
             }
 
             override fun onError(code: Int) {
@@ -294,9 +310,10 @@ class Voice(private val ctx: Context) {
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     .orEmpty()
-                Log.i(TAG, "final: '" + best + "'")
-                sink?.onFinal(best)
-                teardown()
+                Log.i(TAG, "segment: '" + best + "' wanted=" + wanted)
+                if (best.isNotEmpty()) heardAnything = true
+                sink?.onSegment(best)
+                if (wanted) keepGoing() else { sink?.onFinal(); teardown() }
             }
 
             override fun onPartialResults(partial: Bundle?) {
@@ -325,6 +342,14 @@ class Voice(private val ctx: Context) {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
+            // ask the engine to sit through long pauses; most ignore these, which is
+            // why a finished session is simply started again below
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 10000)
+            putExtra(
+                RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                10000
+            )
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 20000)
             if (onDevice) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
 
@@ -339,8 +364,27 @@ class Voice(private val ctx: Context) {
         }
     }
 
+    /** Starts the next sentence. This is what makes silence harmless. */
+    private fun keepGoing() {
+        restarts++
+        sink?.onState(true, "ساكت… دوس المايك حتى يوقف")
+        retryAfter(220)
+    }
+
     /** Runs on the main thread, never inside a recogniser callback. */
     private fun handleError(code: Int) {
+        // a pause, not a failure: keep the session open
+        if (wanted && (code == SpeechRecognizer.ERROR_NO_MATCH ||
+                code == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+        ) {
+            // unless nothing has ever been heard and it keeps happening, which
+            // means the engine is not really working
+            if (heardAnything || restarts < 3) {
+                keepGoing()
+                return
+            }
+        }
+
         // the engine does not carry this dialect — step down the list
         if ((code == 12 || code == 13) && tagIndex < tags().size - 1) {
             tagIndex++
@@ -381,6 +425,7 @@ class Voice(private val ctx: Context) {
         }
 
         Log.w(TAG, "giving up on error $code")
+        wanted = false
         teardown()
         sink?.onState(false, message(code))
     }
