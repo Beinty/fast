@@ -31,6 +31,10 @@ object Dict {
     @Volatile private var ar: Lang? = null
     @Volatile private var loading = false
 
+    /** Folded word -> the words that commonly follow it, best first. */
+    @Volatile private var nextEn: HashMap<String, List<String>> = HashMap()
+    @Volatile private var nextAr: HashMap<String, List<String>> = HashMap()
+
     /** Kicks off loading and returns at once. Safe to call repeatedly. */
     fun warm(ctx: Context) {
         if (loading || (en != null && ar != null)) return
@@ -40,6 +44,8 @@ object Dict {
             try {
                 if (en == null) en = read(app, "dict_en.txt", false)
                 if (ar == null) ar = read(app, "dict_ar.txt", true)
+                if (nextEn.isEmpty()) nextEn = readNext(app, "bigrams_en.txt", false)
+                if (nextAr.isEmpty()) nextAr = readNext(app, "bigrams_ar.txt", true)
             } catch (_: Throwable) {
             } finally {
                 loading = false
@@ -72,6 +78,36 @@ object Dict {
             if (cur == null || rank[i] < rank[cur]) byFolded[folded[i]] = i
         }
         return Lang(folded, shown, rank, byFolded)
+    }
+
+    /** One line per entry: the word, then the words that usually follow it. */
+    private fun readNext(
+        ctx: Context, name: String, arabic: Boolean
+    ): HashMap<String, List<String>> {
+        val map = HashMap<String, List<String>>(256)
+        try {
+            ctx.assets.open(name).use { input ->
+                BufferedReader(input.reader(Charsets.UTF_8), 1 shl 14).use { r ->
+                    var line = r.readLine()
+                    while (line != null) {
+                        val parts = line.trim().split(' ').filter { it.isNotEmpty() }
+                        if (parts.size >= 2) {
+                            map[fold(parts[0], arabic)] = parts.drop(1)
+                        }
+                        line = r.readLine()
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return map
+    }
+
+    /** Words that commonly follow [prev]. Empty when nothing is known about it. */
+    fun nextWords(prev: String, arabic: Boolean, n: Int = 3): List<String> {
+        if (prev.isEmpty()) return emptyList()
+        val m = if (arabic) nextAr else nextEn
+        return m[fold(prev, arabic)]?.take(n) ?: emptyList()
     }
 
     private fun lang(arabic: Boolean): Lang? = if (arabic) ar else en
@@ -114,7 +150,7 @@ object Dict {
         val hits = ArrayList<Int>(64)
         while (i < l.folded.size && l.folded[i].startsWith(p)) {
             hits.add(i)
-            if (hits.size >= 600) break
+            if (hits.size >= 250) break
             i++
         }
         if (hits.isEmpty()) return emptyList()

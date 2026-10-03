@@ -16,6 +16,7 @@ object UserDict {
     private const val PREF = "huc_userdict"
     private const val K_COUNTS = "counts"
     private const val K_KEEP = "keep"
+    private const val K_PAIRS = "pairs"
 
     /** Beyond this the rarest entries are dropped, so the file cannot grow forever. */
     private const val MAX = 4000
@@ -25,6 +26,10 @@ object UserDict {
     private const val OWN = 2
 
     private val counts = HashMap<String, Int>(512)
+
+    /** "prev\u0000next" -> how often this person put those two words together. */
+    private val pairs = HashMap<String, Int>(512)
+    private const val MAX_PAIRS = 6000
     private val keep = HashSet<String>(128)
 
     @Volatile private var loaded = false
@@ -46,6 +51,13 @@ object UserDict {
             (p.getString(K_KEEP, "") ?: "").split('\n').forEach {
                 if (it.isNotBlank()) keep.add(it)
             }
+            JSONObject(p.getString(K_PAIRS, "{}") ?: "{}").let { o ->
+                val it2 = o.keys()
+                while (it2.hasNext()) {
+                    val k = it2.next()
+                    pairs[k] = o.optInt(k, 1)
+                }
+            }
         } catch (_: Exception) {
         }
         loaded = true
@@ -59,6 +71,35 @@ object UserDict {
         counts[k] = (counts[k] ?: 0) + 1
         dirty = true
         if (counts.size > MAX) trim()
+    }
+
+    /** Records that [next] followed [prev] in this person's own writing. */
+    fun seenPair(prev: String, next: String, arabic: Boolean) {
+        if (prev.length < 2 || next.length < 2) return
+        if (!isWordy(prev, arabic) || !isWordy(next, arabic)) return
+        val k = Dict.fold(prev, arabic) + "\u0000" + Dict.fold(next, arabic)
+        pairs[k] = (pairs[k] ?: 0) + 1
+        dirty = true
+        if (pairs.size > MAX_PAIRS) trimPairs()
+    }
+
+    /** The words this person usually writes after [prev], most used first. */
+    fun next(prev: String, arabic: Boolean, n: Int): List<String> {
+        if (prev.isEmpty() || pairs.isEmpty()) return emptyList()
+        val head = Dict.fold(prev, arabic) + "\u0000"
+        val hits = ArrayList<Pair<String, Int>>(8)
+        for ((k, c) in pairs) {
+            if (k.startsWith(head)) hits.add(k.substring(head.length) to c)
+        }
+        if (hits.isEmpty()) return emptyList()
+        hits.sortByDescending { it.second }
+        return hits.take(n).map { it.first }
+    }
+
+    private fun trimPairs() {
+        val keepers = pairs.entries.sortedByDescending { it.value }.take(MAX_PAIRS * 3 / 4)
+        pairs.clear()
+        for (e in keepers) pairs[e.key] = e.value
     }
 
     /** Marks a spelling as deliberate — used when a correction is undone. */
@@ -158,6 +199,9 @@ object UserDict {
             c.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
                 .putString(K_COUNTS, o.toString())
                 .putString(K_KEEP, keep.joinToString("\n"))
+                .putString(K_PAIRS, JSONObject().also { pj ->
+                    for ((k, v) in pairs) pj.put(k, v)
+                }.toString())
                 .apply()
         } catch (_: Exception) {
         }
@@ -168,6 +212,7 @@ object UserDict {
 
     fun forgetAll() {
         counts.clear()
+        pairs.clear()
         keep.clear()
         dirty = true
         save()

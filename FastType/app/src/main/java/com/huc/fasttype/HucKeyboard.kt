@@ -30,6 +30,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var undoTyped: String? = null
     private var undoFixed: String? = null
     private var repeatingDel = false
+    /** The last finished word, so the strip can offer what usually follows it. */
+    private var lastWord = ""
+    /** For each strip zone: true when it is a new word, false when it completes one. */
+    private var suggKinds: List<Boolean> = emptyList()
+    private var suggKey = ""
 
     private var arabic = true
     private var shift = 0
@@ -133,6 +138,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         super.onStartInputView(info, restarting)
         Store.load(this)
         buffer.setLength(0)
+        lastWord = ""
         pendingShortcut = null
         shift = 0
         page = Pages.LETTERS
@@ -187,7 +193,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         if (isBreak && buffer.isNotEmpty() && Store.kbLearn) {
-            UserDict.seen(buffer.toString(), arabic)
+            val w = buffer.toString()
+            UserDict.seen(w, arabic)
+            if (lastWord.isNotEmpty()) UserDict.seenPair(lastWord, w, arabic)
+            lastWord = w
         }
 
         if (isBreak && Store.kbCorrect && buffer.isNotEmpty()) {
@@ -368,12 +377,20 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (pendingShortcut != null) { onSuggestionTap(); return }
         val word = v.suggs.getOrNull(index) ?: return
         if (word.isEmpty()) return
+        val whole = suggKinds.getOrNull(index) ?: false
         val ic = currentInputConnection ?: return
         ic.beginBatchEdit()
-        if (buffer.isNotEmpty()) ic.deleteSurroundingText(buffer.length, 0)
+        // a completion replaces what is half-typed; a next word just goes after it
+        if (!whole && buffer.isNotEmpty()) ic.deleteSurroundingText(buffer.length, 0)
+        else if (whole && buffer.isNotEmpty()) ic.commitText(" ", 1)
         ic.commitText("$word ", 1)
         ic.endBatchEdit()
-        if (Store.kbLearn) UserDict.seen(word, arabic)
+        if (Store.kbLearn) {
+            UserDict.seen(word, arabic)
+            val prev = if (whole && buffer.isNotEmpty()) buffer.toString() else lastWord
+            if (prev.isNotEmpty()) UserDict.seenPair(prev, word, arabic)
+        }
+        lastWord = word
         buffer.setLength(0)
         undoTyped = null
         undoFixed = null
@@ -554,6 +571,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /** Puts a message across the strip. Not a suggestion — it cannot be tapped. */
     private fun showStrip(text: String) {
         val v = kv ?: return
+        suggKey = ""
         v.statusOnly = true
         v.suggText = text
         v.suggs = listOf("", text, "")
@@ -584,6 +602,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         // a matching shortcut owns the whole strip — it is the stronger signal
         if (hit != null) {
+            suggKey = ""
+
             val t = "${hit.trigger}  \u2190  ${hit.phrase}"
             if (t != v.suggText) {
                 v.suggText = t
@@ -594,12 +614,41 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         val word = buffer.toString()
-        val zones = if (Store.kbPredict && word.isNotEmpty()) {
-            val mine = if (Store.kbLearn) UserDict.predict(word, arabic, 2) else emptyList()
-            val rest = Dict.predict(word, arabic, 3)
-            (mine + rest).distinct().take(3)
-        } else emptyList()
 
+        // the strip is asked to refresh far more often than its answer changes,
+        // so an identical question is answered from the last result
+        val key = word + "\u0001" + lastWord + if (arabic) "|ar" else "|en"
+        if (key == suggKey) return
+        suggKey = key
+
+        val zones = ArrayList<String>(3)
+        val kinds = ArrayList<Boolean>(3)   // true = a whole new word, not a completion
+
+        if (Store.kbPredict) {
+            // completions of the word being typed
+            if (word.isNotEmpty()) {
+                val mine =
+                    if (Store.kbLearn) UserDict.predict(word, arabic, 2) else emptyList()
+                for (w in mine + Dict.predict(word, arabic, 3)) {
+                    if (zones.size >= 3) break
+                    if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
+                }
+            }
+            // and what usually comes next — after a finished word, or after a space
+            val prev = if (word.isEmpty()) lastWord else word
+            if (zones.size < 3 && prev.isNotEmpty() &&
+                (word.isEmpty() || Dict.known(word, arabic) || UserDict.isOwn(word, arabic))
+            ) {
+                val mine =
+                    if (Store.kbLearn) UserDict.next(prev, arabic, 2) else emptyList()
+                for (w in mine + Dict.nextWords(prev, arabic, 3)) {
+                    if (zones.size >= 3) break
+                    if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
+                }
+            }
+        }
+
+        suggKinds = kinds
         if (v.suggText.isNotEmpty() || v.suggs != zones) {
             v.suggText = ""
             v.suggs = zones
