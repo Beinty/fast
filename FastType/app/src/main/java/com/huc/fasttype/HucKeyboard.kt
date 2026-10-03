@@ -328,8 +328,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onPredictionTap(index: Int) {
-        if (pendingShortcut != null) { onSuggestionTap(); return }
         val v = kv ?: return
+        if (v.statusOnly) return
+        if (pendingShortcut != null) { onSuggestionTap(); return }
         val word = v.suggs.getOrNull(index) ?: return
         if (word.isEmpty()) return
         val ic = currentInputConnection ?: return
@@ -399,8 +400,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
     }
 
+    /** Puts a message across the strip. Not a suggestion — it cannot be tapped. */
     private fun showStrip(text: String) {
         val v = kv ?: return
+        v.statusOnly = true
         v.suggText = text
         v.suggs = listOf("", text, "")
         v.invalidate()
@@ -423,6 +426,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private fun refreshSugg() {
         val v = kv ?: return
         if (voice?.isListening == true) return
+        v.statusOnly = false
 
         val hit = if (Store.kbExpand) matchShortcut() else null
         pendingShortcut = hit

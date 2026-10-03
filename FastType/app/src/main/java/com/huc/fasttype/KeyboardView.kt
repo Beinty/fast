@@ -52,6 +52,12 @@ class KeyboardView(context: Context) : View(context) {
     var listening = false
         set(v) { field = v; invalidate() }
 
+    /**
+     * The strip is showing a status line rather than suggestions. It is drawn across
+     * the whole width and tapping it does nothing — a message must never be typed.
+     */
+    var statusOnly = false
+
     private var keyH = 44f
     private var gap = 5f
     private var rad = 9f
