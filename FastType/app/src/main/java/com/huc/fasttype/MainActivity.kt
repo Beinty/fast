@@ -797,6 +797,11 @@ class MainActivity : Activity() {
             Store.kbClearBottom) {
             Store.setKbFlag(this, "clear", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("يتبع ثيم الجهاز",
+            "التليفون ليلي؟ الكيبورد ليلي. نهاري؟ نهاري — بنفس الثيم اللي اخترته",
+            Store.kbFollowSystem) {
+            Store.setKbFlag(this, "follow", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("إخفاء الحروف بضغطة مطوّلة",
             "دوس مطوّلاً على المسافة تختفي الحروف — وترجع بأي ضغطة",
             Store.kbBlankHold) {

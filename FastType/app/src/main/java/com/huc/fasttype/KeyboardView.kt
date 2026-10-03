@@ -197,12 +197,18 @@ class KeyboardView(context: Context) : View(context) {
 
     fun dp(v: Float) = v * resources.displayMetrics.density
 
+    /** Whether the phone itself is in dark mode right now. */
+    private fun deviceIsDark(): Boolean =
+        (resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+            android.content.res.Configuration.UI_MODE_NIGHT_YES
+
     fun applySettings() {
         keyH = dp(Store.kbKeyHeight.toFloat())
         gap = dp(Store.kbGap.toFloat())
         rad = dp(Store.kbRadius.toFloat())
         panelRad = dp(Store.kbPanelRadius.toFloat())
-        theme = Themes.byId(Store.kbTheme)
+        theme = Themes.resolve(Store.kbTheme, Store.kbFollowSystem, deviceIsDark())
         numRow = Store.kbNumberRow
         showSugg = Store.kbSuggBar
         zonePad = dp(Store.kbInset.toFloat())

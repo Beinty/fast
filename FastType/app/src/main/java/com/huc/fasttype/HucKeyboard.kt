@@ -89,6 +89,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
     }
 
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // day turned into night, or the other way round — repaint in the twin
+        kv?.applySettings()
+        kv?.rebuild()
+    }
+
     override fun onWindowShown() {
         super.onWindowShown()
         clearWindowBackground()
