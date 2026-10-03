@@ -797,6 +797,16 @@ class MainActivity : Activity() {
             Store.kbClearBottom) {
             Store.setKbFlag(this, "clear", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("بدائل الحروف بضغطة مطوّلة",
+            "اهبط على ا تطلع أ إ آ — وعلى ج تطلع چ. اسحب وارفع",
+            Store.kbAlts) {
+            Store.setKbFlag(this, "alts", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("مسافتين = نقطة",
+            "ضغطتين سريعتين على المسافة تحطّ نقطة ومسافة",
+            Store.kbDoubleSpace) {
+            Store.setKbFlag(this, "dots", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("زر الحافظة",
             "ضغطة تلصق آخر نسخة، وضغطة مطوّلة تفتح كل اللي نسخته",
             Store.kbClip) {

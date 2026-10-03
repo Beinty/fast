@@ -98,6 +98,50 @@ object Pages {
 
 object KbLayout {
 
+    /**
+     * What a long press offers. The first entry is always the key's own character,
+     * so lifting without sliding types exactly what was pressed.
+     *
+     * Arabic needs this more than most: أ إ آ are nowhere on the layout, which left
+     * them impossible to type at all. The Iraqi letters چ گ پ ڤ ride along.
+     */
+    val alts: Map<String, List<String>> = mapOf(
+        "ا" to listOf("ا", "أ", "إ", "آ", "ٱ"),
+        "ه" to listOf("ه", "ة"),
+        "و" to listOf("و", "ؤ"),
+        "ي" to listOf("ي", "ى", "ئ"),
+        "ى" to listOf("ى", "ي", "ئ"),
+        "ة" to listOf("ة", "ه"),
+        "ء" to listOf("ء", "أ", "إ", "ؤ", "ئ"),
+        "ل" to listOf("ل", "لا", "لأ", "لإ", "لآ"),
+        "ج" to listOf("ج", "چ"),
+        "ك" to listOf("ك", "گ"),
+        "ب" to listOf("ب", "پ"),
+        "ف" to listOf("ف", "ڤ"),
+        "ز" to listOf("ز", "ژ"),
+        "a" to listOf("a", "à", "á", "â", "ä", "å"),
+        "e" to listOf("e", "è", "é", "ê", "ë"),
+        "i" to listOf("i", "ì", "í", "î", "ï"),
+        "o" to listOf("o", "ò", "ó", "ô", "ö"),
+        "u" to listOf("u", "ù", "ú", "û", "ü"),
+        "c" to listOf("c", "ç"),
+        "n" to listOf("n", "ñ"),
+        "A" to listOf("A", "À", "Á", "Â", "Ä"),
+        "E" to listOf("E", "È", "É", "Ê", "Ë"),
+        "I" to listOf("I", "Ì", "Í", "Î", "Ï"),
+        "O" to listOf("O", "Ò", "Ó", "Ô", "Ö"),
+        "U" to listOf("U", "Ù", "Ú", "Û", "Ü"),
+        "C" to listOf("C", "Ç"),
+        "N" to listOf("N", "Ñ")
+    )
+
+    /** The alternates for a key, or null when a long press should do nothing. */
+    fun altsFor(k: Key): List<String>? {
+        if (k.code != Code.CHAR || k.out.isEmpty()) return null
+        return alts[k.out]
+    }
+
+
     private const val AR1 = "ضصثقفغعهخحج"
     private const val AR2 = "شسيبلاتنمكط"
     private const val AR3 = "ذءؤرىةوزظد"

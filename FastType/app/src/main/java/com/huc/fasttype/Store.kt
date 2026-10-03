@@ -62,6 +62,8 @@ object Store {
     private const val K_KB_FOLLOW = "kb_follow_system"
     private const val K_KB_CLIP = "kb_clip"
     private const val K_KB_CLIPEXP = "kb_clip_expire"
+    private const val K_KB_ALTS = "kb_alts"
+    private const val K_KB_DOTS = "kb_double_space"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -224,6 +226,14 @@ object Store {
     @Volatile var kbClip: Boolean = true
         private set
 
+    /** A long press on a letter offers its alternates — أ إ آ and the rest. */
+    @Volatile var kbAlts: Boolean = true
+        private set
+
+    /** Two taps on space become a full stop and a space. */
+    @Volatile var kbDoubleSpace: Boolean = true
+        private set
+
     /**
      * Minutes before an unpinned clip is forgotten; 0 keeps them. Defaults to an
      * hour, because what people copy is often a password or a payment number.
@@ -282,6 +292,8 @@ object Store {
         kbBlankHold = p.getBoolean(K_KB_BLANK, true)
         kbFollowSystem = p.getBoolean(K_KB_FOLLOW, true)
         kbClip = p.getBoolean(K_KB_CLIP, true)
+        kbAlts = p.getBoolean(K_KB_ALTS, true)
+        kbDoubleSpace = p.getBoolean(K_KB_DOTS, true)
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
     }
 
@@ -388,6 +400,8 @@ object Store {
             "blank" -> { kbBlankHold = v; e.putBoolean(K_KB_BLANK, v) }
             "follow" -> { kbFollowSystem = v; e.putBoolean(K_KB_FOLLOW, v) }
             "clip" -> { kbClip = v; e.putBoolean(K_KB_CLIP, v) }
+            "alts" -> { kbAlts = v; e.putBoolean(K_KB_ALTS, v) }
+            "dots" -> { kbDoubleSpace = v; e.putBoolean(K_KB_DOTS, v) }
         }
         e.apply()
     }

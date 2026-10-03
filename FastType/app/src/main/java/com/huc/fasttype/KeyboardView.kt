@@ -131,6 +131,21 @@ class KeyboardView(context: Context) : View(context) {
     private var suggScroll = 0f
     private var suggDragging = false
     private var clipOn = true
+
+    /** The long-press bubble: its options, where it sits, and which one is picked. */
+    private var altKey: Key? = null
+    private var altList: List<String> = emptyList()
+    private var altSel = 0
+    private var altArmed = false
+    private val altRect = RectF()
+    private var altCellW = 0f
+    private var altsOn = true
+
+    private val altRunnable = Runnable {
+        val k = pressed ?: return@Runnable
+        if (!altArmed) return@Runnable
+        openAlts(k)
+    }
     private val clipHeadH get() = keyH * 0.9f
     private val clipRowH get() = keyH * 1.18f
     private var clipScroll = 0f
@@ -268,6 +283,7 @@ class KeyboardView(context: Context) : View(context) {
         hairW = Store.kbHairW.toFloat()
         micInStrip = Store.kbMicStrip
         clipOn = Store.kbClip
+        altsOn = Store.kbAlts
         letterScale = Store.kbLetter / 100f
         pressFx = Store.kbPressFx
         blankOnHold = Store.kbBlankHold
@@ -450,6 +466,8 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (outerH > 0f) drawOuterRow(canvas, w, h)
+
+        drawAlts(canvas)
     }
 
     /**
@@ -953,7 +971,14 @@ class KeyboardView(context: Context) : View(context) {
                     handler.postDelayed(blankRunnable, 320)
                 }
 
-                pressed = if (pressFx) k else null
+                pressed = k
+                // a key with alternates waits before typing: the character is only
+                // committed once it is clear this is a tap and not a hold
+                if (altsOn && KbLayout.altsFor(k) != null) {
+                    altArmed = true
+                    handler.postDelayed(altRunnable, 300)
+                }
+                if (!pressFx) pressed = null
                 if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
                 if (pressFx) invalidateKey(k)
                 if (k.code == Code.DEL) {
@@ -992,6 +1017,13 @@ class KeyboardView(context: Context) : View(context) {
                     }
                     return true
                 }
+                if (altList.isNotEmpty()) { moveAlts(x); return true }
+                if (altArmed && (Math.abs(x - downX) > dp(12f) ||
+                        Math.abs(y - downY) > dp(12f))
+                ) {
+                    altArmed = false
+                    handler.removeCallbacks(altRunnable)
+                }
                 if (blankArmed && (Math.abs(x - downX) > dp(10f) ||
                         Math.abs(y - downY) > dp(10f))
                 ) {
@@ -1024,6 +1056,15 @@ class KeyboardView(context: Context) : View(context) {
                     if (i >= 0) listener?.onClipPick(i)
                     return true
                 }
+
+                if (altList.isNotEmpty()) {
+                    val out = closeAlts(true)
+                    pressed = null
+                    if (!out.isNullOrEmpty()) listener?.onChar(out)
+                    return true
+                }
+                altArmed = false
+                handler.removeCallbacks(altRunnable)
 
                 if (firedOnDown) {
                     val fk = pressed
@@ -1083,6 +1124,9 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                altArmed = false
+                handler.removeCallbacks(altRunnable)
+                if (altList.isNotEmpty()) closeAlts(false)
                 stopRepeat(); blankArmed = false; clipArmed = false; clipFired = false
                 handler.removeCallbacks(clipHoldRunnable)
                 pressedSugg = -1; suggDragging = false
@@ -1098,6 +1142,99 @@ class KeyboardView(context: Context) : View(context) {
 
     /** Clear space kept between the mic and the screen edge. */
     private val micEdge get() = if (micInStrip) sideMargin + dp(4f) else 0f
+
+    /**
+     * Opens the alternates bubble over a key, the way the iPhone does: a panel
+     * directly above the key, the pressed character already selected, and the
+     * choice made by sliding and lifting in one gesture.
+     */
+    private fun openAlts(k: Key) {
+        val list = KbLayout.altsFor(k) ?: return
+        altArmed = false
+        altKey = k
+        altList = list
+        altSel = 0
+
+        txtPaint.typeface = if (k.arabic) arFont else enFont
+        txtPaint.textSize = keyH * 0.52f
+        var cell = keyH * 0.95f
+        for (a in list) cell = max(cell, txtPaint.measureText(a) + dp(20f))
+        altCellW = cell
+
+        val padding = dp(4f)
+        val w = cell * list.size + padding * 2f
+        val h = keyH * 1.12f + padding * 2f
+        // centred over the key, pulled inside when it would run past an edge
+        val cx = k.x + k.w / 2f
+        var left = cx - w / 2f
+        left = left.coerceIn(zonePad + dp(2f), width - zonePad - w - dp(2f))
+        var top = k.y - h - dp(6f)
+        if (top < zonePad + dp(2f)) top = zonePad + dp(2f)
+        altRect.set(left, top, left + w, top + h)
+
+        // the character already went in on touch-down, which is what keeps typing
+        // instant; the hold takes it back before offering the choice
+        if (firedOnDown) {
+            listener?.onDelete()
+            firedOnDown = false
+        }
+        pressed = null
+        performHapticFeedback(
+            android.view.HapticFeedbackConstants.LONG_PRESS,
+            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
+        invalidate()
+    }
+
+    private fun moveAlts(x: Float) {
+        if (altList.isEmpty()) return
+        val padding = dp(4f)
+        val i = ((x - altRect.left - padding) / altCellW).toInt()
+            .coerceIn(0, altList.size - 1)
+        if (i != altSel) { altSel = i; invalidate() }
+    }
+
+    /** Lifts the bubble. Returns what should be typed, or null. */
+    private fun closeAlts(commit: Boolean): String? {
+        if (altList.isEmpty()) return null
+        val out = if (commit) altList.getOrNull(altSel) else null
+        altKey = null
+        altList = emptyList()
+        altSel = 0
+        invalidate()
+        return out
+    }
+
+    private fun drawAlts(canvas: Canvas) {
+        if (altList.isEmpty()) return
+        val padding = dp(4f)
+        val r = dp(11f)
+
+        // the bubble takes the theme's own key colour, so it never looks bolted on
+        rf.set(altRect.left - dp(1f), altRect.top, altRect.right + dp(1f),
+            altRect.bottom + dp(2.5f))
+        bgPaint.color = theme.keyDark
+        canvas.drawRoundRect(rf, r, r, bgPaint)
+        bgPaint.color = theme.key
+        canvas.drawRoundRect(altRect, r, r, bgPaint)
+
+        txtPaint.typeface = if (altKey?.arabic == true) arFont else enFont
+        txtPaint.textSize = keyH * 0.52f
+        val fm = txtPaint.fontMetrics
+        val cy = altRect.centerY()
+        for (i in altList.indices) {
+            val l = altRect.left + padding + altCellW * i
+            if (i == altSel) {
+                rf.set(l, altRect.top + padding, l + altCellW, altRect.bottom - padding)
+                bgPaint.color = theme.go
+                canvas.drawRoundRect(rf, dp(8f), dp(8f), bgPaint)
+            }
+            txtPaint.color = if (i == altSel) theme.goIcon else theme.text
+            canvas.drawText(
+                altList[i], l + altCellW / 2f, cy - (fm.ascent + fm.descent) / 2f, txtPaint
+            )
+        }
+    }
 
     /** -3 the clipboard key, -2 the microphone, 0.. a suggestion, -1 nothing. */
     private fun stripZone(x: Float): Int {

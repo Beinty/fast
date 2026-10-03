@@ -32,6 +32,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var repeatingDel = false
     /** The last finished word, so the strip can offer what usually follows it. */
     private var lastWord = ""
+    private var lastSpaceAt = 0L
     /** For each strip zone: true when it is a new word, false when it completes one. */
     private var suggKinds: List<Boolean> = emptyList()
     private var suggKey = ""
@@ -215,6 +216,27 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         undoFixed = null
         releaseComposing(ic)
 
+        // two quick taps on space end the sentence instead of leaving a double gap
+        if (s == " " && Store.kbDoubleSpace) {
+            val now = System.currentTimeMillis()
+            val quick = now - lastSpaceAt < 700L
+            lastSpaceAt = now
+            if (quick && buffer.isEmpty() && endsWithLetterThenSpace(ic)) {
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(1, 0)
+                ic.commitText(". ", 1)
+                ic.endBatchEdit()
+                lastSpaceAt = 0L
+                lastWord = ""
+                feedback()
+                refreshSugg()
+                afterType()
+                return
+            }
+        } else if (s != " ") {
+            lastSpaceAt = 0L
+        }
+
         val isBreak = s.length == 1 && isWordBreak(s[0])
 
         if (isBreak && Store.kbExpand) {
@@ -280,6 +302,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         feedback()
         refreshSugg()
         afterType()
+    }
+
+    /** True when the text reads "…letter space", the only case worth replacing. */
+    private fun endsWithLetterThenSpace(
+        ic: android.view.inputmethod.InputConnection
+    ): Boolean {
+        val before = ic.getTextBeforeCursor(2, 0) ?: return false
+        if (before.length < 2) return false
+        return before[1] == ' ' && before[0].isLetterOrDigit()
     }
 
     private fun afterType() {
