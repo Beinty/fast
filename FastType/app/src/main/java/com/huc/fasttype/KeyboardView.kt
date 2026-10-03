@@ -32,6 +32,10 @@ class KeyboardView(context: Context) : View(context) {
         fun onSuggestionTap()
         fun onPredictionTap(index: Int)
         fun onMic()
+        fun onClipTap()
+        fun onClipHold()
+        fun onClipPick(index: Int)
+        fun onClipClose()
         fun onDeleteWord()
         fun onRepeatState(active: Boolean)
     }
@@ -46,8 +50,9 @@ class KeyboardView(context: Context) : View(context) {
     var showSugg = true
     var suggText = ""
 
-    /** Up to three strings for the prediction strip; index 1 is the middle zone. */
+    /** Everything the dictionary offered, in order. The row scrolls through them. */
     var suggs: List<String> = emptyList()
+        set(v) { field = v; suggScroll = 0f; suggMeasuredFor = null }
 
     /** Voice typing is running — the mic is drawn filled and the keys recede. */
     var listening = false
@@ -113,6 +118,45 @@ class KeyboardView(context: Context) : View(context) {
     private var blankOnHold = true
     private var clearBottom = false
     private var pressedZone = -1
+    private var pressedSugg = -1
+
+    /** True for each suggestion that is a new word rather than a completion. */
+    var suggNew: List<Boolean> = emptyList()
+
+    private val suggW = ArrayList<Float>(16)
+    private var suggMeasuredFor: List<String>? = null
+    private var suggAvail = -1f
+    private var suggTotal = 0f
+    private var suggMax = 0f
+    private var suggScroll = 0f
+    private var suggDragging = false
+    private var clipOn = true
+    private val clipHeadH get() = keyH * 0.9f
+    private val clipRowH get() = keyH * 1.18f
+    private var clipScroll = 0f
+    private var clipMaxScroll = 0f
+    private var clipListTop = 0f
+    private var clipListBottom = 0f
+    private var clipPressed = -1
+    private var clipDownY = 0f
+    private var clipScroll0 = 0f
+    private var clipScrolling = false
+    private val clipDoneRect = RectF()
+    private var stripDownX = 0f
+    private var stripScroll0 = 0f
+    private var clipArmed = false
+    private var clipFired = false
+
+    private val clipHoldRunnable = Runnable {
+        if (!clipArmed) return@Runnable
+        clipArmed = false
+        clipFired = true
+        performHapticFeedback(
+            android.view.HapticFeedbackConstants.LONG_PRESS,
+            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
+        listener?.onClipHold()
+    }
 
     /**
      * Blank mode. A long press on the space bar hides every label, exactly like the
@@ -223,6 +267,7 @@ class KeyboardView(context: Context) : View(context) {
         hairH = Store.kbHairH / 100f
         hairW = Store.kbHairW.toFloat()
         micInStrip = Store.kbMicStrip
+        clipOn = Store.kbClip
         letterScale = Store.kbLetter / 100f
         pressFx = Store.kbPressFx
         blankOnHold = Store.kbBlankHold
@@ -233,6 +278,7 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     fun rebuild() {
+        if (page == Pages.CLIP) clipScroll = 0f
         rows = if (page == Pages.EMOJI) listOf(KbLayout.emojiBottom(arabic))
         else KbLayout.rows(page, arabic, shift, numRow)
         if (page == Pages.EMOJI) buildEmoji()
@@ -382,6 +428,7 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }
 
+        if (page == Pages.CLIP) { drawClipPage(canvas, w, h); return }
         if (showSugg && page != Pages.EMOJI && !blank) drawStrip(canvas, w)
 
         if (page == Pages.EMOJI) drawEmoji(canvas)
@@ -404,72 +451,192 @@ class KeyboardView(context: Context) : View(context) {
      * sit at a third and two thirds of the FULL panel width — not of the key area —
      * and run 54% of the strip height, centred.
      */
+    /**
+     * The prediction strip.
+     *
+     * A scrolling row of as many guesses as the dictionary has, with the clipboard
+     * key and the microphone sitting at either end as a matched pair — same size,
+     * same weight, nothing boxed around either of them.
+     */
     private fun drawStrip(canvas: Canvas, w: Float) {
         val top = zonePad + panelPadTop
         val bottom = top + suggH
+        val cy = (top + bottom) / 2f
         val left = zonePad
         val right = w - zonePad
-        val zoneRight = right - micW - micEdge
 
-        // pressed zone gets a soft highlight, nothing else is painted
-        if (pressedZone in 0..2 && suggs.size > pressedZone) {
-            val zw = (zoneRight - left) / 3f
-            rf.set(left + pressedZone * zw + dp(2f), top + suggH * 0.14f,
-                left + (pressedZone + 1) * zw - dp(2f), bottom - suggH * 0.14f)
-            bgPaint.color = theme.keyDown
-            canvas.drawRoundRect(rf, suggRad, suggRad, bgPaint)
-        }
+        val clipL = left + micEdge
+        val micC = right - micEdge - micW / 2f
+        val clipC = clipL + micW / 2f
+        val zoneLeft = clipL + micW + dp(2f)
+        val zoneRight = right - micEdge - micW - dp(2f)
 
-        if (hairOn) {
-            edgePaint.color = Themes.hairline(theme)
-            edgePaint.strokeWidth = dp(hairW)
-            val hh = suggH * hairH
-            val cy = (top + bottom) / 2f
-            val a = left + (right - left) / 3f
-            val b = left + (right - left) * 2f / 3f
-            canvas.drawLine(a, cy - hh / 2f, a, cy + hh / 2f, edgePaint)
-            canvas.drawLine(b, cy - hh / 2f, b, cy + hh / 2f, edgePaint)
-        }
-
+        // ---- the suggestions, clipped to the space between the two keys ----
+        canvas.save()
+        canvas.clipRect(zoneLeft, top, zoneRight, bottom)
         txtPaint.typeface = arFont
         txtPaint.textSize = keyH * 0.33f
         val fm = txtPaint.fontMetrics
-        val baseline = (top + bottom) / 2f - (fm.ascent + fm.descent) / 2f
-        val zw = (zoneRight - left) / 3f
-        for (i in 0..2) {
-            val s = suggs.getOrNull(i) ?: continue
-            if (s.isEmpty()) continue
-            txtPaint.color = if (i == 1) theme.text else theme.dim
-            val cx = left + zw * i + zw / 2f
-            canvas.drawText(ellipsize(s, zw - dp(10f)), cx, baseline, txtPaint)
+        val baseline = cy - (fm.ascent + fm.descent) / 2f
+
+        measureSuggs(zoneRight - zoneLeft)
+        var x = zoneLeft - suggScroll
+        for (i in suggs.indices) {
+            val wItem = suggW.getOrNull(i) ?: continue
+            if (x + wItem > zoneLeft - dp(40f) && x < zoneRight + dp(40f)) {
+                if (i == pressedSugg) {
+                    rf.set(x + dp(2f), top + suggH * 0.13f,
+                        x + wItem - dp(2f), bottom - suggH * 0.13f)
+                    bgPaint.color = theme.keyDown
+                    canvas.drawRoundRect(rf, suggRad.coerceAtLeast(dp(6f)),
+                        suggRad.coerceAtLeast(dp(6f)), bgPaint)
+                }
+                if (hairOn && i > 0) {
+                    edgePaint.style = Paint.Style.STROKE
+                    edgePaint.color = Themes.hairline(theme)
+                    edgePaint.strokeWidth = dp(hairW)
+                    val hh = suggH * hairH
+                    canvas.drawLine(x, cy - hh / 2f, x, cy + hh / 2f, edgePaint)
+                }
+                // the first guess is the likely one; a whole new word is tinted
+                txtPaint.color = when {
+                    suggNew.getOrNull(i) == true -> theme.go
+                    i == 0 -> theme.text
+                    else -> theme.dim
+                }
+                canvas.drawText(suggs[i], x + wItem / 2f, baseline, txtPaint)
+            }
+            x += wItem
+        }
+        canvas.restore()
+
+        // ---- the two end keys ----
+        if (clipOn) {
+            if (pressedZone == -3) {
+                bgPaint.color = theme.keyDown
+                canvas.drawCircle(clipC, cy, micW * 0.46f, bgPaint)
+            }
+            icoPaint.color = if (Clip.fresh) theme.go else theme.outer
+            icoPaint.strokeWidth = dp(1.7f)
+            drawIcon(canvas, Ico.CLIP, clipC, cy, suggH * 0.46f)
         }
 
         if (micInStrip) {
-            val mcx = right - micEdge - micW / 2f
-            val mcy = (top + bottom) / 2f
             val r = micW * 0.46f
-
             if (listening) {
                 // a ring that swells and fades, so a live session is unmistakable
                 edgePaint.style = Paint.Style.STROKE
                 edgePaint.color = REC
                 edgePaint.strokeWidth = dp(2f)
                 edgePaint.alpha = ((1f - pulse) * 190f).toInt()
-                canvas.drawCircle(mcx, mcy, r + dp(4f) + pulse * dp(7f), edgePaint)
+                canvas.drawCircle(micC, cy, r + dp(4f) + pulse * dp(7f), edgePaint)
                 edgePaint.alpha = 255
-
                 bgPaint.color = REC
-                canvas.drawCircle(mcx, mcy, r, bgPaint)
-                drawLevel(canvas, mcx - micW * 0.75f, mcy, suggH)
+                canvas.drawCircle(micC, cy, r, bgPaint)
+                drawLevel(canvas, micC - micW * 0.8f, cy, suggH)
             } else if (pressedZone == -2) {
                 bgPaint.color = theme.keyDown
-                canvas.drawCircle(mcx, mcy, r, bgPaint)
+                canvas.drawCircle(micC, cy, r, bgPaint)
             }
-
             icoPaint.color = if (listening) 0xFFFFFFFF.toInt() else theme.outer
             icoPaint.strokeWidth = dp(1.7f)
-            drawIcon(canvas, Ico.MIC, mcx, mcy, suggH * 0.46f)
+            drawIcon(canvas, Ico.MIC, micC, cy, suggH * 0.46f)
         }
+    }
+
+    /** Widths of each suggestion, and how far the row can scroll. */
+    private fun measureSuggs(available: Float) {
+        if (suggs === suggMeasuredFor && available == suggAvail) return
+        suggMeasuredFor = suggs
+        suggAvail = available
+        suggW.clear()
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.33f
+        var total = 0f
+        val pad = dp(18f)
+        for (sText in suggs) {
+            val wItem = txtPaint.measureText(sText) + pad * 2f
+            suggW.add(wItem)
+            total += wItem
+        }
+        suggTotal = total
+        suggMax = max(0f, total - available)
+        suggScroll = suggScroll.coerceIn(0f, suggMax)
+    }
+
+    /** Which suggestion sits under this x, or -1. */
+    private fun suggAt(x: Float, w: Float): Int {
+        val clipL = zonePad + micEdge
+        val zoneLeft = clipL + micW + dp(2f)
+        var cur = zoneLeft - suggScroll
+        for (i in suggs.indices) {
+            val wItem = suggW.getOrNull(i) ?: return -1
+            if (x >= cur && x < cur + wItem) return i
+            cur += wItem
+        }
+        return -1
+    }
+
+    /** Rows of what was copied lately, newest first. */
+    private fun drawClipPage(canvas: Canvas, w: Float, h: Float) {
+        val left = zonePad + sideMargin
+        val right = w - zonePad - sideMargin
+        val top = zonePad + panelPadTop
+
+        // header: a title and a way out
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.33f
+        txtPaint.color = theme.dim
+        val fmH = txtPaint.fontMetrics
+        val hCy = top + clipHeadH / 2f
+        canvas.drawText("الحافظة", left + dp(40f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint)
+        txtPaint.color = theme.go
+        canvas.drawText("تم", right - dp(22f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint)
+        clipDoneRect.set(right - dp(56f), top, right, top + clipHeadH)
+
+        val listTop = top + clipHeadH
+        val listBottom = h - bottomPad - zonePad - panelPadBottom
+        clipListTop = listTop
+        clipListBottom = listBottom
+
+        val items = Clip.all
+        clipMaxScroll = max(0f, items.size * clipRowH - (listBottom - listTop))
+        clipScroll = clipScroll.coerceIn(0f, clipMaxScroll)
+
+        if (items.isEmpty()) {
+            txtPaint.color = theme.dim
+            canvas.drawText("ماكو شي منسوخ بعد",
+                (left + right) / 2f, (listTop + listBottom) / 2f, txtPaint)
+            return
+        }
+
+        canvas.save()
+        canvas.clipRect(left, listTop, right, listBottom)
+        for (i in items.indices) {
+            val y = listTop + i * clipRowH - clipScroll
+            if (y > listBottom || y + clipRowH < listTop) continue
+            rf.set(left, y + dp(3f), right, y + clipRowH - dp(3f))
+            bgPaint.color = if (i == clipPressed) theme.keyDown else theme.key
+            canvas.drawRoundRect(rf, rad * 1.6f, rad * 1.6f, bgPaint)
+
+            val e = items[i]
+            txtPaint.textSize = keyH * 0.31f
+            txtPaint.color = theme.text
+            val fm = txtPaint.fontMetrics
+            val oneLine = e.text.replace('\n', ' ').trim()
+            canvas.drawText(
+                ellipsize(oneLine, right - left - dp(78f)),
+                (left + right) / 2f, y + clipRowH * 0.42f - (fm.ascent + fm.descent) / 2f,
+                txtPaint
+            )
+            txtPaint.textSize = keyH * 0.24f
+            txtPaint.color = theme.dim
+            canvas.drawText(
+                if (e.pinned) "مثبّت · " + Clip.ago(e.at) else Clip.ago(e.at),
+                (left + right) / 2f, y + clipRowH * 0.76f, txtPaint
+            )
+        }
+        canvas.restore()
     }
 
     /** Five little bars that ride the microphone level. */
@@ -648,6 +815,15 @@ class KeyboardView(context: Context) : View(context) {
                 path.quadTo(cx - s * 0.68f, cy, cx, cy - s * 0.92f)
                 canvas.drawPath(path, icoPaint)
             }
+            Ico.CLIP -> {
+                rf.set(cx - s * 0.52f, cy - s * 0.78f, cx + s * 0.52f, cy + s * 0.92f)
+                canvas.drawRoundRect(rf, s * 0.22f, s * 0.22f, icoPaint)
+                rf.set(cx - s * 0.26f, cy - s * 0.98f, cx + s * 0.26f, cy - s * 0.58f)
+                canvas.drawRoundRect(rf, s * 0.14f, s * 0.14f, icoPaint)
+                canvas.drawLine(cx - s * 0.24f, cy - s * 0.1f, cx + s * 0.24f, cy - s * 0.1f, icoPaint)
+                canvas.drawLine(cx - s * 0.24f, cy + s * 0.26f, cx + s * 0.24f, cy + s * 0.26f, icoPaint)
+                canvas.drawLine(cx - s * 0.24f, cy + s * 0.62f, cx + s * 0.02f, cy + s * 0.62f, icoPaint)
+            }
             Ico.MIC -> {
                 rf.set(cx - s * 0.4f, cy - s * 0.95f, cx + s * 0.4f, cy + s * 0.15f)
                 canvas.drawRoundRect(rf, s * 0.4f, s * 0.4f, icoPaint)
@@ -709,6 +885,19 @@ class KeyboardView(context: Context) : View(context) {
                 scrolling = false
                 firedOnDown = false
 
+                if (page == Pages.CLIP) {
+                    clipDownY = y
+                    clipScroll0 = clipScroll
+                    clipScrolling = false
+                    clipPressed =
+                        if (y in clipListTop..clipListBottom)
+                            ((y - clipListTop + clipScroll) / clipRowH).toInt()
+                                .takeIf { it in Clip.all.indices } ?: -1
+                        else -1
+                    invalidate()
+                    return true
+                }
+
                 if (page == Pages.EMOJI && y >= emojiTop && y <= emojiBottom) {
                     scrollStart = emojiScroll
                     return true
@@ -729,7 +918,15 @@ class KeyboardView(context: Context) : View(context) {
                     y < zonePad + panelPadTop + suggH
                 ) {
                     pressedZone = stripZone(x)
-                    if (pressedZone != -1) invalidate()
+                    pressedSugg = if (pressedZone >= 0) pressedZone else -1
+                    suggDragging = false
+                    stripDownX = x
+                    stripScroll0 = suggScroll
+                    if (pressedZone == -3) {
+                        clipArmed = true
+                        handler.postDelayed(clipHoldRunnable, 380)
+                    }
+                    if (pressedZone != -1) invalidateStrip()
                     return true
                 }
 
@@ -761,6 +958,32 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (page == Pages.CLIP) {
+                    val dy = y - clipDownY
+                    if (!clipScrolling && Math.abs(dy) > dp(8f)) {
+                        clipScrolling = true
+                        clipPressed = -1
+                    }
+                    if (clipScrolling) {
+                        clipScroll = (clipScroll0 - dy).coerceIn(0f, clipMaxScroll)
+                        invalidate()
+                    }
+                    return true
+                }
+                if (pressedZone != -1 && downY < zonePad + panelPadTop + suggH) {
+                    val dx = x - stripDownX
+                    if (!suggDragging && Math.abs(dx) > dp(9f)) {
+                        suggDragging = true
+                        pressedSugg = -1
+                        clipArmed = false
+                        handler.removeCallbacks(clipHoldRunnable)
+                    }
+                    if (suggDragging && suggMax > 0f) {
+                        suggScroll = (stripScroll0 - dx).coerceIn(0f, suggMax)
+                        invalidateStrip()
+                    }
+                    return true
+                }
                 if (blankArmed && (Math.abs(x - downX) > dp(10f) ||
                         Math.abs(y - downY) > dp(10f))
                 ) {
@@ -781,6 +1004,18 @@ class KeyboardView(context: Context) : View(context) {
                 stopRepeat()
                 blankArmed = false
                 handler.removeCallbacks(blankRunnable)
+
+                if (page == Pages.CLIP) {
+                    val i = clipPressed
+                    val dragged = clipScrolling
+                    clipPressed = -1
+                    clipScrolling = false
+                    invalidate()
+                    if (dragged) return true
+                    if (clipDoneRect.contains(x, y)) { listener?.onClipClose(); return true }
+                    if (i >= 0) listener?.onClipPick(i)
+                    return true
+                }
 
                 if (firedOnDown) {
                     val fk = pressed
@@ -809,13 +1044,24 @@ class KeyboardView(context: Context) : View(context) {
                     y < zonePad + panelPadTop + suggH
                 ) {
                     val z = pressedZone
+                    val dragged = suggDragging
+                    val hadHold = clipFired
                     pressedZone = -1
-                    invalidate()
-                    if (z == -2) listener?.onMic()
-                    else if (z >= 0 && stripZone(x) == z) {
-                        if (suggs.getOrNull(z).isNullOrEmpty()) {
-                            if (suggText.isNotEmpty()) listener?.onSuggestionTap()
-                        } else listener?.onPredictionTap(z)
+                    pressedSugg = -1
+                    suggDragging = false
+                    clipArmed = false
+                    clipFired = false
+                    handler.removeCallbacks(clipHoldRunnable)
+                    invalidateStrip()
+                    if (dragged || hadHold) return true
+                    when {
+                        z == -2 -> listener?.onMic()
+                        z == -3 -> listener?.onClipTap()
+                        z >= 0 && suggAt(x, width.toFloat()) == z -> {
+                            if (suggs.getOrNull(z).isNullOrEmpty()) {
+                                if (suggText.isNotEmpty()) listener?.onSuggestionTap()
+                            } else listener?.onPredictionTap(z)
+                        }
                     }
                     return true
                 }
@@ -829,7 +1075,9 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); blankArmed = false
+                stopRepeat(); blankArmed = false; clipArmed = false; clipFired = false
+                handler.removeCallbacks(clipHoldRunnable)
+                pressedSugg = -1; suggDragging = false
                 handler.removeCallbacks(blankRunnable); pressedZone = -1; val k = pressed; pressed = null
                 firedOnDown = false; invalidateKey(k); return true
             }
@@ -843,15 +1091,13 @@ class KeyboardView(context: Context) : View(context) {
     /** Clear space kept between the mic and the screen edge. */
     private val micEdge get() = if (micInStrip) sideMargin + dp(4f) else 0f
 
-    /** Which third of the strip a touch is in; -2 for the mic, -1 for nothing. */
+    /** -3 the clipboard key, -2 the microphone, 0.. a suggestion, -1 nothing. */
     private fun stripZone(x: Float): Int {
         val left = zonePad
         val right = width - zonePad
-        // a comfortable reach, not just the glyph — this sits at the screen edge
-        if (micInStrip && x > right - micEdge - micW * 1.3f) return -2
-        val zw = (right - left - micW - micEdge) / 3f
-        val i = ((x - left) / zw).toInt()
-        return if (i in 0..2) i else -1
+        if (micInStrip && x > right - micEdge - micW * 1.25f) return -2
+        if (clipOn && x < left + micEdge + micW * 1.25f) return -3
+        return suggAt(x, width.toFloat())
     }
 
     private fun invalidateKey(k: Key?) {

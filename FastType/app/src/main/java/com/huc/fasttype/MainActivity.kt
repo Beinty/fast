@@ -797,6 +797,15 @@ class MainActivity : Activity() {
             Store.kbClearBottom) {
             Store.setKbFlag(this, "clear", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("زر الحافظة",
+            "ضغطة تلصق آخر نسخة، وضغطة مطوّلة تفتح كل اللي نسخته",
+            Store.kbClip) {
+            Store.setKbFlag(this, "clip", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("مسح الحافظة بعد (دقيقة، صفر = تبقى)",
+            Store.kbClipExpire, 0, 720) {
+            Store.setKbInt(this, "clipexp", it)
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("يتبع ثيم الجهاز",
             "التليفون ليلي؟ الكيبورد ليلي. نهاري؟ نهاري — بنفس الثيم اللي اخترته",
             Store.kbFollowSystem) {
@@ -871,6 +880,10 @@ class MainActivity : Activity() {
             override fun onSuggestionTap() {}
             override fun onPredictionTap(index: Int) {}
             override fun onMic() {}
+            override fun onClipTap() {}
+            override fun onClipHold() {}
+            override fun onClipPick(index: Int) {}
+            override fun onClipClose() {}
             override fun onDeleteWord() {}
             override fun onRepeatState(active: Boolean) {}
         }

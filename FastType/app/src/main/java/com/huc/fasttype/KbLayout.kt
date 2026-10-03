@@ -33,6 +33,7 @@ object Ico {
     const val SMILE = 6
     const val GLOBE = 7
     const val MIC = 8
+    const val CLIP = 9
 }
 
 class Key(
@@ -92,6 +93,7 @@ object Pages {
     const val SYM2 = 2
     const val NPAD = 3
     const val EMOJI = 4
+    const val CLIP = 5
 }
 
 object KbLayout {

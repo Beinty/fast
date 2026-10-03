@@ -60,6 +60,8 @@ object Store {
     private const val K_KB_LEARN = "kb_learn"
     private const val K_KB_BLANK = "kb_blank_hold"
     private const val K_KB_FOLLOW = "kb_follow_system"
+    private const val K_KB_CLIP = "kb_clip"
+    private const val K_KB_CLIPEXP = "kb_clip_expire"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -218,6 +220,17 @@ object Store {
     @Volatile var kbFollowSystem: Boolean = true
         private set
 
+    /** Keep a clipboard key in the strip and remember what was copied. */
+    @Volatile var kbClip: Boolean = true
+        private set
+
+    /**
+     * Minutes before an unpinned clip is forgotten; 0 keeps them. Defaults to an
+     * hour, because what people copy is often a password or a payment number.
+     */
+    @Volatile var kbClipExpire: Int = 60
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -268,6 +281,8 @@ object Store {
         kbLearn = p.getBoolean(K_KB_LEARN, true)
         kbBlankHold = p.getBoolean(K_KB_BLANK, true)
         kbFollowSystem = p.getBoolean(K_KB_FOLLOW, true)
+        kbClip = p.getBoolean(K_KB_CLIP, true)
+        kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -348,6 +363,7 @@ object Store {
             "hairh" -> { kbHairH = v.coerceIn(20, 90); prefs(ctx).edit().putInt(K_KB_HAIRH, kbHairH).apply() }
             "hairw" -> { kbHairW = v.coerceIn(1, 4); prefs(ctx).edit().putInt(K_KB_HAIRW, kbHairW).apply() }
             "letter" -> { kbLetter = v.coerceIn(40, 58); prefs(ctx).edit().putInt(K_KB_LETTER, kbLetter).apply() }
+            "clipexp" -> { kbClipExpire = v.coerceIn(0, 1440); prefs(ctx).edit().putInt(K_KB_CLIPEXP, kbClipExpire).apply() }
         }
     }
     fun setKbFlag(ctx: Context, which: String, v: Boolean) {
@@ -371,6 +387,7 @@ object Store {
             "learn" -> { kbLearn = v; e.putBoolean(K_KB_LEARN, v) }
             "blank" -> { kbBlankHold = v; e.putBoolean(K_KB_BLANK, v) }
             "follow" -> { kbFollowSystem = v; e.putBoolean(K_KB_FOLLOW, v) }
+            "clip" -> { kbClip = v; e.putBoolean(K_KB_CLIP, v) }
         }
         e.apply()
     }

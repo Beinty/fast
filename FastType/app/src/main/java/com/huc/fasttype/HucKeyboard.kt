@@ -36,6 +36,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var suggKinds: List<Boolean> = emptyList()
     private var suggKey = ""
 
+    /** How many guesses the scrolling strip may hold. */
+    private val MAX_SUGG = 12
+
     private var arabic = true
     private var shift = 0
     private var page = Pages.LETTERS
@@ -52,6 +55,28 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         Store.load(this)
         Dict.warm(this)
         UserDict.load(this)
+        Clip.load(this)
+        watchClipboard()
+    }
+
+    private var clipWatcher: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
+
+    /**
+     * Android only lets the app with focus read the clipboard, and the active input
+     * method counts while it is on screen — so this catches what is copied during use.
+     */
+    private fun watchClipboard() {
+        try {
+            val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as? android.content.ClipboardManager ?: return
+            val l = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+                if (Store.kbClip) Clip.capture(this)
+                kv?.invalidate()
+            }
+            cm.addPrimaryClipChangedListener(l)
+            clipWatcher = l
+        } catch (_: Exception) {
+        }
     }
 
     override fun onCreateInputView(): View {
@@ -128,6 +153,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onDestroy() {
+        try {
+            clipWatcher?.let {
+                (getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as? android.content.ClipboardManager)
+                    ?.removePrimaryClipChangedListener(it)
+            }
+        } catch (_: Exception) {
+        }
+        clipWatcher = null
         voice?.stop()
         voice = null
         UserDict.save()
@@ -292,6 +326,58 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     /** Deletes back to the start of the previous word, for a long backspace hold. */
+    /** A tap pastes the last thing copied, with no panel in the way. */
+    override fun onClipTap() {
+        val ic = currentInputConnection ?: return
+        Clip.capture(this)
+        val t = Clip.latest()
+        if (t.isNullOrEmpty()) {
+            showStrip("الحافظة فارغة")
+            ui.postDelayed({ refreshSugg() }, 1100)
+            return
+        }
+        releaseComposing(ic)
+        ic.commitText(t, 1)
+        Clip.used()
+        buffer.setLength(0)
+        lastWord = ""
+        feedback()
+        refreshSugg()
+    }
+
+    /** A long press opens the list of everything copied lately. */
+    override fun onClipHold() {
+        Clip.capture(this)
+        Clip.expire()
+        page = Pages.CLIP
+        kv?.page = page
+        kv?.rebuild()
+    }
+
+    override fun onClipPick(index: Int) {
+        val t = Clip.all.getOrNull(index)?.text ?: return
+        val ic = currentInputConnection
+        page = Pages.LETTERS
+        kv?.page = page
+        kv?.rebuild()
+        if (ic != null) {
+            releaseComposing(ic)
+            ic.commitText(t, 1)
+        }
+        Clip.used()
+        buffer.setLength(0)
+        lastWord = ""
+        feedback()
+        refreshSugg()
+    }
+
+    override fun onClipClose() {
+        page = Pages.LETTERS
+        kv?.page = page
+        kv?.rebuild()
+        refreshSugg()
+    }
+
     override fun onDeleteWord() {
         val ic = currentInputConnection ?: return
         undoTyped = null
@@ -607,7 +693,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             val t = "${hit.trigger}  \u2190  ${hit.phrase}"
             if (t != v.suggText) {
                 v.suggText = t
-                v.suggs = listOf("\u201C${hit.trigger}\u201D", hit.phrase, "")
+                v.suggNew = listOf(false, false)
+                v.suggs = listOf(hit.phrase, "\u201C${hit.trigger}\u201D")
                 v.invalidate()
             }
             return
@@ -621,29 +708,30 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (key == suggKey) return
         suggKey = key
 
-        val zones = ArrayList<String>(3)
-        val kinds = ArrayList<Boolean>(3)   // true = a whole new word, not a completion
+        val zones = ArrayList<String>(MAX_SUGG)
+        val kinds = ArrayList<Boolean>(MAX_SUGG)  // true = a whole new word
 
         if (Store.kbPredict) {
-            // completions of the word being typed
-            if (word.isNotEmpty()) {
-                val mine =
-                    if (Store.kbLearn) UserDict.predict(word, arabic, 2) else emptyList()
-                for (w in mine + Dict.predict(word, arabic, 3)) {
-                    if (zones.size >= 3) break
-                    if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
-                }
-            }
-            // and what usually comes next — after a finished word, or after a space
+            // what usually follows the finished word comes first — it is the stronger
+            // guess once a word is done
             val prev = if (word.isEmpty()) lastWord else word
-            if (zones.size < 3 && prev.isNotEmpty() &&
+            if (prev.isNotEmpty() &&
                 (word.isEmpty() || Dict.known(word, arabic) || UserDict.isOwn(word, arabic))
             ) {
                 val mine =
-                    if (Store.kbLearn) UserDict.next(prev, arabic, 2) else emptyList()
-                for (w in mine + Dict.nextWords(prev, arabic, 3)) {
-                    if (zones.size >= 3) break
+                    if (Store.kbLearn) UserDict.next(prev, arabic, 4) else emptyList()
+                for (w in mine + Dict.nextWords(prev, arabic, 6)) {
+                    if (zones.size >= MAX_SUGG) break
                     if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
+                }
+            }
+            // then every completion of the word being typed
+            if (word.isNotEmpty()) {
+                val mine =
+                    if (Store.kbLearn) UserDict.predict(word, arabic, 4) else emptyList()
+                for (w in mine + Dict.predict(word, arabic, MAX_SUGG)) {
+                    if (zones.size >= MAX_SUGG) break
+                    if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
                 }
             }
         }
@@ -651,6 +739,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         suggKinds = kinds
         if (v.suggText.isNotEmpty() || v.suggs != zones) {
             v.suggText = ""
+            v.suggNew = kinds
             v.suggs = zones
             v.invalidate()
         }
