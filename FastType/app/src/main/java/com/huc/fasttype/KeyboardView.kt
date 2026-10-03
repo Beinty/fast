@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.os.Handler
@@ -342,6 +343,8 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private val rf = RectF()
+    /** Reused for the dirty rectangle, so onDraw allocates nothing. */
+    private val clipR = Rect()
     private val path = Path()
 
     private val arFont: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
@@ -580,13 +583,22 @@ class KeyboardView(context: Context) : View(context) {
 
         if (page == Pages.EMOJI) drawEmoji(canvas)
 
+        // One key pressed means one key repainted. Without this every tap walked all
+        // forty keys through drawKey and let the clip throw most of the work away.
+        val haveClip = canvas.getClipBounds(clipR)
         if (listening) {
             // the keys step back so the strip is clearly where the action is
             canvas.saveLayerAlpha(0f, 0f, w, h, 120)
             for (row in rows) for (k in row) if (!k.spacer) drawKey(canvas, k)
             canvas.restore()
         } else {
-            for (row in rows) for (k in row) if (!k.spacer) drawKey(canvas, k)
+            for (row in rows) for (k in row) {
+                if (k.spacer) continue
+                if (haveClip && (k.x + k.w < clipR.left || k.x > clipR.right ||
+                        k.y + k.h < clipR.top || k.y > clipR.bottom)
+                ) continue
+                drawKey(canvas, k)
+            }
         }
 
         if (outerH > 0f) drawOuterRow(canvas, w, h)
@@ -1284,6 +1296,10 @@ class KeyboardView(context: Context) : View(context) {
 
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // Android batches motion events to the display frame by default.
+                // Asking for them unbuffered hands each one over the moment it
+                // arrives, which takes up to a frame of waiting out of every tap.
+                try { requestUnbufferedDispatch(e) } catch (_: Throwable) {}
                 downX = x
                 downY = y
                 scrolling = false

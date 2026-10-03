@@ -1049,10 +1049,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     // ---------------- feedback ----------------
 
+    /** Looked up once; fetching a system service on every keystroke is not free. */
+    private var audio: AudioManager? = null
+
     private fun feedback() {
         if (Store.kbSound) {
             try {
-                val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                val am = audio
+                    ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager).also { audio = it }
                 am.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, 0.35f)
             } catch (_: Exception) {
             }
