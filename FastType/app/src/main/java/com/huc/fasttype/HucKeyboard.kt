@@ -41,7 +41,28 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
         v.applySettings()
         v.page = page
         v.rebuild()
+        v.post { clearWindowBackground() }
         return v
+    }
+
+    /**
+     * The panel draws its own rounded top corners, so everything behind it has to be
+     * see-through — otherwise the corners show the IME window's own background instead
+     * of the app, which is what iOS shows there.
+     */
+    private fun clearWindowBackground() {
+        try {
+            window?.window?.setBackgroundDrawable(null)
+            var p = kv?.parent
+            var depth = 0
+            while (p is View && depth < 4) {
+                p.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                p = p.parent
+                depth++
+            }
+            kv?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        } catch (_: Exception) {
+        }
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -56,8 +77,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
             it.shift = 0
             it.page = page
             it.suggText = ""
+            it.suggs = emptyList()
             it.rebuild()
         }
+        clearWindowBackground()
     }
 
     override fun onFinishInput() {
@@ -188,6 +211,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
         refreshSugg()
     }
 
+    /** Middle zone replaces the shortcut; the side zones are not wired up yet. */
+    override fun onPredictionTap(index: Int) {
+        if (index == 1) onSuggestionTap()
+    }
+
+    override fun onMic() {
+        onLang()
+    }
+
     // ---------------- shortcuts ----------------
 
     private fun matchShortcut(): Shortcut? {
@@ -207,8 +239,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
         val hit = if (Store.kbExpand) matchShortcut() else null
         pendingShortcut = hit
         val t = if (hit != null) "${hit.trigger}  ←  ${hit.phrase}" else ""
+        val zones = if (hit != null)
+            listOf("\u201C${hit.trigger}\u201D", hit.phrase, "")
+        else emptyList()
         if (t != v.suggText) {
             v.suggText = t
+            v.suggs = zones
             v.invalidate()
         }
     }

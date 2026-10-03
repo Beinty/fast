@@ -697,14 +697,23 @@ class MainActivity : Activity() {
         p.addView(sliderRow("إطار اللوحة (صفر = لحافة الشاشة)", Store.kbInset, 0, 14) {
             Store.setKbInt(this, "inset", it); syncPreview()
         }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("دوران اللوحة", Store.kbPanelRadius, 0, 34) {
+        p.addView(sliderRow("انحناء أعلى اللوحة", Store.kbPanelRadius, 0, 44) {
             Store.setKbInt(this, "prad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("دوران شريط الاقتراحات (صفر = مسطّح)", Store.kbSuggRad, 0, 22) {
             Store.setKbInt(this, "srad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("ارتفاع شريط الاقتراحات", Store.kbSuggH, 22, 52) {
+        p.addView(sliderRow("ارتفاع شريط الاقتراحات", Store.kbSuggH, 22, 60) {
             Store.setKbInt(this, "sh", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("طول الخط الفاصل", Store.kbHairH, 20, 90) {
+            Store.setKbInt(this, "hairh", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("سماكة الخط الفاصل", Store.kbHairW, 1, 4) {
+            Store.setKbInt(this, "hairw", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("حجم الحرف", Store.kbLetter, 40, 58) {
+            Store.setKbInt(this, "letter", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
             Store.setKbInt(this, "outer", it); syncPreview()
@@ -713,6 +722,23 @@ class MainActivity : Activity() {
             Store.setKbInt(this, "bottom", it); syncPreview()
         }, lp(true, bottom = dp(14)))
 
+        p.addView(switchRow("الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون",
+            Store.kbHair) {
+            Store.setKbFlag(this, "hair", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("المايك بالشريط العلوي", "بدل الشريط السفلي", Store.kbMicStrip) {
+            Store.setKbFlag(this, "micstrip", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("زر اللغة جنب الإيموجي", "ينشال الشريط السفلي ويقصر الكيبورد",
+            Store.kbGlobeRow) {
+            Store.setKbFlag(this, "globerow", it)
+            Store.setKbInt(this, "outer", if (it) 0 else 40)
+            syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("تظليل الزر عند الضغط", "طفّيه لأسرع استجابة ممكنة",
+            Store.kbPressFx) {
+            Store.setKbFlag(this, "pressfx", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
             Store.setKbFlag(this, "num", it); syncPreview()
         }, lp(true, bottom = dp(8)))
@@ -771,9 +797,12 @@ class MainActivity : Activity() {
             override fun onLang() { pv.arabic = !pv.arabic; pv.rebuild() }
             override fun onPage(page: Int) { pv.page = page; pv.rebuild() }
             override fun onSuggestionTap() {}
+            override fun onPredictionTap(index: Int) {}
+            override fun onMic() {}
         }
         pv.arabic = Store.kbArabicFirst
         pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"
+        pv.suggs = listOf("\u201Cببب\u201D", "بسم الله الرحمن الرحيم", "بسم")
         pv.applySettings()
         pv.rebuild()
         kbPreview = pv

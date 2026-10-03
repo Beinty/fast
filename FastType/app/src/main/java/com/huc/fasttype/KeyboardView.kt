@@ -29,6 +29,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onLang()
         fun onPage(page: Int)
         fun onSuggestionTap()
+        fun onPredictionTap(index: Int)
+        fun onMic()
     }
 
     var listener: Listener? = null
@@ -41,6 +43,9 @@ class KeyboardView(context: Context) : View(context) {
     var showSugg = true
     var suggText = ""
 
+    /** Up to three strings for the prediction strip; index 1 is the middle zone. */
+    var suggs: List<String> = emptyList()
+
     private var keyH = 44f
     private var gap = 5f
     private var rad = 9f
@@ -48,12 +53,19 @@ class KeyboardView(context: Context) : View(context) {
 
     private var zonePad = dp(0f)
     /** Ratios measured off a real iOS keyboard, relative to key height. */
-    private val sideMargin get() = keyH * 0.148f
-    private val vGap get() = gap * 1.7f
-    private val panelPadTop get() = keyH * 0.148f
-    private val panelPadBottom get() = keyH * 0.148f
+    private val sideMargin get() = keyH * 0.164f
+    private val vGap get() = keyH * 0.265f
+    private val panelPadTop get() = keyH * 0.164f
+    private val panelPadBottom get() = keyH * 0.164f
     private var suggH = dp(30f)
     private var suggRad = dp(12f)
+    private var hairOn = true
+    private var hairH = 0.54f
+    private var hairW = 1f
+    private var micInStrip = true
+    private var letterScale = 0.49f
+    private var pressFx = true
+    private var pressedZone = -1
     private var outerH = dp(40f)
     private var bottomPad = dp(10f)
     private var fastKeys = true
@@ -117,6 +129,13 @@ class KeyboardView(context: Context) : View(context) {
         fastKeys = Store.kbFast
         suggH = dp(Store.kbSuggH.toFloat())
         suggRad = dp(Store.kbSuggRad.toFloat())
+        hairOn = Store.kbHair
+        hairH = Store.kbHairH / 100f
+        hairW = Store.kbHairW.toFloat()
+        micInStrip = Store.kbMicStrip
+        letterScale = Store.kbLetter / 100f
+        pressFx = Store.kbPressFx
+        KbLayout.globeInRow = Store.kbGlobeRow
         requestLayout()
         invalidate()
     }
@@ -193,15 +212,19 @@ class KeyboardView(context: Context) : View(context) {
 
         for (row in rows) {
             var totalWeight = 0f
-            for (k in row) totalWeight += k.weight
-            val unit = (usable - gap * (row.size - 1)) / totalWeight
+            var totalGap = 0f
+            for ((i, k) in row.withIndex()) {
+                totalWeight += k.weight
+                if (i < row.size - 1) totalGap += gap * k.gapAfter
+            }
+            val unit = (usable - totalGap) / totalWeight
             var x = left
-            for (k in row) {
+            for ((i, k) in row.withIndex()) {
                 k.x = x
                 k.y = y
                 k.w = unit * k.weight
                 k.h = keyH
-                x += k.w + gap
+                x += k.w + if (i < row.size - 1) gap * k.gapAfter else 0f
             }
             y += keyH + vGap
         }
@@ -221,18 +244,24 @@ class KeyboardView(context: Context) : View(context) {
         val panelRight = width - zonePad
 
         for ((ri, row) in rows.withIndex()) {
-            if (row.isEmpty()) continue
+            // spacers reserve width but never catch a touch; their area goes to the
+            // key beside them, so the row still tiles edge to edge
+            val live = row.filter { !it.spacer }
+            if (live.isEmpty()) continue
             val first = ri == 0
             val last = ri == rows.size - 1
-            for ((ki, k) in row.withIndex()) {
-                val padL = if (ki == 0) k.x - panelLeft else halfGap
-                val padR = if (ki == row.size - 1) panelRight - (k.x + k.w) else halfGap
+            for ((ki, k) in live.withIndex()) {
+                val padL = if (ki == 0) k.x - panelLeft
+                else (k.x - (live[ki - 1].x + live[ki - 1].w)) * 0.5f
+                val padR = if (ki == live.size - 1) panelRight - (k.x + k.w)
+                else (live[ki + 1].x - (k.x + k.w)) * 0.5f
                 k.tx = k.x - max(0f, padL)
                 k.tw = k.w + max(0f, padL) + max(0f, padR)
                 // never reach up into the suggestion strip, nor down into the globe strip
                 k.ty = k.y - if (first) min(halfV, panelPadTop) else halfV
                 k.th = k.h + (k.y - k.ty) + if (last) min(halfV, panelPadBottom) else halfV
             }
+            for (k in row) if (k.spacer) { k.tx = 0f; k.ty = 0f; k.tw = 0f; k.th = 0f }
         }
     }
 
@@ -240,46 +269,95 @@ class KeyboardView(context: Context) : View(context) {
         val w = width.toFloat()
         val h = height.toFloat()
 
-        bgPaint.color = if (zonePad <= 0.5f) theme.panel else theme.bg
-        canvas.drawRect(0f, 0f, w, h, bgPaint)
-
-        // panel — flush to the edges when the inset is zero, rounded on top only
+        // Nothing is painted outside the panel, so the rounded top corners show the
+        // app behind them — the same way the iOS keyboard does it.
         val pTop = zonePad
         val pBottom = h - bottomPad - zonePad
         rf.set(zonePad, pTop, w - zonePad, pBottom)
         bgPaint.color = theme.panel
-        if (zonePad <= 0.5f) {
-            canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
-            if (panelRad > 0f) {
-                canvas.drawRect(rf.left, pTop + panelRad, rf.right, pBottom, bgPaint)
-            }
-        } else {
-            canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
+        canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
+        if (panelRad > 0f) {
+            // square off the bottom; only the top two corners are rounded
+            canvas.drawRect(rf.left, pTop + panelRad, rf.right, pBottom, bgPaint)
+        }
+        if (zonePad > 0.5f) {
             edgePaint.color = theme.panelEdge
             edgePaint.strokeWidth = dp(1f)
             canvas.drawRoundRect(rf, panelRad, panelRad, edgePaint)
         }
-
-        // suggestion strip
-        if (showSugg && page != Pages.EMOJI) {
-            rf.set(zonePad + sideMargin, zonePad + panelPadTop,
-                w - zonePad - sideMargin, zonePad + panelPadTop + suggH)
-            if (theme.sugg != theme.panel) {
-                bgPaint.color = theme.sugg
-                canvas.drawRoundRect(rf, suggRad, suggRad, bgPaint)
-            }
-            txtPaint.typeface = arFont
-            txtPaint.textSize = dp(13f)
-            txtPaint.color = if (suggText.isEmpty()) theme.dim else theme.text
-            val label = if (suggText.isEmpty()) "اكتب اختصار ليظهر هنا" else suggText
-            canvas.drawText(label, rf.centerX(), rf.centerY() + dp(4.5f), txtPaint)
+        if (bottomPad > 0f) {
+            bgPaint.color = theme.panel
+            canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }
+
+        if (showSugg && page != Pages.EMOJI) drawStrip(canvas, w)
 
         if (page == Pages.EMOJI) drawEmoji(canvas)
 
-        for (row in rows) for (k in row) drawKey(canvas, k)
+        for (row in rows) for (k in row) if (!k.spacer) drawKey(canvas, k)
 
         if (outerH > 0f) drawOuterRow(canvas, w, h)
+    }
+
+    /**
+     * The prediction strip. Measured off a real iOS screenshot: flat, no box, the
+     * same colour as the panel, split into three equal zones by two hairlines that
+     * sit at a third and two thirds of the FULL panel width — not of the key area —
+     * and run 54% of the strip height, centred.
+     */
+    private fun drawStrip(canvas: Canvas, w: Float) {
+        val top = zonePad + panelPadTop
+        val bottom = top + suggH
+        val left = zonePad
+        val right = w - zonePad
+        val micW = if (micInStrip) suggH * 0.9f else 0f
+        val zoneRight = right - micW
+
+        // pressed zone gets a soft highlight, nothing else is painted
+        if (pressedZone in 0..2 && suggs.size > pressedZone) {
+            val zw = (zoneRight - left) / 3f
+            rf.set(left + pressedZone * zw + dp(2f), top + suggH * 0.14f,
+                left + (pressedZone + 1) * zw - dp(2f), bottom - suggH * 0.14f)
+            bgPaint.color = theme.keyDown
+            canvas.drawRoundRect(rf, suggRad, suggRad, bgPaint)
+        }
+
+        if (hairOn) {
+            edgePaint.color = Themes.hairline(theme)
+            edgePaint.strokeWidth = dp(hairW)
+            val hh = suggH * hairH
+            val cy = (top + bottom) / 2f
+            val a = left + (right - left) / 3f
+            val b = left + (right - left) * 2f / 3f
+            canvas.drawLine(a, cy - hh / 2f, a, cy + hh / 2f, edgePaint)
+            canvas.drawLine(b, cy - hh / 2f, b, cy + hh / 2f, edgePaint)
+        }
+
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.33f
+        val fm = txtPaint.fontMetrics
+        val baseline = (top + bottom) / 2f - (fm.ascent + fm.descent) / 2f
+        val zw = (zoneRight - left) / 3f
+        for (i in 0..2) {
+            val s = suggs.getOrNull(i) ?: continue
+            if (s.isEmpty()) continue
+            txtPaint.color = if (i == 1) theme.text else theme.dim
+            val cx = left + zw * i + zw / 2f
+            canvas.drawText(ellipsize(s, zw - dp(10f)), cx, baseline, txtPaint)
+        }
+
+        if (micInStrip) {
+            icoPaint.color = theme.outer
+            icoPaint.strokeWidth = dp(1.7f)
+            drawIcon(canvas, Ico.MIC, right - micW / 2f, (top + bottom) / 2f, suggH * 0.46f)
+        }
+    }
+
+    private fun ellipsize(s: String, maxW: Float): String {
+        if (txtPaint.measureText(s) <= maxW) return s
+        var n = s.length
+        while (n > 1 && txtPaint.measureText(s.substring(0, n) + "…") > maxW) n--
+        return s.substring(0, n) + "…"
     }
 
     private fun drawEmoji(canvas: Canvas) {
@@ -324,7 +402,7 @@ class KeyboardView(context: Context) : View(context) {
             k.style == Style.DARK -> theme.keyDark
             else -> theme.key
         }
-        val r = if (k.style == Style.GO) rad * 2.2f else rad
+        val r = rad
         canvas.drawRoundRect(rf, r, r, keyPaint)
 
         val fg = when {
@@ -353,10 +431,10 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         txtPaint.typeface = if (k.arabic) arFont else enFont
-        txtPaint.textSize = if (k.smallText) keyH * 0.33f else keyH * 0.46f
+        txtPaint.textSize = if (k.smallText) keyH * 0.33f else keyH * letterScale
         txtPaint.color = fg
         val fm = txtPaint.fontMetrics
-        val baseline = rf.centerY() - (fm.ascent + fm.descent) / 2f
+        val baseline = rf.centerY() - (fm.ascent + fm.descent) / 2f - keyH * 0.03f
         canvas.drawText(k.label, rf.centerX(), baseline, txtPaint)
     }
 
@@ -420,6 +498,24 @@ class KeyboardView(context: Context) : View(context) {
                 path.moveTo(cx - s * 0.4f, cy + s * 0.22f)
                 path.quadTo(cx, cy + s * 0.68f, cx + s * 0.4f, cy + s * 0.22f)
                 canvas.drawPath(path, icoPaint)
+            }
+            Ico.GLOBE -> {
+                canvas.drawCircle(cx, cy, s * 0.92f, icoPaint)
+                canvas.drawLine(cx - s * 0.92f, cy, cx + s * 0.92f, cy, icoPaint)
+                path.reset()
+                path.moveTo(cx, cy - s * 0.92f)
+                path.quadTo(cx + s * 0.68f, cy, cx, cy + s * 0.92f)
+                path.quadTo(cx - s * 0.68f, cy, cx, cy - s * 0.92f)
+                canvas.drawPath(path, icoPaint)
+            }
+            Ico.MIC -> {
+                rf.set(cx - s * 0.4f, cy - s * 0.95f, cx + s * 0.4f, cy + s * 0.15f)
+                canvas.drawRoundRect(rf, s * 0.4f, s * 0.4f, icoPaint)
+                path.reset()
+                path.moveTo(cx - s * 0.74f, cy + s * 0.02f)
+                path.quadTo(cx, cy + s * 1.1f, cx + s * 0.74f, cy + s * 0.02f)
+                canvas.drawPath(path, icoPaint)
+                canvas.drawLine(cx, cy + s * 0.72f, cx, cy + s * 1.0f, icoPaint)
             }
         }
     }
@@ -489,12 +585,16 @@ class KeyboardView(context: Context) : View(context) {
                 // below must never reach up into it
                 if (showSugg && page != Pages.EMOJI &&
                     y < zonePad + panelPadTop + suggH
-                ) return true
+                ) {
+                    pressedZone = stripZone(x)
+                    if (pressedZone >= 0 && pressFx) invalidate()
+                    return true
+                }
 
                 val k = find(x, y) ?: return true
-                pressed = k
+                pressed = if (pressFx) k else null
                 if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
-                invalidateKey(k)
+                if (pressFx) invalidateKey(k)
                 if (k.code == Code.DEL) {
                     repeating = true
                     handler.postDelayed(repeatRunnable, 380)
@@ -540,9 +640,17 @@ class KeyboardView(context: Context) : View(context) {
                 }
 
                 if (showSugg && page != Pages.EMOJI &&
-                    y < zonePad + panelPadTop + suggH && suggText.isNotEmpty()
+                    y < zonePad + panelPadTop + suggH
                 ) {
-                    listener?.onSuggestionTap()
+                    val z = pressedZone
+                    pressedZone = -1
+                    invalidate()
+                    if (z == -2) listener?.onMic()
+                    else if (z >= 0 && stripZone(x) == z) {
+                        if (suggs.getOrNull(z).isNullOrEmpty()) {
+                            if (suggText.isNotEmpty()) listener?.onSuggestionTap()
+                        } else listener?.onPredictionTap(z)
+                    }
                     return true
                 }
 
@@ -555,11 +663,21 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); val k = pressed; pressed = null
+                stopRepeat(); pressedZone = -1; val k = pressed; pressed = null
                 firedOnDown = false; invalidateKey(k); return true
             }
         }
         return super.onTouchEvent(e)
+    }
+
+    /** Which third of the strip a touch is in; -2 for the mic, -1 for nothing. */
+    private fun stripZone(x: Float): Int {
+        val left = zonePad
+        val right = width - zonePad
+        if (micInStrip && x > right - suggH * 0.9f) return -2
+        val zw = (right - left - (if (micInStrip) suggH * 0.9f else 0f)) / 3f
+        val i = ((x - left) / zw).toInt()
+        return if (i in 0..2) i else -1
     }
 
     private fun invalidateKey(k: Key?) {
@@ -581,11 +699,12 @@ class KeyboardView(context: Context) : View(context) {
      * lands just outside the rows still types instead of doing nothing.
      */
     private fun find(x: Float, y: Float): Key? {
-        for (row in rows) for (k in row) if (k.hitT(x, y)) return k
+        for (row in rows) for (k in row) if (!k.spacer && k.hitT(x, y)) return k
 
         var best: Key? = null
         var bestD = Float.MAX_VALUE
         for (row in rows) for (k in row) {
+            if (k.spacer) continue
             val d = k.distT(x, y)
             if (d < bestD) { bestD = d; best = k }
         }

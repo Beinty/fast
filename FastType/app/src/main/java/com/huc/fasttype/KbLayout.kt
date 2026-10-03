@@ -31,6 +31,8 @@ object Ico {
     const val ENTER = 4
     const val SPACE = 5
     const val SMILE = 6
+    const val GLOBE = 7
+    const val MIC = 8
 }
 
 class Key(
@@ -41,7 +43,15 @@ class Key(
     val code: Int = Code.CHAR,
     val icon: Int = Ico.NONE,
     val arabic: Boolean = false,
-    val smallText: Boolean = false
+    val smallText: Boolean = false,
+    /**
+     * Multiplier on the gap that follows this key. iOS puts twice the normal gap
+     * between shift / delete and the letters, which is why A never sits straight
+     * above the shift arrow. Measured: 40px against a normal 19.5px.
+     */
+    val gapAfter: Float = 1f,
+    /** A blank slot that reserves width without drawing or catching touches. */
+    val spacer: Boolean = false
 ) {
     // filled in on layout — the drawn rectangle
     var x = 0f
@@ -102,16 +112,47 @@ object KbLayout {
         return out
     }
 
-    private fun del() = Key(weight = 1.37f, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
-    private fun enter() = Key(weight = 1.37f, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
-    private fun emoji() = Key(style = Style.DARK, code = Code.TO_EMOJI, icon = Ico.SMILE)
+    // Every width below is measured off a real iOS screenshot, as a multiple of a
+    // letter key: shift/delete 117.5/85.5, 123 110/85.5, emoji 111/85.5,
+    // action 244/85.5, space 503/85.5. The doubled gap is 40/19.5.
+    const val W_MOD = 1.374f
+    const val W_SYM = 1.29f
+    const val W_EMOJI = 1.30f
+    const val W_GO = 2.85f
+    const val W_SPACE = 5.88f
+    const val W_SPACE_GLOBE = 4.40f
+    const val W_ROW2_PAD = 0.62f
+    const val GAP_MOD = 2.05f
+
+    /** Set by the view before building rows: put the language key in the last row. */
+    @Volatile
+    var globeInRow = false
+
+    private fun del() = Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
+    private fun enter() = Key(weight = W_GO, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
+    private fun emoji() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.TO_EMOJI, icon = Ico.SMILE)
+    private fun globe() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.LANG, icon = Ico.GLOBE)
+    private fun pad() = Key(weight = W_ROW2_PAD, spacer = true)
 
     private fun space(ar: Boolean) =
-        Key(label = if (ar) "العربية" else "English", out = " ", weight = 5.78f,
+        Key(label = if (ar) "العربية" else "English", out = " ",
+            weight = if (globeInRow) W_SPACE_GLOBE else W_SPACE,
             code = Code.SPACE, arabic = ar)
 
-    private fun lastRow(ar: Boolean, first: Key): MutableList<Key> =
-        mutableListOf(first, emoji(), space(ar), enter())
+    private fun lastRow(ar: Boolean, first: Key): MutableList<Key> {
+        val out = mutableListOf(first, emoji())
+        if (globeInRow) out.add(globe())
+        out.add(space(ar))
+        out.add(enter())
+        return out
+    }
+
+    /** Row two is inset by 0.62 of a key on each side, exactly like iOS. */
+    private fun inset(keys: MutableList<Key>): MutableList<Key> {
+        keys.add(0, pad())
+        keys.add(pad())
+        return keys
+    }
 
     private fun lastRowWithNpad(ar: Boolean, first: Key): MutableList<Key> =
         mutableListOf(
@@ -123,12 +164,12 @@ object KbLayout {
 
     private fun symKey(ar: Boolean) = Key(
         label = if (ar) "؟١٢٣" else "?123",
-        style = Style.DARK, code = Code.TO_SYM, arabic = ar, smallText = true
+        weight = W_SYM, style = Style.DARK, code = Code.TO_SYM, arabic = ar, smallText = true
     )
 
     private fun abcKey(ar: Boolean) = Key(
         label = if (ar) "أبج" else "ABC",
-        style = Style.DARK, code = Code.TO_ABC, arabic = ar, smallText = true
+        weight = W_SYM, style = Style.DARK, code = Code.TO_ABC, arabic = ar, smallText = true
     )
 
     private fun numberRow(ar: Boolean): MutableList<Key> {
@@ -155,15 +196,22 @@ object KbLayout {
                 } else {
                     val up = shift > 0
                     r.add(chars(EN1, false, up))
-                    r.add(chars(EN2, false, up))
+                    r.add(inset(chars(EN2, false, up)))
                     val third = ArrayList<Key>()
                     third.add(
                         Key(
-                            weight = 1.37f, style = Style.DARK, code = Code.SHIFT,
-                            icon = if (shift == 2) Ico.CAPS else Ico.SHIFT
+                            weight = W_MOD, style = Style.DARK, code = Code.SHIFT,
+                            icon = if (shift == 2) Ico.CAPS else Ico.SHIFT,
+                            gapAfter = GAP_MOD
                         )
                     )
-                    third.addAll(chars(EN3, false, up))
+                    val mid = chars(EN3, false, up)
+                    // the last letter carries the doubled gap that sits before delete
+                    mid[mid.size - 1] = Key(
+                        label = mid[mid.size - 1].label, out = mid[mid.size - 1].out,
+                        gapAfter = GAP_MOD
+                    )
+                    third.addAll(mid)
                     third.add(del())
                     r.add(third)
                 }
@@ -178,7 +226,7 @@ object KbLayout {
                 r.add(row1)
                 r.add(chars("@#\$_&-+()/", false))
                 val row3 = ArrayList<Key>()
-                row3.add(Key("=\\<", "", 1.37f, Style.DARK, Code.TO_SYM2, smallText = true))
+                row3.add(Key("=\\<", "", W_MOD, Style.DARK, Code.TO_SYM2, smallText = true))
                 row3.addAll(chars(if (arabic) "*\"':؛!؟" else "*\"':;!?", arabic))
                 row3.add(del())
                 r.add(row3)
@@ -191,7 +239,7 @@ object KbLayout {
                 val row3 = ArrayList<Key>()
                 row3.add(
                     Key(
-                        if (arabic) "؟١٢٣" else "?123", "", 1.37f,
+                        if (arabic) "؟١٢٣" else "?123", "", W_MOD,
                         Style.DARK, Code.TO_SYM, arabic = arabic, smallText = true
                     )
                 )
@@ -237,7 +285,7 @@ object KbLayout {
     fun emojiBottom(arabic: Boolean): List<Key> = mutableListOf(
         abcKey(arabic),
         space(arabic),
-        Key(weight = 1.37f, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
+        Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
     )
 }
 

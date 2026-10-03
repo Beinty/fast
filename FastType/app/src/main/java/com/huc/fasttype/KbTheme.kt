@@ -27,21 +27,50 @@ object Themes {
 
     private fun c(s: String) = Color.parseColor(s)
 
+    /**
+     * Colour of the thin dividers in the prediction strip. Measured off a real iOS
+     * screenshot: #D0D1D5 over a #E3E4E7 panel, i.e. the text colour at about 8%.
+     */
+    fun hairline(t: KbTheme): Int {
+        val a = 0.085f
+        val r = (Color.red(t.panel) * (1 - a) + Color.red(t.text) * a).toInt()
+        val g = (Color.green(t.panel) * (1 - a) + Color.green(t.text) * a).toInt()
+        val b = (Color.blue(t.panel) * (1 - a) + Color.blue(t.text) * a).toInt()
+        return Color.rgb(r, g, b)
+    }
+
     val all: List<KbTheme> = listOf(
-        // measured off a real iOS screenshot: every key white, only the action key tinted
+        // All three measured off a real iOS screenshot: every key white, only the
+        // action key tinted. They differ only in how dark the panel behind them is.
         KbTheme(
-            "iosLight", "iOS نهاري",
-            c("#E3E4E6"), c("#E3E4E6"), c("#E3E4E6"), c("#E3E4E6"),
-            c("#FFFFFF"), c("#D8D9DC"), c("#FFFFFF"),
-            c("#337FDF"), c("#FFFFFF"),
+            "iosLight", "iOS — المقيس",
+            c("#E3E4E7"), c("#E3E4E7"), c("#E3E4E7"), c("#E3E4E7"),
+            c("#FFFFFF"), c("#D4D5D9"), c("#FFFFFF"),
+            c("#3478F7"), c("#FFFFFF"),
             c("#000000"), c("#8A8A8E"), c("#000000"), c("#FFFFFF"), c("#3C3C43"),
+            lightKeys = true
+        ),
+        KbTheme(
+            "iosCrisp", "iOS — أوضح",
+            c("#D7D9DE"), c("#D7D9DE"), c("#D7D9DE"), c("#D7D9DE"),
+            c("#FFFFFF"), c("#E9EAEE"), c("#FFFFFF"),
+            c("#3478F7"), c("#FFFFFF"),
+            c("#000000"), c("#6C6E74"), c("#000000"), c("#FFFFFF"), c("#2E3036"),
+            lightKeys = true
+        ),
+        KbTheme(
+            "iosDeep", "iOS — أقوى",
+            c("#C9CCD3"), c("#C9CCD3"), c("#C9CCD3"), c("#C9CCD3"),
+            c("#FFFFFF"), c("#E6E7EB"), c("#FFFFFF"),
+            c("#2A6AE8"), c("#FFFFFF"),
+            c("#000000"), c("#5A5C62"), c("#000000"), c("#FFFFFF"), c("#25272C"),
             lightKeys = true
         ),
         KbTheme(
             "iosDark", "iOS ليلي",
             c("#1C1C1E"), c("#1C1C1E"), c("#1C1C1E"), c("#1C1C1E"),
             c("#4A4A4C"), c("#6B6B6E"), c("#4A4A4C"),
-            c("#337FDF"), c("#FFFFFF"),
+            c("#3478F7"), c("#FFFFFF"),
             c("#FFFFFF"), c("#8A8A8E"), c("#FFFFFF"), c("#1C1C1E"), c("#D1D1D6")
         ),
         KbTheme(
