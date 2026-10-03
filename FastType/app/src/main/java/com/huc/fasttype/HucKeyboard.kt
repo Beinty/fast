@@ -493,6 +493,17 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ui.post { currentInputConnection?.let { settleVoice(it) } }
     }
 
+    /** Hands dictated text over to the editor before a key touches it. */
+    private fun releaseComposing(ic: android.view.inputmethod.InputConnection) {
+        voiceLocked = ""
+        if (!composing) return
+        composing = false
+        try {
+            ic.finishComposingText()
+        } catch (_: Exception) {
+        }
+    }
+
     /** Closes off the sentence: nothing of it stays open to change. */
     private fun settleVoice(ic: android.view.inputmethod.InputConnection) {
         if (!composing && voiceLocked.isEmpty()) return
