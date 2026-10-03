@@ -797,6 +797,11 @@ class MainActivity : Activity() {
             Store.kbClearBottom) {
             Store.setKbFlag(this, "clear", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("إخفاء الحروف بضغطة مطوّلة",
+            "دوس مطوّلاً على المسافة تختفي الحروف — وترجع بأي ضغطة",
+            Store.kbBlankHold) {
+            Store.setKbFlag(this, "blank", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("تظليل الزر عند الضغط", "طفّيه لأسرع استجابة ممكنة",
             Store.kbPressFx) {
             Store.setKbFlag(this, "pressfx", it); syncPreview()

@@ -58,6 +58,7 @@ object Store {
     private const val K_KB_CORRECT = "kb_correct"
     private const val K_KB_CLEAR = "kb_clear_bottom"
     private const val K_KB_LEARN = "kb_learn"
+    private const val K_KB_BLANK = "kb_blank_hold"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -208,6 +209,10 @@ object Store {
     @Volatile var kbLearn: Boolean = true
         private set
 
+    /** A long press on space hides every label until the next key press. */
+    @Volatile var kbBlankHold: Boolean = true
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -256,6 +261,7 @@ object Store {
         kbCorrect = p.getBoolean(K_KB_CORRECT, true)
         kbClearBottom = p.getBoolean(K_KB_CLEAR, false)
         kbLearn = p.getBoolean(K_KB_LEARN, true)
+        kbBlankHold = p.getBoolean(K_KB_BLANK, true)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -357,6 +363,7 @@ object Store {
             "correct" -> { kbCorrect = v; e.putBoolean(K_KB_CORRECT, v) }
             "clear" -> { kbClearBottom = v; e.putBoolean(K_KB_CLEAR, v) }
             "learn" -> { kbLearn = v; e.putBoolean(K_KB_LEARN, v) }
+            "blank" -> { kbBlankHold = v; e.putBoolean(K_KB_BLANK, v) }
         }
         e.apply()
     }

@@ -110,8 +110,30 @@ class KeyboardView(context: Context) : View(context) {
     private var micInStrip = true
     private var letterScale = 0.49f
     private var pressFx = true
+    private var blankOnHold = true
     private var clearBottom = false
     private var pressedZone = -1
+
+    /**
+     * Blank mode. A long press on the space bar hides every label, exactly like the
+     * iPhone's trackpad mode looks. It stays on until the next key press, so the
+     * keyboard can actually be photographed this way.
+     */
+    private var blank = false
+    private var blankArmed = false
+
+    private val blankRunnable = Runnable {
+        if (!blankArmed) return@Runnable
+        blank = true
+        blankArmed = false
+        // the space that fast-key typing already sent has to go back
+        listener?.onDelete()
+        performHapticFeedback(
+            android.view.HapticFeedbackConstants.LONG_PRESS,
+            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
+        invalidate()
+    }
     private var outerH = dp(40f)
     private var bottomPad = dp(10f)
     private var fastKeys = true
@@ -197,6 +219,7 @@ class KeyboardView(context: Context) : View(context) {
         micInStrip = Store.kbMicStrip
         letterScale = Store.kbLetter / 100f
         pressFx = Store.kbPressFx
+        blankOnHold = Store.kbBlankHold
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
         requestLayout()
@@ -353,7 +376,7 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }
 
-        if (showSugg && page != Pages.EMOJI) drawStrip(canvas, w)
+        if (showSugg && page != Pages.EMOJI && !blank) drawStrip(canvas, w)
 
         if (page == Pages.EMOJI) drawEmoji(canvas)
 
@@ -513,6 +536,9 @@ class KeyboardView(context: Context) : View(context) {
         val r = rad
         canvas.drawRoundRect(rf, r, r, keyPaint)
 
+        // blank mode: the key shapes stay, everything written on them goes
+        if (blank) return
+
         val fg = when {
             isOn -> theme.onText
             k.style == Style.GO -> theme.goIcon
@@ -657,6 +683,7 @@ class KeyboardView(context: Context) : View(context) {
 
     // ---------------- touch ----------------
 
+    private var downX = 0f
     private var downY = 0f
     private var scrollStart = 0f
     private var scrolling = false
@@ -671,6 +698,7 @@ class KeyboardView(context: Context) : View(context) {
 
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                downX = x
                 downY = y
                 scrolling = false
                 firedOnDown = false
@@ -700,6 +728,20 @@ class KeyboardView(context: Context) : View(context) {
                 }
 
                 val k = find(x, y) ?: return true
+
+                // any key press brings the labels back, and that press does nothing else
+                if (blank) {
+                    blank = false
+                    blankArmed = false
+                    handler.removeCallbacks(blankRunnable)
+                    invalidate()
+                    return true
+                }
+                if (blankOnHold && k.code == Code.SPACE) {
+                    blankArmed = true
+                    handler.postDelayed(blankRunnable, 320)
+                }
+
                 pressed = if (pressFx) k else null
                 if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
                 if (pressFx) invalidateKey(k)
@@ -713,6 +755,12 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_MOVE -> {
+                if (blankArmed && (Math.abs(x - downX) > dp(10f) ||
+                        Math.abs(y - downY) > dp(10f))
+                ) {
+                    blankArmed = false
+                    handler.removeCallbacks(blankRunnable)
+                }
                 if (page == Pages.EMOJI && !scrolling &&
                     Math.abs(y - downY) > dp(6f) && downY >= emojiTop && downY <= emojiBottom
                 ) scrolling = true
@@ -725,6 +773,8 @@ class KeyboardView(context: Context) : View(context) {
 
             MotionEvent.ACTION_UP -> {
                 stopRepeat()
+                blankArmed = false
+                handler.removeCallbacks(blankRunnable)
 
                 if (firedOnDown) {
                     val fk = pressed
@@ -773,7 +823,8 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); pressedZone = -1; val k = pressed; pressed = null
+                stopRepeat(); blankArmed = false
+                handler.removeCallbacks(blankRunnable); pressedZone = -1; val k = pressed; pressed = null
                 firedOnDown = false; invalidateKey(k); return true
             }
         }
