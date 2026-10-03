@@ -65,6 +65,7 @@ class MainActivity : Activity() {
     private lateinit var panelKb: LinearLayout
     private var kbPreview: KeyboardView? = null
     private var kbOuterRow: View? = null
+    private var voiceReport: TextView? = null
 
     private lateinit var permBanner: TextView
     private lateinit var repeatValue: TextView
@@ -649,6 +650,30 @@ class MainActivity : Activity() {
         }
         p.addView(pick, lp(true, bottom = dp(14)))
 
+        // ---- voice diagnostics, shown here because ColorOS hides app logs ----
+        val vd = TextView(this)
+        vd.setTextColor(MUT)
+        vd.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        vd.setPadding(dp(12), dp(12), dp(12), dp(12))
+        vd.background = round(CARD)
+        vd.setLineSpacing(dp(3).toFloat(), 1f)
+        voiceReport = vd
+        refreshVoiceReport()
+        p.addView(vd, lp(true, bottom = dp(8)))
+
+        val vb = Button(this)
+        vb.text = "فحص المايك من جديد"
+        vb.isAllCaps = false
+        vb.setTextColor(TXT)
+        vb.background = round(CARD)
+        vb.setOnClickListener {
+            val v = Voice(this)
+            if (!v.hasPermission()) v.askPermission()
+            v.rescan()
+            refreshVoiceReport()
+        }
+        p.addView(vb, lp(true, bottom = dp(14)))
+
         val tl = TextView(this)
         tl.text = "الثيم"
         tl.setTextColor(MUT)
@@ -841,6 +866,16 @@ class MainActivity : Activity() {
     }
 
     /** Re-reads the saved settings into the preview so every change shows at once. */
+    /** Re-reads what the phone offers for voice input and shows it plainly. */
+    private fun refreshVoiceReport() {
+        val t = voiceReport ?: return
+        t.text = try {
+            "حالة الإدخال الصوتي\n" + Voice(this).report()
+        } catch (e: Exception) {
+            "ما كدرت أفحص: " + e.message
+        }
+    }
+
     private fun syncPreview() {
         val pv = kbPreview ?: return
         Store.load(this)

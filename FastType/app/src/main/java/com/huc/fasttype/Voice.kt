@@ -109,6 +109,31 @@ class Voice(private val ctx: Context) {
     fun onDeviceAvailable(): Boolean =
         Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
 
+    /**
+     * A plain-language report of what the phone offers, for the settings screen.
+     * This is the same information the log carries, shown where it can actually be
+     * read — ColorOS hides ordinary apps' log output.
+     */
+    fun report(): String {
+        val lines = ArrayList<String>(6)
+        lines.add("صلاحية المايك: " + if (hasPermission()) "معطاة ✓" else "غير معطاة ✗")
+        lines.add("المحرك الافتراضي: " +
+            if (SpeechRecognizer.isRecognitionAvailable(ctx)) "موجود" else "ماكو")
+        lines.add("محرك الجهاز المحلي: " + if (onDeviceAvailable()) "موجود ✓" else "ماكو")
+        val e = engines()
+        if (e.isEmpty()) {
+            lines.add("محركات التعرّف: ماكو ولا واحد ✗")
+        } else {
+            lines.add("محركات التعرّف (" + e.size + "):")
+            for (c in e) lines.add("  • " + c.packageName)
+            lines.add("راح يستعمل: " + e[0].packageName)
+        }
+        return lines.joinToString("\n")
+    }
+
+    /** Forgets the cached engine list so the report re-reads it. */
+    fun rescan() { services = null }
+
     /** Opens the permission screen; the person comes back and presses the mic again. */
     fun askPermission() {
         try {
