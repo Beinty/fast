@@ -722,6 +722,14 @@ class MainActivity : Activity() {
             Store.setKbInt(this, "bottom", it); syncPreview()
         }, lp(true, bottom = dp(14)))
 
+        p.addView(switchRow("التنبؤات", "يقترح كلمات وأنت تكتب، ودوس عليها لتنكتب",
+            Store.kbPredict) {
+            Store.setKbFlag(this, "predict", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("التصحيح التلقائي", "يصحّح الكلمة الغلط عند المسافة — ورجعة وحدة تلغيه",
+            Store.kbCorrect) {
+            Store.setKbFlag(this, "correct", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون",
             Store.kbHair) {
             Store.setKbFlag(this, "hair", it); syncPreview()
@@ -799,6 +807,8 @@ class MainActivity : Activity() {
             override fun onSuggestionTap() {}
             override fun onPredictionTap(index: Int) {}
             override fun onMic() {}
+            override fun onDeleteWord() {}
+            override fun onRepeatState(active: Boolean) {}
         }
         pv.arabic = Store.kbArabicFirst
         pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"

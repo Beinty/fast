@@ -7,14 +7,24 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.os.Handler
+import android.os.Looper
 
 /**
  * The HUC keyboard. Shortcut expansion happens right here, so it needs no
  * accessibility service and cannot be throttled by the system.
  */
-class HucKeyboard : InputMethodService(), KeyboardView.Listener {
+class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     private var kv: KeyboardView? = null
+    private val ui = Handler(Looper.getMainLooper())
+    private var voice: Voice? = null
+    private var voiceBase = ""
+    private var voicePartial = 0
+    /** Word the auto-correction just replaced, so one backspace puts it back. */
+    private var undoTyped: String? = null
+    private var undoFixed: String? = null
+    private var repeatingDel = false
 
     private var arabic = true
     private var shift = 0
@@ -27,8 +37,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
     private var pendingShortcut: Shortcut? = null
 
     override fun onCreate() {
+        setTheme(R.style.KbWindow)
         super.onCreate()
         Store.load(this)
+        Dict.warm(this)
     }
 
     override fun onCreateInputView(): View {
@@ -52,10 +64,16 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
      */
     private fun clearWindowBackground() {
         try {
-            window?.window?.setBackgroundDrawable(null)
+            val w = window?.window
+            w?.setBackgroundDrawable(null)
+            w?.setDimAmount(0f)
+            w?.decorView?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            w?.findViewById<View>(android.R.id.inputArea)
+                ?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            // belt and braces: every container between the panel and the decor view
             var p = kv?.parent
             var depth = 0
-            while (p is View && depth < 4) {
+            while (p is View && depth < 12) {
                 p.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                 p = p.parent
                 depth++
@@ -63,6 +81,24 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
             kv?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
         } catch (_: Exception) {
         }
+    }
+
+    override fun onWindowShown() {
+        super.onWindowShown()
+        clearWindowBackground()
+        Dict.warm(this)
+    }
+
+    override fun onWindowHidden() {
+        super.onWindowHidden()
+        voice?.stop()
+        kv?.listening = false
+    }
+
+    override fun onDestroy() {
+        voice?.stop()
+        voice = null
+        super.onDestroy()
     }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
@@ -93,6 +129,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
 
     override fun onChar(s: String) {
         val ic = currentInputConnection ?: return
+        undoTyped = null
+        undoFixed = null
 
         val isBreak = s.length == 1 && isWordBreak(s[0])
 
@@ -103,6 +141,24 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
                 ic.deleteSurroundingText(hit.trigger.length, 0)
                 ic.commitText(hit.phrase + s, 1)
                 ic.endBatchEdit()
+                buffer.setLength(0)
+                feedback()
+                refreshSugg()
+                afterType()
+                return
+            }
+        }
+
+        if (isBreak && Store.kbCorrect && buffer.isNotEmpty()) {
+            val typed = buffer.toString()
+            val fixed = Dict.correct(typed, arabic)
+            if (fixed != null) {
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(typed.length, 0)
+                ic.commitText(fixed + s, 1)
+                ic.endBatchEdit()
+                undoTyped = typed
+                undoFixed = fixed
                 buffer.setLength(0)
                 feedback()
                 refreshSugg()
@@ -144,12 +200,62 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
 
     override fun onDelete() {
         val ic = currentInputConnection ?: return
-        val sel = ic.getSelectedText(0)
-        if (sel != null && sel.isNotEmpty()) ic.commitText("", 1)
-        else ic.deleteSurroundingText(1, 0)
+
+        // one backspace right after an auto-correction puts the typed word back
+        val t = undoTyped
+        val f = undoFixed
+        if (t != null && f != null) {
+            undoTyped = null
+            undoFixed = null
+            ic.beginBatchEdit()
+            ic.deleteSurroundingText(f.length + 1, 0)
+            ic.commitText(t, 1)
+            ic.endBatchEdit()
+            buffer.setLength(0)
+            buffer.append(t)
+            feedback()
+            refreshSugg()
+            return
+        }
+
+        // getSelectedText is a round trip to the other app, so it only runs on the
+        // first press — holding backspace must never pay for it
+        if (!repeatingDel) {
+            val sel = ic.getSelectedText(0)
+            if (sel != null && sel.isNotEmpty()) {
+                ic.commitText("", 1)
+                buffer.setLength(0)
+                feedback()
+                refreshSugg()
+                return
+            }
+        }
+
+        ic.deleteSurroundingText(1, 0)
         if (buffer.isNotEmpty()) buffer.setLength(buffer.length - 1)
         feedback()
         refreshSugg()
+    }
+
+    /** Deletes back to the start of the previous word, for a long backspace hold. */
+    override fun onDeleteWord() {
+        val ic = currentInputConnection ?: return
+        undoTyped = null
+        undoFixed = null
+        val before = ic.getTextBeforeCursor(48, 0) ?: ""
+        if (before.isEmpty()) return
+        var i = before.length
+        while (i > 0 && before[i - 1] == ' ') i--
+        while (i > 0 && before[i - 1] != ' ' && before[i - 1] != '\n') i--
+        val n = (before.length - i).coerceAtLeast(1)
+        ic.deleteSurroundingText(n, 0)
+        buffer.setLength(0)
+        refreshSugg()
+    }
+
+    override fun onRepeatState(active: Boolean) {
+        repeatingDel = active
+        if (!active) refreshSugg()
     }
 
     override fun onEnter() {
@@ -211,13 +317,82 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
         refreshSugg()
     }
 
-    /** Middle zone replaces the shortcut; the side zones are not wired up yet. */
     override fun onPredictionTap(index: Int) {
-        if (index == 1) onSuggestionTap()
+        if (pendingShortcut != null) { onSuggestionTap(); return }
+        val v = kv ?: return
+        val word = v.suggs.getOrNull(index) ?: return
+        if (word.isEmpty()) return
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        if (buffer.isNotEmpty()) ic.deleteSurroundingText(buffer.length, 0)
+        ic.commitText("$word ", 1)
+        ic.endBatchEdit()
+        buffer.setLength(0)
+        undoTyped = null
+        undoFixed = null
+        feedback()
+        refreshSugg()
     }
 
+    // ---------------- voice typing ----------------
+
     override fun onMic() {
-        onLang()
+        val vo = voice ?: Voice(this).also { it.sink = this; voice = it }
+        if (vo.isListening) { vo.stop(); return }
+        if (!vo.hasPermission()) {
+            showStrip("افتح الصلاحية وارجع دوس المايك")
+            vo.askPermission()
+            return
+        }
+        voiceBase = ""
+        voicePartial = 0
+        vo.start(arabic)
+    }
+
+    override fun onPartial(text: String) {
+        ui.post {
+            val ic = currentInputConnection ?: return@post
+            ic.beginBatchEdit()
+            if (voicePartial > 0) ic.deleteSurroundingText(voicePartial, 0)
+            ic.commitText(text, 1)
+            ic.endBatchEdit()
+            voicePartial = text.length
+            showStrip(text)
+        }
+    }
+
+    override fun onFinal(text: String) {
+        ui.post {
+            val ic = currentInputConnection
+            if (ic != null) {
+                ic.beginBatchEdit()
+                if (voicePartial > 0) ic.deleteSurroundingText(voicePartial, 0)
+                if (text.isNotEmpty()) ic.commitText("$text ", 1)
+                ic.endBatchEdit()
+            }
+            voicePartial = 0
+            buffer.setLength(0)
+            kv?.listening = false
+            refreshSugg()
+        }
+    }
+
+    override fun onState(listening: Boolean, message: String) {
+        ui.post {
+            kv?.listening = listening
+            if (message.isNotEmpty()) showStrip(message)
+            if (!listening) {
+                voicePartial = 0
+                ui.postDelayed({ if (voice?.isListening != true) refreshSugg() }, 1400)
+            }
+        }
+    }
+
+    private fun showStrip(text: String) {
+        val v = kv ?: return
+        v.suggText = text
+        v.suggs = listOf("", text, "")
+        v.invalidate()
     }
 
     // ---------------- shortcuts ----------------
@@ -236,14 +411,28 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
 
     private fun refreshSugg() {
         val v = kv ?: return
+        if (voice?.isListening == true) return
+
         val hit = if (Store.kbExpand) matchShortcut() else null
         pendingShortcut = hit
-        val t = if (hit != null) "${hit.trigger}  ←  ${hit.phrase}" else ""
-        val zones = if (hit != null)
-            listOf("\u201C${hit.trigger}\u201D", hit.phrase, "")
-        else emptyList()
-        if (t != v.suggText) {
-            v.suggText = t
+
+        // a matching shortcut owns the whole strip — it is the stronger signal
+        if (hit != null) {
+            val t = "${hit.trigger}  \u2190  ${hit.phrase}"
+            if (t != v.suggText) {
+                v.suggText = t
+                v.suggs = listOf("\u201C${hit.trigger}\u201D", hit.phrase, "")
+                v.invalidate()
+            }
+            return
+        }
+
+        val word = buffer.toString()
+        val zones = if (Store.kbPredict && word.isNotEmpty())
+            Dict.predict(word, arabic, 3) else emptyList()
+
+        if (v.suggText.isNotEmpty() || v.suggs != zones) {
+            v.suggText = ""
             v.suggs = zones
             v.invalidate()
         }

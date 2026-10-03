@@ -31,6 +31,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onSuggestionTap()
         fun onPredictionTap(index: Int)
         fun onMic()
+        fun onDeleteWord()
+        fun onRepeatState(active: Boolean)
     }
 
     var listener: Listener? = null
@@ -45,6 +47,10 @@ class KeyboardView(context: Context) : View(context) {
 
     /** Up to three strings for the prediction strip; index 1 is the middle zone. */
     var suggs: List<String> = emptyList()
+
+    /** Voice typing is running — the mic is drawn filled. */
+    var listening = false
+        set(v) { field = v; invalidate() }
 
     private var keyH = 44f
     private var gap = 5f
@@ -105,11 +111,22 @@ class KeyboardView(context: Context) : View(context) {
 
     private val handler = Handler(Looper.getMainLooper())
     private var repeating = false
+    private var repeatTicks = 0
+
+    /**
+     * Backspace repeat. It starts quickly, speeds up as it goes, and after about a
+     * second and a half switches to whole words, so clearing a line never crawls.
+     */
     private val repeatRunnable = object : Runnable {
         override fun run() {
             if (!repeating) return
-            listener?.onDelete()
-            handler.postDelayed(this, 55)
+            repeatTicks++
+            val delay = when {
+                repeatTicks > 44 -> { listener?.onDeleteWord(); 70L }
+                repeatTicks > 16 -> { listener?.onDelete(); 16L }
+                else -> { listener?.onDelete(); 28L }
+            }
+            handler.postDelayed(this, delay)
         }
     }
 
@@ -347,9 +364,15 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (micInStrip) {
-            icoPaint.color = theme.outer
+            val mcx = right - micW / 2f
+            val mcy = (top + bottom) / 2f
+            if (listening) {
+                bgPaint.color = theme.go
+                canvas.drawCircle(mcx, mcy, micW * 0.46f, bgPaint)
+            }
+            icoPaint.color = if (listening) theme.goIcon else theme.outer
             icoPaint.strokeWidth = dp(1.7f)
-            drawIcon(canvas, Ico.MIC, right - micW / 2f, (top + bottom) / 2f, suggH * 0.46f)
+            drawIcon(canvas, Ico.MIC, mcx, mcy, suggH * 0.46f)
         }
     }
 
@@ -597,7 +620,9 @@ class KeyboardView(context: Context) : View(context) {
                 if (pressFx) invalidateKey(k)
                 if (k.code == Code.DEL) {
                     repeating = true
-                    handler.postDelayed(repeatRunnable, 380)
+                    repeatTicks = 0
+                    listener?.onRepeatState(true)
+                    handler.postDelayed(repeatRunnable, 210)
                 }
                 return true
             }
@@ -689,7 +714,9 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private fun stopRepeat() {
+        if (repeating) listener?.onRepeatState(false)
         repeating = false
+        repeatTicks = 0
         handler.removeCallbacks(repeatRunnable)
     }
 

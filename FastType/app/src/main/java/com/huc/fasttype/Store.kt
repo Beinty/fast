@@ -54,6 +54,8 @@ object Store {
     private const val K_KB_GLOBEROW = "kb_globe_row"
     private const val K_KB_LETTER = "kb_letter"
     private const val K_KB_PRESSFX = "kb_press_fx"
+    private const val K_KB_PREDICT = "kb_predict"
+    private const val K_KB_CORRECT = "kb_correct"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -184,6 +186,14 @@ object Store {
     @Volatile var kbPressFx: Boolean = true
         private set
 
+    /** Offer word predictions in the strip while typing. */
+    @Volatile var kbPredict: Boolean = true
+        private set
+
+    /** Fix a misspelt word when a space or punctuation ends it. */
+    @Volatile var kbCorrect: Boolean = true
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -228,6 +238,8 @@ object Store {
         kbGlobeRow = p.getBoolean(K_KB_GLOBEROW, true)
         kbLetter = p.getInt(K_KB_LETTER, 49).coerceIn(40, 58)
         kbPressFx = p.getBoolean(K_KB_PRESSFX, true)
+        kbPredict = p.getBoolean(K_KB_PREDICT, true)
+        kbCorrect = p.getBoolean(K_KB_CORRECT, true)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -325,6 +337,8 @@ object Store {
             "micstrip" -> { kbMicStrip = v; e.putBoolean(K_KB_MICSTRIP, v) }
             "globerow" -> { kbGlobeRow = v; e.putBoolean(K_KB_GLOBEROW, v) }
             "pressfx" -> { kbPressFx = v; e.putBoolean(K_KB_PRESSFX, v) }
+            "predict" -> { kbPredict = v; e.putBoolean(K_KB_PREDICT, v) }
+            "correct" -> { kbCorrect = v; e.putBoolean(K_KB_CORRECT, v) }
         }
         e.apply()
     }
