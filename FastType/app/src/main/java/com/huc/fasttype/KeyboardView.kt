@@ -296,6 +296,13 @@ class KeyboardView(context: Context) : View(context) {
     private fun rowCount(): Int = rows.size
 
     private fun contentHeight(): Float {
+        // The clipboard page has no key rows of its own, so it borrows the height of
+        // the letter keyboard — otherwise it collapses to nothing and the list has
+        // nowhere to appear.
+        if (page == Pages.CLIP) {
+            return zonePad * 2 + panelPadTop + panelPadBottom +
+                suggH + vGap + keyH * 4 + vGap * 3 + outerH + bottomPad
+        }
         var h = zonePad * 2 + panelPadTop + panelPadBottom
         if (showSugg && page != Pages.EMOJI) h += suggH + vGap
         if (page == Pages.EMOJI) {
@@ -600,7 +607,8 @@ class KeyboardView(context: Context) : View(context) {
         clipListBottom = listBottom
 
         val items = Clip.all
-        clipMaxScroll = max(0f, items.size * clipRowH - (listBottom - listTop))
+        val visible = max(clipRowH, listBottom - listTop)
+        clipMaxScroll = max(0f, items.size * clipRowH - visible)
         clipScroll = clipScroll.coerceIn(0f, clipMaxScroll)
 
         if (items.isEmpty()) {

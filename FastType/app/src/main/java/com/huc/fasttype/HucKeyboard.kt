@@ -131,6 +131,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         clearWindowBackground()
         Dict.warm(this)
         commitDictated()
+        // the moment the keyboard is on screen it may read the clipboard again, so
+        // anything copied while it was away is picked up now
+        if (Store.kbClip) {
+            Clip.capture(this)
+            Clip.expire()
+        }
     }
 
     /** Types whatever the system voice screen heard while we were off screen. */
