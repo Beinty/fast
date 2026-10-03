@@ -3,7 +3,6 @@ package com.huc.fasttype
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -47,7 +46,7 @@ class KeyboardView(context: Context) : View(context) {
     private var rad = 9f
     private var panelRad = 24f
 
-    private val zonePad get() = dp(7f)
+    private var zonePad = dp(0f)
     private val panelPadX get() = dp(5f)
     private val panelPadTop get() = dp(7f)
     private val panelPadBottom get() = dp(8f)
@@ -109,6 +108,7 @@ class KeyboardView(context: Context) : View(context) {
         theme = Themes.byId(Store.kbTheme)
         numRow = Store.kbNumberRow
         showSugg = Store.kbSuggBar
+        zonePad = dp(Store.kbInset.toFloat())
         outerH = dp(Store.kbOuterH.toFloat())
         bottomPad = dp(Store.kbBottomPad.toFloat())
         fastKeys = Store.kbFast
@@ -181,6 +181,11 @@ class KeyboardView(context: Context) : View(context) {
             y = emojiBottom + gap
         }
 
+        val stripTop = contentHeight() - bottomPad - outerH
+        val stripBottom = contentHeight() - bottomPad
+        globeRect.set(0f, stripTop, width * 0.4f, stripBottom)
+        micRect.set(width * 0.6f, stripTop, width.toFloat(), stripBottom)
+
         for (row in rows) {
             var totalWeight = 0f
             for (k in row) totalWeight += k.weight
@@ -204,15 +209,22 @@ class KeyboardView(context: Context) : View(context) {
         bgPaint.color = theme.bg
         canvas.drawRect(0f, 0f, w, h, bgPaint)
 
-        // panel
+        // panel — flush to the edges when the inset is zero, rounded on top only
         val pTop = zonePad
-        val pBottom = h - outerH - bottomPad - zonePad
+        val pBottom = h - bottomPad - zonePad
         rf.set(zonePad, pTop, w - zonePad, pBottom)
         bgPaint.color = theme.panel
-        canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
-        edgePaint.color = theme.panelEdge
-        edgePaint.strokeWidth = dp(1f)
-        canvas.drawRoundRect(rf, panelRad, panelRad, edgePaint)
+        if (zonePad <= 0.5f) {
+            canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
+            if (panelRad > 0f) {
+                canvas.drawRect(rf.left, pTop + panelRad, rf.right, pBottom, bgPaint)
+            }
+        } else {
+            canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
+            edgePaint.color = theme.panelEdge
+            edgePaint.strokeWidth = dp(1f)
+            canvas.drawRoundRect(rf, panelRad, panelRad, edgePaint)
+        }
 
         // suggestion strip
         if (showSugg && page != Pages.EMOJI) {
@@ -293,12 +305,14 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (k.code == Code.SPACE) {
-            txtPaint.typeface = enFont
-            txtPaint.textSize = keyH * 0.23f
+            if (k.label.isEmpty()) return
+            txtPaint.typeface = arFont
+            txtPaint.textSize = keyH * 0.3f
             txtPaint.color = theme.dim
-            txtPaint.textAlign = Paint.Align.RIGHT
-            canvas.drawText(k.label, rf.right - dp(10f), rf.centerY() + dp(4f), txtPaint)
-            txtPaint.textAlign = Paint.Align.CENTER
+            val fmS = txtPaint.fontMetrics
+            canvas.drawText(
+                k.label, rf.centerX(), rf.centerY() - (fmS.ascent + fmS.descent) / 2f, txtPaint
+            )
             return
         }
 
@@ -407,6 +421,8 @@ class KeyboardView(context: Context) : View(context) {
     private var scrollStart = 0f
     private var scrolling = false
     private var firedOnDown = false
+    private val globeRect = RectF()
+    private val micRect = RectF()
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -431,7 +447,7 @@ class KeyboardView(context: Context) : View(context) {
                         }
                     }
                 }
-                if (y > height - outerH) return true
+                if (outerH > 0f && y >= globeRect.top) return true
 
                 val k = find(x, y) ?: return true
                 pressed = k
@@ -476,8 +492,8 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
-                if (y > height - outerH) {
-                    if (x < width / 2f) listener?.onLang()
+                if (outerH > 0f && y >= globeRect.top) {
+                    if (globeRect.contains(x, y)) listener?.onLang()
                     return true
                 }
 

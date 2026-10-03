@@ -83,7 +83,8 @@ object KbLayout {
     private fun emoji() = Key(style = Style.DARK, code = Code.TO_EMOJI, icon = Ico.SMILE)
 
     private fun space(ar: Boolean) =
-        Key(label = if (ar) "ع" else "EN", out = " ", weight = 5f, code = Code.SPACE)
+        Key(label = if (ar) "العربية" else "English", out = " ", weight = 5f,
+            code = Code.SPACE, arabic = ar)
 
     private fun lastRow(ar: Boolean, first: Key): MutableList<Key> =
         mutableListOf(first, emoji(), space(ar), enter())

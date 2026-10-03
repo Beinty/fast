@@ -3,10 +3,7 @@ package com.huc.fasttype
 import android.content.Context
 import android.inputmethodservice.InputMethodService
 import android.media.AudioManager
-import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -72,7 +69,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
     // ---------------- listener ----------------
 
     override fun onChar(s: String) {
-        feedback()
         val ic = currentInputConnection ?: return
 
         val isBreak = s.length == 1 && isWordBreak(s[0])
@@ -85,6 +81,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
                 ic.commitText(hit.phrase + s, 1)
                 ic.endBatchEdit()
                 buffer.setLength(0)
+                feedback()
                 refreshSugg()
                 afterType()
                 return
@@ -109,6 +106,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
             }
         }
 
+        feedback()
         refreshSugg()
         afterType()
     }
@@ -122,12 +120,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
     }
 
     override fun onDelete() {
-        feedback()
         val ic = currentInputConnection ?: return
         val sel = ic.getSelectedText(0)
         if (sel != null && sel.isNotEmpty()) ic.commitText("", 1)
         else ic.deleteSurroundingText(1, 0)
         if (buffer.isNotEmpty()) buffer.setLength(buffer.length - 1)
+        feedback()
         refreshSugg()
     }
 
@@ -233,14 +231,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener {
         }
         if (Store.kbVibrate) {
             try {
-                val v: Vibrator? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
-                    vm.defaultVibrator
-                } else {
-                    @Suppress("DEPRECATION")
-                    getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-                }
-                v?.vibrate(VibrationEffect.createOneShot(12, 40))
+                kv?.performHapticFeedback(
+                    HapticFeedbackConstants.KEYBOARD_TAP,
+                    HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+                )
             } catch (_: Exception) {
             }
         }

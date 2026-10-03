@@ -694,6 +694,9 @@ class MainActivity : Activity() {
         p.addView(sliderRow("دوران زوايا الأزرار", Store.kbRadius, 2, 18) {
             Store.setKbInt(this, "rad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("إطار اللوحة (صفر = لحافة الشاشة)", Store.kbInset, 0, 14) {
+            Store.setKbInt(this, "inset", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("دوران اللوحة", Store.kbPanelRadius, 0, 34) {
             Store.setKbInt(this, "prad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
