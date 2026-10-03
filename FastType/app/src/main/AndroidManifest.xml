@@ -17,6 +17,10 @@
         <intent>
             <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
         </intent>
+        <!-- the two packages that provide voice input, named so Android 11+
+             package visibility does not hide them from the engine scan -->
+        <package android:name="com.google.android.googlequicksearchbox" />
+        <package android:name="com.google.android.tts" />
     </queries>
 
     <application
@@ -41,6 +45,8 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask"
             android:theme="@style/Invisible" />
 
         <service

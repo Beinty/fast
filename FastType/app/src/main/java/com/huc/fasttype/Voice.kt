@@ -123,7 +123,33 @@ class Voice(private val ctx: Context) {
         }
     }
 
-    fun googleInstalled(): Boolean = engines().any { it.packageName == GOOGLE }
+    fun googleInstalled(): Boolean = try {
+        ctx.packageManager.getPackageInfo(GOOGLE, 0); true
+    } catch (_: Exception) { false }
+
+    /**
+     * Whether some app answers the system voice-input screen. This is a different
+     * thing from a background recognition service, and far more often present — the
+     * Google app always answers it even on builds that register no service.
+     */
+    fun screenAvailable(): Boolean = try {
+        ctx.packageManager.queryIntentActivities(
+            Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0
+        ).isNotEmpty()
+    } catch (_: Exception) { false }
+
+    /** Opens the system voice-input screen; the text comes back in [VoiceResult]. */
+    fun openScreen(arabicNow: Boolean) {
+        try {
+            ctx.startActivity(
+                Intent(ctx, VoicePermActivity::class.java)
+                    .putExtra(VoicePermActivity.EXTRA_LANG, if (arabicNow) "ar" else "en-US")
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "could not open voice screen", e)
+        }
+    }
 
     /**
      * A plain-language report of what the phone offers, for the settings screen.
@@ -144,9 +170,16 @@ class Voice(private val ctx: Context) {
             for (c in e) lines.add("  • " + c.packageName)
             lines.add("راح يستعمل: " + e[0].packageName)
         }
-        if (!hasRealEngine()) {
+        lines.add("تطبيق Google: " + if (googleInstalled()) "منصّب ✓" else "مو منصّب ✗")
+        lines.add("شاشة الإدخال الصوتي: " +
+            if (screenAvailable()) "متوفرة ✓" else "ماكو ✗")
+        if (!hasRealEngine() && screenAvailable()) {
             lines.add("")
-            lines.add("ماكو محرك تعرّف كلام حقيقي بالجهاز.")
+            lines.add("ماكو خدمة تعرّف بالخلفية، فالمايك راح يفتح")
+            lines.add("شاشة الإدخال الصوتي مال النظام ويرجّع النص.")
+        } else if (!hasRealEngine()) {
+            lines.add("")
+            lines.add("ماكو محرك تعرّف كلام بالجهاز.")
             lines.add("نزّل تطبيق Google من المتجر وراح يشتغل.")
         }
         return lines.joinToString("\n")
@@ -155,7 +188,7 @@ class Voice(private val ctx: Context) {
     /** Forgets the cached engine list so the report re-reads it. */
     fun rescan() { services = null }
 
-    /** Opens the permission screen; the person comes back and presses the mic again. */
+    /** Opens the permission screen on its own, for the settings button. */
     fun askPermission() {
         try {
             ctx.startActivity(

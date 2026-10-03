@@ -89,6 +89,19 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         super.onWindowShown()
         clearWindowBackground()
         Dict.warm(this)
+        commitDictated()
+    }
+
+    /** Types whatever the system voice screen heard while we were off screen. */
+    private fun commitDictated() {
+        val text = VoiceResult.take() ?: return
+        if (text.isEmpty()) return
+        val ic = currentInputConnection ?: run { VoiceResult.pending = text; return }
+        ic.beginBatchEdit()
+        ic.commitText("$text ", 1)
+        ic.endBatchEdit()
+        buffer.setLength(0)
+        refreshSugg()
     }
 
     override fun onWindowHidden() {
@@ -121,6 +134,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             it.rebuild()
         }
         clearWindowBackground()
+        commitDictated()
     }
 
     override fun onFinishInput() {
@@ -367,8 +381,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             vo.askPermission()
             return
         }
+        // no background service on this phone — use the system's voice screen,
+        // which the Google app answers even where it registers no service
         if (!vo.hasRealEngine()) {
-            showStrip("محتاج تطبيق Google — افتح إعدادات الكيبورد")
+            if (vo.screenAvailable()) {
+                showStrip("فتحت شاشة الصوت…")
+                vo.openScreen(arabic)
+            } else {
+                showStrip("محتاج تطبيق Google — افتح إعدادات الكيبورد")
+            }
             return
         }
 
