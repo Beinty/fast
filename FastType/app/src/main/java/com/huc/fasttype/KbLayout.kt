@@ -43,13 +43,37 @@ class Key(
     val arabic: Boolean = false,
     val smallText: Boolean = false
 ) {
-    // filled in on layout
+    // filled in on layout — the drawn rectangle
     var x = 0f
     var y = 0f
     var w = 0f
     var h = 0f
 
+    // filled in on layout — the touch rectangle, grown into the gaps so no pixel is dead
+    var tx = 0f
+    var ty = 0f
+    var tw = 0f
+    var th = 0f
+
     fun hit(px: Float, py: Float) = px >= x && px <= x + w && py >= y && py <= y + h
+
+    /** Touch test. Uses the grown rectangle, so a light tap in a gap still lands. */
+    fun hitT(px: Float, py: Float) = px >= tx && px <= tx + tw && py >= ty && py <= ty + th
+
+    /** Squared distance from a point to the touch rectangle; 0 when inside. */
+    fun distT(px: Float, py: Float): Float {
+        val dx = when {
+            px < tx -> tx - px
+            px > tx + tw -> px - (tx + tw)
+            else -> 0f
+        }
+        val dy = when {
+            py < ty -> ty - py
+            py > ty + th -> py - (ty + th)
+            else -> 0f
+        }
+        return dx * dx + dy * dy
+    }
 }
 
 object Pages {

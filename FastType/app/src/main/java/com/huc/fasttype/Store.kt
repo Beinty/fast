@@ -45,6 +45,8 @@ object Store {
     private const val K_KB_BOTTOM = "kb_bottom_pad"
     private const val K_KB_FAST = "kb_fast"
     private const val K_KB_INSET = "kb_inset"
+    private const val K_KB_SRAD = "kb_sugg_rad"
+    private const val K_KB_SH = "kb_sugg_h"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -139,6 +141,14 @@ object Store {
     @Volatile var kbInset: Int = 0
         private set
 
+    /** Corner radius of the suggestion strip; 0 makes it flat like iOS. */
+    @Volatile var kbSuggRad: Int = 12
+        private set
+
+    /** Height of the suggestion strip. */
+    @Volatile var kbSuggH: Int = 30
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -174,6 +184,8 @@ object Store {
         kbBottomPad = p.getInt(K_KB_BOTTOM, 10).coerceIn(0, 48)
         kbFast = p.getBoolean(K_KB_FAST, true)
         kbInset = p.getInt(K_KB_INSET, 0).coerceIn(0, 14)
+        kbSuggRad = p.getInt(K_KB_SRAD, 12).coerceIn(0, 22)
+        kbSuggH = p.getInt(K_KB_SH, 30).coerceIn(22, 52)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -249,6 +261,8 @@ object Store {
             "outer" -> { kbOuterH = v.coerceIn(0, 60); prefs(ctx).edit().putInt(K_KB_OUTER, kbOuterH).apply() }
             "bottom" -> { kbBottomPad = v.coerceIn(0, 48); prefs(ctx).edit().putInt(K_KB_BOTTOM, kbBottomPad).apply() }
             "inset" -> { kbInset = v.coerceIn(0, 14); prefs(ctx).edit().putInt(K_KB_INSET, kbInset).apply() }
+            "srad" -> { kbSuggRad = v.coerceIn(0, 22); prefs(ctx).edit().putInt(K_KB_SRAD, kbSuggRad).apply() }
+            "sh" -> { kbSuggH = v.coerceIn(22, 52); prefs(ctx).edit().putInt(K_KB_SH, kbSuggH).apply() }
         }
     }
     fun setKbFlag(ctx: Context, which: String, v: Boolean) {

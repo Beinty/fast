@@ -700,6 +700,12 @@ class MainActivity : Activity() {
         p.addView(sliderRow("دوران اللوحة", Store.kbPanelRadius, 0, 34) {
             Store.setKbInt(this, "prad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دوران شريط الاقتراحات (صفر = مسطّح)", Store.kbSuggRad, 0, 22) {
+            Store.setKbInt(this, "srad", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("ارتفاع شريط الاقتراحات", Store.kbSuggH, 22, 52) {
+            Store.setKbInt(this, "sh", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
             Store.setKbInt(this, "outer", it); syncPreview()
         }, lp(true, bottom = dp(8)))

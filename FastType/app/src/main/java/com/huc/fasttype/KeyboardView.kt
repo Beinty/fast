@@ -52,7 +52,8 @@ class KeyboardView(context: Context) : View(context) {
     private val vGap get() = gap * 1.7f
     private val panelPadTop get() = keyH * 0.148f
     private val panelPadBottom get() = keyH * 0.148f
-    private val suggH get() = dp(30f)
+    private var suggH = dp(30f)
+    private var suggRad = dp(12f)
     private var outerH = dp(40f)
     private var bottomPad = dp(10f)
     private var fastKeys = true
@@ -114,6 +115,8 @@ class KeyboardView(context: Context) : View(context) {
         outerH = dp(Store.kbOuterH.toFloat())
         bottomPad = dp(Store.kbBottomPad.toFloat())
         fastKeys = Store.kbFast
+        suggH = dp(Store.kbSuggH.toFloat())
+        suggRad = dp(Store.kbSuggRad.toFloat())
         requestLayout()
         invalidate()
     }
@@ -202,6 +205,35 @@ class KeyboardView(context: Context) : View(context) {
             }
             y += keyH + vGap
         }
+
+        growTouchRects(width)
+    }
+
+    /**
+     * Stretches every key's touch rectangle halfway into the gaps around it, and the
+     * outermost keys all the way to the panel edges. The drawn keys do not move, but a
+     * light tap anywhere on the panel now lands on a key instead of a dead gap.
+     */
+    private fun growTouchRects(width: Float) {
+        val halfGap = gap * 0.5f
+        val halfV = vGap * 0.5f
+        val panelLeft = zonePad
+        val panelRight = width - zonePad
+
+        for ((ri, row) in rows.withIndex()) {
+            if (row.isEmpty()) continue
+            val first = ri == 0
+            val last = ri == rows.size - 1
+            for ((ki, k) in row.withIndex()) {
+                val padL = if (ki == 0) k.x - panelLeft else halfGap
+                val padR = if (ki == row.size - 1) panelRight - (k.x + k.w) else halfGap
+                k.tx = k.x - max(0f, padL)
+                k.tw = k.w + max(0f, padL) + max(0f, padR)
+                // never reach up into the suggestion strip, nor down into the globe strip
+                k.ty = k.y - if (first) min(halfV, panelPadTop) else halfV
+                k.th = k.h + (k.y - k.ty) + if (last) min(halfV, panelPadBottom) else halfV
+            }
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -234,7 +266,7 @@ class KeyboardView(context: Context) : View(context) {
                 w - zonePad - sideMargin, zonePad + panelPadTop + suggH)
             if (theme.sugg != theme.panel) {
                 bgPaint.color = theme.sugg
-                canvas.drawRoundRect(rf, dp(12f), dp(12f), bgPaint)
+                canvas.drawRoundRect(rf, suggRad, suggRad, bgPaint)
             }
             txtPaint.typeface = arFont
             txtPaint.textSize = dp(13f)
@@ -453,6 +485,12 @@ class KeyboardView(context: Context) : View(context) {
                 }
                 if (outerH > 0f && y >= globeRect.top) return true
 
+                // the suggestion strip owns its own band, so the nearest-key fallback
+                // below must never reach up into it
+                if (showSugg && page != Pages.EMOJI &&
+                    y < zonePad + panelPadTop + suggH
+                ) return true
+
                 val k = find(x, y) ?: return true
                 pressed = k
                 if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
@@ -511,7 +549,7 @@ class KeyboardView(context: Context) : View(context) {
                 val k = pressed
                 pressed = null
                 invalidateKey(k)
-                if (!firedOnDown && k != null && k.hit(x, y)) fire(k)
+                if (!firedOnDown && k != null && k.hitT(x, y)) fire(k)
                 firedOnDown = false
                 return true
             }
@@ -537,9 +575,22 @@ class KeyboardView(context: Context) : View(context) {
         handler.removeCallbacks(repeatRunnable)
     }
 
+    /**
+     * Finds the key under a touch. First the grown rectangles, which tile the whole
+     * panel; then, as a safety net, the nearest key within a short reach, so a tap that
+     * lands just outside the rows still types instead of doing nothing.
+     */
     private fun find(x: Float, y: Float): Key? {
-        for (row in rows) for (k in row) if (k.hit(x, y)) return k
-        return null
+        for (row in rows) for (k in row) if (k.hitT(x, y)) return k
+
+        var best: Key? = null
+        var bestD = Float.MAX_VALUE
+        for (row in rows) for (k in row) {
+            val d = k.distT(x, y)
+            if (d < bestD) { bestD = d; best = k }
+        }
+        val reach = keyH * 0.6f
+        return if (bestD <= reach * reach) best else null
     }
 
     private fun fire(k: Key) {
