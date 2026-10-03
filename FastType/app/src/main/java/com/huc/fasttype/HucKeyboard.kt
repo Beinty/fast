@@ -24,6 +24,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var voicePartial = 0
     /** True while dictated text is still marked unfinished in the editor. */
     private var composing = false
+    /** Words of the current sentence already handed over as ordinary text. */
+    private var voiceLocked = ""
     /** Word the auto-correction just replaced, so one backspace puts it back. */
     private var undoTyped: String? = null
     private var undoFixed: String? = null
@@ -411,6 +413,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         voiceBase = ""
         voicePartial = 0
         composing = false
+        voiceLocked = ""
         kv?.listening = true
         vo.start(arabic)
     }
@@ -418,27 +421,69 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /**
      * Live text while the sentence is still being spoken.
      *
-     * This goes in as *composing* text, which is the editor's own idea of "not
-     * finished yet": replacing it only ever touches that stretch. The earlier version
-     * typed the words for real and then deleted a counted number of characters before
-     * typing the next guess — and the moment that count did not match what was on
-     * screen, it ate the sentence before it.
+     * The recogniser re-reads the whole utterance on every update, and its new guess
+     * can be *shorter* than the last one — it takes words back. So only the word
+     * still being spoken is left open to change: everything up to the last space is
+     * handed to the editor as ordinary text the moment it is complete, and from then
+     * on nothing can take it away.
      */
     override fun onPartial(text: String) {
         ui.post {
             val ic = currentInputConnection ?: return@post
-            ic.setComposingText(text, 1)
-            composing = text.isNotEmpty()
+            lockWords(ic, text)
             showStrip(text)
         }
+    }
+
+    private fun lockWords(ic: android.view.inputmethod.InputConnection, text: String) {
+        if (text.isEmpty()) return
+
+        // the new guess is shorter than what is already written: the engine dropped
+        // words it had given us. Those stay — only the open tail goes.
+        if (voiceLocked.isNotEmpty() && voiceLocked.trimEnd().startsWith(text)) {
+            if (composing) {
+                ic.setComposingText("", 1)
+                ic.finishComposingText()
+                composing = false
+            }
+            return
+        }
+
+        // the engine contradicted what is already written — append rather than fight
+        if (!text.startsWith(voiceLocked)) {
+            ic.beginBatchEdit()
+            if (composing) ic.finishComposingText()
+            if (voiceLocked.isNotEmpty()) ic.commitText(" ", 1)
+            voiceLocked = ""
+            ic.setComposingText(text, 1)
+            ic.endBatchEdit()
+            composing = true
+            return
+        }
+
+        val rest = text.substring(voiceLocked.length)
+        val cut = rest.lastIndexOf(' ')
+        ic.beginBatchEdit()
+        if (cut >= 0) {
+            // finished words become real text and are safe from here on
+            ic.setComposingText(rest.substring(0, cut + 1), 1)
+            ic.finishComposingText()
+            voiceLocked = text.substring(0, voiceLocked.length + cut + 1)
+            val tail = rest.substring(cut + 1)
+            if (tail.isNotEmpty()) ic.setComposingText(tail, 1)
+            composing = tail.isNotEmpty()
+        } else {
+            ic.setComposingText(rest, 1)
+            composing = true
+        }
+        ic.endBatchEdit()
     }
 
     /** A finished sentence. The session stays open for the next one. */
     override fun onSegment(text: String) {
         ui.post {
             val ic = currentInputConnection ?: return@post
-            if (text.isNotEmpty()) ic.setComposingText(text, 1)
-            composing = composing || text.isNotEmpty()
+            if (text.isNotEmpty()) lockWords(ic, text)
             settleVoice(ic)
         }
     }
@@ -448,24 +493,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ui.post { currentInputConnection?.let { settleVoice(it) } }
     }
 
-    /** Hands dictated text over to the editor before a key touches it. */
-    private fun releaseComposing(ic: android.view.inputmethod.InputConnection) {
-        if (!composing) return
-        composing = false
-        try {
-            ic.finishComposingText()
-        } catch (_: Exception) {
-        }
-    }
-
-    /** Turns the live text into ordinary text and leaves a space after it. */
+    /** Closes off the sentence: nothing of it stays open to change. */
     private fun settleVoice(ic: android.view.inputmethod.InputConnection) {
-        if (!composing) return
-        composing = false
+        if (!composing && voiceLocked.isEmpty()) return
         ic.beginBatchEdit()
-        ic.finishComposingText()
+        if (composing) ic.finishComposingText()
         ic.commitText(" ", 1)
         ic.endBatchEdit()
+        composing = false
+        voiceLocked = ""
         buffer.setLength(0)
     }
 
