@@ -350,12 +350,28 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onMic() {
         val vo = voice ?: Voice(this).also { it.sink = this; voice = it }
-        if (vo.isListening) { vo.stop(); return }
+
+        if (vo.isListening) {
+            vo.stop()
+            kv?.listening = false
+            showStrip("وقّفت")
+            ui.postDelayed({ refreshSugg() }, 900)
+            return
+        }
+
         if (!vo.hasPermission()) {
-            showStrip("افتح الصلاحية وارجع دوس المايك")
+            showStrip("وافق على صلاحية المايك وارجع دوس")
             vo.askPermission()
             return
         }
+        if (!vo.available() && !vo.onDeviceAvailable()) {
+            showStrip("ما لكيت محرك تعرّف صوت بالجهاز")
+            return
+        }
+
+        // say something the instant the key is pressed, so a slow or failing
+        // engine never looks like a dead button
+        showStrip("جاري تشغيل المايك…")
         voiceBase = ""
         voicePartial = 0
         vo.start(arabic)

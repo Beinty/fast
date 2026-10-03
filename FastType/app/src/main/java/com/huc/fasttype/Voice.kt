@@ -56,7 +56,7 @@ class Voice(private val ctx: Context) {
 
     fun available(): Boolean = SpeechRecognizer.isRecognitionAvailable(ctx)
 
-    private fun onDeviceAvailable(): Boolean =
+    fun onDeviceAvailable(): Boolean =
         Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
 
     /** Opens the permission screen; the person comes back and presses the mic again. */

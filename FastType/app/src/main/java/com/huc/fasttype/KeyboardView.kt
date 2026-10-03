@@ -337,7 +337,6 @@ class KeyboardView(context: Context) : View(context) {
         val bottom = top + suggH
         val left = zonePad
         val right = w - zonePad
-        val micW = if (micInStrip) suggH * 0.9f else 0f
         val zoneRight = right - micW
 
         // pressed zone gets a soft highlight, nothing else is painted
@@ -378,6 +377,9 @@ class KeyboardView(context: Context) : View(context) {
             val mcy = (top + bottom) / 2f
             if (listening) {
                 bgPaint.color = theme.go
+                canvas.drawCircle(mcx, mcy, micW * 0.46f, bgPaint)
+            } else if (pressedZone == -2) {
+                bgPaint.color = theme.keyDown
                 canvas.drawCircle(mcx, mcy, micW * 0.46f, bgPaint)
             }
             icoPaint.color = if (listening) theme.goIcon else theme.outer
@@ -620,7 +622,7 @@ class KeyboardView(context: Context) : View(context) {
                     y < zonePad + panelPadTop + suggH
                 ) {
                     pressedZone = stripZone(x)
-                    if (pressedZone >= 0 && pressFx) invalidate()
+                    if (pressedZone != -1) invalidate()
                     return true
                 }
 
@@ -705,12 +707,16 @@ class KeyboardView(context: Context) : View(context) {
         return super.onTouchEvent(e)
     }
 
+    /** Width the mic reserves at the right end of the strip. */
+    private val micW get() = if (micInStrip) suggH * 0.9f else 0f
+
     /** Which third of the strip a touch is in; -2 for the mic, -1 for nothing. */
     private fun stripZone(x: Float): Int {
         val left = zonePad
         val right = width - zonePad
-        if (micInStrip && x > right - suggH * 0.9f) return -2
-        val zw = (right - left - (if (micInStrip) suggH * 0.9f else 0f)) / 3f
+        // a comfortable reach, not just the glyph — this sits at the screen edge
+        if (micInStrip && x > right - micW * 1.35f) return -2
+        val zw = (right - left - micW) / 3f
         val i = ((x - left) / zw).toInt()
         return if (i in 0..2) i else -1
     }
