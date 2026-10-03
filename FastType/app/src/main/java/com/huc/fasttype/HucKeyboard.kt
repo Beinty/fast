@@ -266,6 +266,33 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         commitDictated()
     }
 
+    /**
+     * The field went empty under us.
+     *
+     * Most chat apps clear the box themselves when the send button is tapped, with no
+     * key event we could see — so the keyboard went on offering what usually follows
+     * the last word he sent, over an empty message box. A cursor sitting at position
+     * zero means there is no sentence left to continue.
+     */
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int,
+        newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(
+            oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
+        )
+        if (transOn) return
+        if (newSelStart == 0 && newSelEnd == 0) {
+            resetWord()
+            lastWord = ""
+            lastDone = ""
+            undoTyped = null
+            undoFixed = null
+            scheduleSugg()
+        }
+    }
+
     override fun onFinishInput() {
         if (composing) {
             composing = false
@@ -467,6 +494,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (!repeatingDel) {
             val sel = ic.getSelectedText(0)
             if (sel != null && sel.isNotEmpty()) {
+                lastWord = ""
                 ic.commitText("", 1)
                 resetWord()
                 feedback()
@@ -476,6 +504,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         ic.deleteSurroundingText(1, 0)
+        // Deleting throws away the word the next-word guesses were based on. Leaving
+        // them up meant the strip still offered words over an empty message box.
+        lastWord = ""
         if (buffer.isNotEmpty()) {
             buffer.setLength(buffer.length - 1)
             if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
@@ -559,6 +590,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val n = (before.length - i).coerceAtLeast(1)
         ic.deleteSurroundingText(n, 0)
         resetWord()
+        lastWord = ""
         refreshSugg()
     }
 
@@ -585,6 +617,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         }
         resetWord()
+        lastWord = ""
+        lastDone = ""
         refreshSugg()
     }
 
