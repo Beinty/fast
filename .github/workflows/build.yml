@@ -4,10 +4,6 @@ on:
   push:
   workflow_dispatch:
 
-defaults:
-  run:
-    working-directory: FastType
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,12 +22,45 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace
+      - name: Find project root and build
+        id: build
+        run: |
+          SETTINGS=$(find . -name 'settings.gradle.kts' -not -path '*/build/*' | head -1)
+          if [ -z "$SETTINGS" ]; then
+            echo "ما لكيت settings.gradle.kts — هذي محتويات المستودع:"
+            find . -maxdepth 3 -not -path './.git/*'
+            exit 1
+          fi
+          ROOT=$(dirname "$SETTINGS")
+          echo "::notice::جذر المشروع: $ROOT"
+          cd "$ROOT"
+          set -o pipefail
+          gradle assembleDebug --no-daemon --console=plain 2>&1 | tee /tmp/build.log
+
+      - name: Publish errors to summary
+        if: failure()
+        run: |
+          echo '## أخطاء الترجمة' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -E "^(e|w): |error:|Caused by|FAILURE:|\* What went wrong|Unresolved|Expecting" /tmp/build.log \
+            | head -120 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '### آخر ٦٠ سطر' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -60 /tmp/build.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: /tmp/build.log
+          if-no-files-found: ignore
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: FastType-apk
-          path: FastType/app/build/outputs/apk/debug/app-debug.apk
+          path: '**/app/build/outputs/apk/debug/app-debug.apk'
           if-no-files-found: error
