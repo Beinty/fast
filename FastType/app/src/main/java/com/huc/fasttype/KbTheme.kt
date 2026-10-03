@@ -20,7 +20,11 @@ class KbTheme(
     val onBg: Int,
     val onText: Int,
     val outer: Int,
-    val lightKeys: Boolean = false
+    val lightKeys: Boolean = false,
+    /** True for the dark half of a pair. */
+    val dark: Boolean = false,
+    /** The id of this theme's opposite number, used when following the device. */
+    val twin: String = ""
 )
 
 object Themes {
