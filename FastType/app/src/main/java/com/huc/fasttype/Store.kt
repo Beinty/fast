@@ -64,6 +64,8 @@ object Store {
     private const val K_KB_CLIPEXP = "kb_clip_expire"
     private const val K_KB_ALTS = "kb_alts"
     private const val K_KB_DOTS = "kb_double_space"
+    private const val K_TR_SRC = "kb_tr_src"
+    private const val K_TR_DST = "kb_tr_dst"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -234,6 +236,14 @@ object Store {
     @Volatile var kbDoubleSpace: Boolean = true
         private set
 
+    /** The language the translate panel reads from; "auto" lets it work that out. */
+    @Volatile var kbTrSrc: String = "auto"
+        private set
+
+    /** The language the translate panel writes in. */
+    @Volatile var kbTrDst: String = "en"
+        private set
+
     /**
      * Minutes before an unpinned clip is forgotten; 0 keeps them. Defaults to an
      * hour, because what people copy is often a password or a payment number.
@@ -294,6 +304,8 @@ object Store {
         kbClip = p.getBoolean(K_KB_CLIP, true)
         kbAlts = p.getBoolean(K_KB_ALTS, true)
         kbDoubleSpace = p.getBoolean(K_KB_DOTS, true)
+        kbTrSrc = p.getString(K_TR_SRC, "auto") ?: "auto"
+        kbTrDst = p.getString(K_TR_DST, "en") ?: "en"
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
     }
 
@@ -360,6 +372,14 @@ object Store {
 
     fun setKbTheme(ctx: Context, v: String) {
         kbTheme = v; prefs(ctx).edit().putString(K_KB_THEME, v).apply()
+    }
+
+    fun setTrLang(ctx: Context, dst: Boolean, code: String) {
+        if (dst) {
+            kbTrDst = code; prefs(ctx).edit().putString(K_TR_DST, code).apply()
+        } else {
+            kbTrSrc = code; prefs(ctx).edit().putString(K_TR_SRC, code).apply()
+        }
     }
     fun setKbInt(ctx: Context, which: String, v: Int) {
         when (which) {

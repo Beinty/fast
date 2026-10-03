@@ -38,6 +38,12 @@ class KeyboardView(context: Context) : View(context) {
         fun onClipClose()
         fun onDeleteWord()
         fun onRepeatState(active: Boolean)
+        /** 0 voice, 1 translate, 2 clipboard, 3 the app's own settings. */
+        fun onTool(which: Int)
+        fun onTransClose()
+        fun onTransSwap()
+        fun onTransLang(dst: Boolean)
+        fun onLangPick(code: String)
     }
 
     var listener: Listener? = null
@@ -108,6 +114,10 @@ class KeyboardView(context: Context) : View(context) {
     private val panelPadTop get() = keyH * 0.164f
     private val panelPadBottom get() = keyH * 0.164f
     private var suggH = dp(30f)
+    /** The strip is also the language bar, so translate mode keeps it even if off. */
+    private val stripVisible get() = (showSugg || transOn) && page != Pages.EMOJI
+    /** Height of the translate box row. */
+    private val transH get() = suggH * 1.18f
     private var suggRad = dp(12f)
     private var hairOn = true
     private var hairH = 0.54f
@@ -119,6 +129,32 @@ class KeyboardView(context: Context) : View(context) {
     private var clearBottom = false
     private var pressedZone = -1
     private var pressedSugg = -1
+
+    /** The icon bar that slides in over the suggestions, 0 shut, 1 fully open. */
+    private var toolsOpen = false
+    private var toolsT = 0f
+    private val toolRects = ArrayList<RectF>(4)
+
+    /** Translate mode: the language bar replaces the strip and a box opens below it. */
+    var transOn = false
+        private set
+    var transText: String = ""
+    var transStatus: String = ""
+    private val trSrcRect = RectF()
+    private val trSwapRect = RectF()
+    private val trDstRect = RectF()
+    private val trCloseRect = RectF()
+    private val trBoxRect = RectF()
+    private var langForDst = true
+    private var langScroll = 0f
+    private var langMaxScroll = 0f
+    private var langPressed = -1
+    private var langListTop = 0f
+    private var langListBottom = 0f
+    private var langScrolling = false
+    private var langDownY = 0f
+    private var langScroll0 = 0f
+    private val langDoneRect = RectF()
 
     /** True for each suggestion that is a new word rather than a completion. */
     var suggNew: List<Boolean> = emptyList()
@@ -227,6 +263,58 @@ class KeyboardView(context: Context) : View(context) {
     /** Recording red, the one colour that reads the same in every theme. */
     private val REC = 0xFFD93025.toInt()
 
+    /** Voice, translate, clipboard, settings — the order they sit in the bar. */
+    private val TOOL_ICONS = intArrayOf(Ico.MIC, Ico.TRANS, Ico.CLIP, Ico.COG)
+
+    private val toolsRunnable = object : Runnable {
+        override fun run() {
+            val target = if (toolsOpen) 1f else 0f
+            toolsT += (target - toolsT) * 0.34f
+            if (Math.abs(target - toolsT) < 0.02f) {
+                toolsT = target
+            } else {
+                handler.postDelayed(this, 16)
+            }
+            invalidateStrip()
+        }
+    }
+
+    /** Opens or shuts the icon bar that rides over the suggestions. */
+    fun setToolsOpen(open: Boolean) {
+        if (toolsOpen == open) return
+        toolsOpen = open
+        handler.removeCallbacks(toolsRunnable)
+        handler.post(toolsRunnable)
+    }
+
+    fun toolsAreOpen(): Boolean = toolsOpen
+
+    /** Switches the strip into the language bar and opens the box underneath. */
+    fun setTranslate(on: Boolean) {
+        if (transOn == on) return
+        transOn = on
+        transText = ""
+        transStatus = ""
+        setToolsOpen(false)
+        toolsT = 0f
+        requestLayout()
+        invalidate()
+    }
+
+    fun setTransText(text: String, status: String) {
+        transText = text
+        transStatus = status
+        invalidate()
+    }
+
+    fun openLangs(dst: Boolean) {
+        langForDst = dst
+        langScroll = 0f
+        langPressed = -1
+        page = Pages.LANGS
+        rebuild()
+    }
+
     private val rf = RectF()
     private val path = Path()
 
@@ -295,8 +383,10 @@ class KeyboardView(context: Context) : View(context) {
 
     fun rebuild() {
         if (page == Pages.CLIP) clipScroll = 0f
+        if (page == Pages.LANGS) langScroll = 0f
+        val forRows = if (page == Pages.LANGS) Pages.CLIP else page
         rows = if (page == Pages.EMOJI) listOf(KbLayout.emojiBottom(arabic))
-        else KbLayout.rows(page, arabic, shift, numRow)
+        else KbLayout.rows(forRows, arabic, shift, numRow)
         if (page == Pages.EMOJI) buildEmoji()
         if (width > 0) measureKeys(width.toFloat())
         requestLayout()
@@ -315,12 +405,13 @@ class KeyboardView(context: Context) : View(context) {
         // The clipboard page has no key rows of its own, so it borrows the height of
         // the letter keyboard — otherwise it collapses to nothing and the list has
         // nowhere to appear.
-        if (page == Pages.CLIP) {
+        if (page == Pages.CLIP || page == Pages.LANGS) {
             return zonePad * 2 + panelPadTop + panelPadBottom +
                 suggH + vGap + keyH * 4 + vGap * 3 + outerH + bottomPad
         }
         var h = zonePad * 2 + panelPadTop + panelPadBottom
-        if (showSugg && page != Pages.EMOJI) h += suggH + vGap
+        if (stripVisible) h += suggH + vGap
+        if (transOn && page != Pages.EMOJI) h += transH + vGap
         if (page == Pages.EMOJI) {
             h += catH + gap
             h += keyH * 4 + gap * 3
@@ -348,7 +439,8 @@ class KeyboardView(context: Context) : View(context) {
         val usable = right - left
 
         var y = zonePad + panelPadTop
-        if (showSugg && page != Pages.EMOJI) y += suggH + vGap
+        if (stripVisible) y += suggH + vGap
+        if (transOn && page != Pages.EMOJI) y += transH + vGap
 
         if (page == Pages.EMOJI) {
             catRects.clear()
@@ -452,7 +544,13 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (page == Pages.CLIP) { drawClipPage(canvas, w, h); return }
-        if (showSugg && page != Pages.EMOJI && !blank) drawStrip(canvas, w)
+        if (page == Pages.LANGS) { drawLangPage(canvas, w, h); return }
+        if (transOn) {
+            drawTransBar(canvas, w)
+            drawTransBox(canvas, w)
+        } else if (stripVisible && !blank) {
+            drawStrip(canvas, w)
+        }
 
         if (page == Pages.EMOJI) drawEmoji(canvas)
 
@@ -546,27 +644,166 @@ class KeyboardView(context: Context) : View(context) {
             drawIcon(canvas, Ico.CLIP, clipC, cy, suggH * 0.46f)
         }
 
+        // ---- the icon bar, sliding in over the suggestions ----
+        if (toolsT > 0.001f) {
+            canvas.save()
+            canvas.clipRect(zoneLeft, top, zoneRight, bottom)
+            bgPaint.color = theme.panel
+            bgPaint.alpha = (255 * toolsT).toInt()
+            canvas.drawRect(zoneLeft, top, zoneRight, bottom, bgPaint)
+            bgPaint.alpha = 255
+            layoutTools(zoneLeft, zoneRight, top, bottom)
+            val slide = (1f - toolsT) * (zoneRight - zoneLeft)
+            for (i in toolRects.indices) {
+                val r = toolRects[i]
+                val tcx = r.centerX() + slide
+                if (pressedZone == -(4 + i)) {
+                    bgPaint.color = theme.keyDown
+                    canvas.drawCircle(tcx, cy, micW * 0.46f, bgPaint)
+                }
+                val rec = i == 0 && listening
+                if (rec) {
+                    bgPaint.color = REC
+                    canvas.drawCircle(tcx, cy, micW * 0.46f, bgPaint)
+                }
+                icoPaint.color = if (rec) 0xFFFFFFFF.toInt() else theme.outer
+                icoPaint.alpha = (255 * toolsT).toInt()
+                icoPaint.strokeWidth = dp(1.7f)
+                drawIcon(canvas, TOOL_ICONS[i], tcx, cy, suggH * 0.44f)
+                icoPaint.alpha = 255
+            }
+            canvas.restore()
+        }
+
+        // ---- the end key: a gear where the microphone used to be ----
         if (micInStrip) {
             val r = micW * 0.46f
-            if (listening) {
-                // a ring that swells and fades, so a live session is unmistakable
+            if (listening && !toolsOpen) {
                 edgePaint.style = Paint.Style.STROKE
                 edgePaint.color = REC
                 edgePaint.strokeWidth = dp(2f)
                 edgePaint.alpha = ((1f - pulse) * 190f).toInt()
                 canvas.drawCircle(micC, cy, r + dp(4f) + pulse * dp(7f), edgePaint)
                 edgePaint.alpha = 255
-                bgPaint.color = REC
-                canvas.drawCircle(micC, cy, r, bgPaint)
                 drawLevel(canvas, micC - micW * 0.8f, cy, suggH)
-            } else if (pressedZone == -2) {
+            }
+            if (pressedZone == -2 || toolsOpen) {
                 bgPaint.color = theme.keyDown
                 canvas.drawCircle(micC, cy, r, bgPaint)
             }
-            icoPaint.color = if (listening) 0xFFFFFFFF.toInt() else theme.outer
+            icoPaint.color = if (listening) REC else theme.outer
             icoPaint.strokeWidth = dp(1.7f)
-            drawIcon(canvas, Ico.MIC, micC, cy, suggH * 0.46f)
+            canvas.save()
+            canvas.rotate(toolsT * 90f, micC, cy)
+            drawIcon(canvas, Ico.GEAR, micC, cy, suggH * 0.44f)
+            canvas.restore()
         }
+    }
+
+    /** Four evenly spaced circles at the end of the strip nearest the gear. */
+    private fun layoutTools(zoneLeft: Float, zoneRight: Float, top: Float, bottom: Float) {
+        toolRects.clear()
+        val step = micW + dp(3f)
+        for (i in 0 until 4) {
+            val cx = zoneRight - micW / 2f - i * step
+            toolRects.add(RectF(cx - micW / 2f, top, cx + micW / 2f, bottom))
+        }
+    }
+
+    /** The language bar that stands in for the strip while translating. */
+    private fun drawTransBar(canvas: Canvas, w: Float) {
+        val top = zonePad + panelPadTop
+        val bottom = top + suggH
+        val cy = (top + bottom) / 2f
+        val left = zonePad + sideMargin
+        val right = w - zonePad - sideMargin
+
+        val closeW = suggH * 0.92f
+        val swapW = suggH * 0.86f
+        val chipH = suggH * 0.80f
+        val chipY = cy - chipH / 2f
+        val chipW = (right - left - closeW - swapW - dp(16f)) / 2f
+
+        trCloseRect.set(right - closeW, cy - closeW / 2f, right, cy + closeW / 2f)
+        trDstRect.set(trCloseRect.left - dp(6f) - chipW, chipY, trCloseRect.left - dp(6f), chipY + chipH)
+        trSwapRect.set(trDstRect.left - swapW, cy - swapW / 2f, trDstRect.left, cy + swapW / 2f)
+        trSrcRect.set(trSwapRect.left - chipW, chipY, trSwapRect.left, chipY + chipH)
+
+        txtPaint.typeface = arFont
+        txtPaint.textSize = suggH * 0.30f
+        val fm = txtPaint.fontMetrics
+        val base = cy - (fm.ascent + fm.descent) / 2f
+
+        drawChip(canvas, trSrcRect, Tr.nameOf(Store.kbTrSrc), pressedZone == -10, base)
+        drawChip(canvas, trDstRect, Tr.nameOf(Store.kbTrDst), pressedZone == -12, base)
+
+        if (pressedZone == -11) {
+            bgPaint.color = theme.keyDown
+            canvas.drawCircle(trSwapRect.centerX(), cy, swapW * 0.46f, bgPaint)
+        }
+        icoPaint.color = theme.outer
+        icoPaint.strokeWidth = dp(1.7f)
+        drawIcon(canvas, Ico.SWAP, trSwapRect.centerX(), cy, suggH * 0.36f)
+
+        bgPaint.color = if (pressedZone == -13) theme.keyDown else theme.key
+        canvas.drawCircle(trCloseRect.centerX(), cy, closeW * 0.46f, bgPaint)
+        icoPaint.color = theme.outer
+        drawIcon(canvas, Ico.BACK, trCloseRect.centerX(), cy, suggH * 0.34f)
+    }
+
+    private fun drawChip(canvas: Canvas, r: RectF, text: String, down: Boolean, base: Float) {
+        bgPaint.color = if (down) theme.keyDown else theme.key
+        canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, bgPaint)
+        txtPaint.color = theme.text
+        canvas.drawText(ellipsize(text, r.width() - dp(14f)), r.centerX(), base, txtPaint)
+    }
+
+    /** The box he types into while translating. */
+    private fun drawTransBox(canvas: Canvas, w: Float) {
+        val left = zonePad + sideMargin
+        val right = w - zonePad - sideMargin
+        val top = zonePad + panelPadTop + suggH + vGap
+        trBoxRect.set(left, top, right, top + transH)
+
+        bgPaint.color = theme.key
+        canvas.drawRoundRect(trBoxRect, transH / 2f, transH / 2f, bgPaint)
+        edgePaint.style = Paint.Style.STROKE
+        edgePaint.color = theme.go
+        edgePaint.strokeWidth = dp(1.6f)
+        rf.set(
+            trBoxRect.left + dp(0.8f), trBoxRect.top + dp(0.8f),
+            trBoxRect.right - dp(0.8f), trBoxRect.bottom - dp(0.8f)
+        )
+        canvas.drawRoundRect(rf, transH / 2f, transH / 2f, edgePaint)
+
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.33f
+        val fm = txtPaint.fontMetrics
+        val base = trBoxRect.centerY() - (fm.ascent + fm.descent) / 2f
+        val pad = dp(16f)
+
+        val shown = when {
+            transText.isNotEmpty() -> transText
+            transStatus.isNotEmpty() -> transStatus
+            else -> "اكتب هنا والترجمة تطلع بالرسالة"
+        }
+        txtPaint.color = if (transText.isNotEmpty()) theme.text else theme.dim
+        // the tail is what matters while typing, so a long line scrolls from the end
+        canvas.drawText(tailFit(shown, right - left - pad * 2f), (left + right) / 2f, base, txtPaint)
+
+        if (transText.isNotEmpty() && transStatus.isNotEmpty()) {
+            txtPaint.textSize = keyH * 0.22f
+            txtPaint.color = theme.dim
+            canvas.drawText(transStatus, (left + right) / 2f, trBoxRect.bottom - dp(3f), txtPaint)
+        }
+    }
+
+    /** Keeps the end of a string, which is where the cursor is. */
+    private fun tailFit(s: String, maxW: Float): String {
+        if (txtPaint.measureText(s) <= maxW) return s
+        var i = 0
+        while (i < s.length - 1 && txtPaint.measureText("…" + s.substring(i)) > maxW) i++
+        return "…" + s.substring(i)
     }
 
     /** Widths of each suggestion, and how far the row can scroll. */
@@ -663,6 +900,70 @@ class KeyboardView(context: Context) : View(context) {
             )
         }
         canvas.restore()
+    }
+
+    /** The list of languages, for whichever side of the bar was tapped. */
+    private fun drawLangPage(canvas: Canvas, w: Float, h: Float) {
+        val left = zonePad + sideMargin
+        val right = w - zonePad - sideMargin
+        val top = zonePad + panelPadTop
+
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.33f
+        txtPaint.color = theme.dim
+        val fmH = txtPaint.fontMetrics
+        val hCy = top + clipHeadH / 2f
+        canvas.drawText(
+            if (langForDst) "الترجمة إلى" else "الترجمة من",
+            left + dp(40f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint
+        )
+        txtPaint.color = theme.go
+        canvas.drawText("تم", right - dp(22f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint)
+        langDoneRect.set(right - dp(56f), top, right, top + clipHeadH)
+
+        val listTop = top + clipHeadH
+        val listBottom = h - bottomPad - zonePad - panelPadBottom
+        langListTop = listTop
+        langListBottom = listBottom
+
+        // "auto" only makes sense as a source
+        val items = if (langForDst) Tr.langs.filter { it.code != Tr.AUTO } else Tr.langs
+        val rowH = clipRowH * 0.72f
+        val visible = max(rowH, listBottom - listTop)
+        langMaxScroll = max(0f, items.size * rowH - visible)
+        langScroll = langScroll.coerceIn(0f, langMaxScroll)
+        val current = if (langForDst) Store.kbTrDst else Store.kbTrSrc
+
+        canvas.save()
+        canvas.clipRect(left, listTop, right, listBottom)
+        for (i in items.indices) {
+            val y = listTop + i * rowH - langScroll
+            if (y > listBottom || y + rowH < listTop) continue
+            rf.set(left, y + dp(2.5f), right, y + rowH - dp(2.5f))
+            bgPaint.color = if (i == langPressed) theme.keyDown else theme.key
+            canvas.drawRoundRect(rf, rad * 1.6f, rad * 1.6f, bgPaint)
+            txtPaint.textSize = keyH * 0.31f
+            txtPaint.color = if (items[i].code == current) theme.go else theme.text
+            val fm = txtPaint.fontMetrics
+            canvas.drawText(
+                items[i].name, (left + right) / 2f,
+                y + rowH / 2f - (fm.ascent + fm.descent) / 2f, txtPaint
+            )
+        }
+        canvas.restore()
+    }
+
+    private fun langRowAt(y: Float): Int {
+        if (y < langListTop || y > langListBottom) return -1
+        val rowH = clipRowH * 0.72f
+        val items = if (langForDst) Tr.langs.size - 1 else Tr.langs.size
+        val i = ((y - langListTop + langScroll) / rowH).toInt()
+        return if (i in 0 until items) i else -1
+    }
+
+    private fun langCodeAt(i: Int): String? {
+        val items = if (langForDst) Tr.langs.filter { it.code != Tr.AUTO } else Tr.langs
+        return items.getOrNull(i)?.code
     }
 
     /** Five little bars that ride the microphone level. */
@@ -859,6 +1160,57 @@ class KeyboardView(context: Context) : View(context) {
                 canvas.drawPath(path, icoPaint)
                 canvas.drawLine(cx, cy + s * 0.72f, cx, cy + s * 1.0f, icoPaint)
             }
+            Ico.GEAR, Ico.COG -> {
+                // eight teeth around a ring; cheap to draw and reads as a gear at any size
+                canvas.drawCircle(cx, cy, s * 0.40f, icoPaint)
+                var i = 0
+                while (i < 8) {
+                    val a = i * (Math.PI / 4.0)
+                    val ca = Math.cos(a).toFloat()
+                    val sa = Math.sin(a).toFloat()
+                    canvas.drawLine(
+                        cx + ca * s * 0.66f, cy + sa * s * 0.66f,
+                        cx + ca * s * 0.98f, cy + sa * s * 0.98f, icoPaint
+                    )
+                    i++
+                }
+            }
+            Ico.TRANS -> {
+                // the 文/A pair every translate button uses
+                canvas.drawLine(cx - s * 0.95f, cy - s * 0.72f, cx - s * 0.05f, cy - s * 0.72f, icoPaint)
+                canvas.drawLine(cx - s * 0.50f, cy - s * 0.95f, cx - s * 0.50f, cy - s * 0.62f, icoPaint)
+                path.reset()
+                path.moveTo(cx - s * 0.86f, cy + s * 0.22f)
+                path.quadTo(cx - s * 0.26f, cy - s * 0.10f, cx - s * 0.14f, cy - s * 0.52f)
+                canvas.drawPath(path, icoPaint)
+                path.reset()
+                path.moveTo(cx - s * 0.74f, cy - s * 0.42f)
+                path.quadTo(cx - s * 0.40f, cy + s * 0.28f, cx - s * 0.02f, cy + s * 0.40f)
+                canvas.drawPath(path, icoPaint)
+                canvas.drawLine(cx + s * 0.18f, cy + s * 0.95f, cx + s * 0.62f, cy - s * 0.18f, icoPaint)
+                canvas.drawLine(cx + s * 0.62f, cy - s * 0.18f, cx + s * 1.02f, cy + s * 0.95f, icoPaint)
+                canvas.drawLine(cx + s * 0.34f, cy + s * 0.56f, cx + s * 0.88f, cy + s * 0.56f, icoPaint)
+            }
+            Ico.BACK -> {
+                canvas.drawLine(cx + s * 0.85f, cy, cx - s * 0.75f, cy, icoPaint)
+                path.reset()
+                path.moveTo(cx - s * 0.10f, cy - s * 0.62f)
+                path.lineTo(cx - s * 0.78f, cy)
+                path.lineTo(cx - s * 0.10f, cy + s * 0.62f)
+                canvas.drawPath(path, icoPaint)
+            }
+            Ico.SWAP -> {
+                canvas.drawLine(cx - s * 0.85f, cy - s * 0.38f, cx + s * 0.70f, cy - s * 0.38f, icoPaint)
+                path.reset()
+                path.moveTo(cx + s * 0.22f, cy - s * 0.82f)
+                path.lineTo(cx + s * 0.74f, cy - s * 0.38f)
+                canvas.drawPath(path, icoPaint)
+                canvas.drawLine(cx + s * 0.85f, cy + s * 0.38f, cx - s * 0.70f, cy + s * 0.38f, icoPaint)
+                path.reset()
+                path.moveTo(cx - s * 0.22f, cy + s * 0.82f)
+                path.lineTo(cx - s * 0.74f, cy + s * 0.38f)
+                canvas.drawPath(path, icoPaint)
+            }
         }
     }
 
@@ -924,6 +1276,15 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
+                if (page == Pages.LANGS) {
+                    langDownY = y
+                    langScroll0 = langScroll
+                    langScrolling = false
+                    langPressed = langRowAt(y)
+                    invalidate()
+                    return true
+                }
+
                 if (page == Pages.EMOJI && y >= emojiTop && y <= emojiBottom) {
                     scrollStart = emojiScroll
                     return true
@@ -940,7 +1301,7 @@ class KeyboardView(context: Context) : View(context) {
 
                 // the suggestion strip owns its own band, so the nearest-key fallback
                 // below must never reach up into it
-                if (showSugg && page != Pages.EMOJI &&
+                if (stripVisible &&
                     y < zonePad + panelPadTop + suggH
                 ) {
                     pressedZone = stripZone(x)
@@ -948,13 +1309,15 @@ class KeyboardView(context: Context) : View(context) {
                     suggDragging = false
                     stripDownX = x
                     stripScroll0 = suggScroll
-                    if (pressedZone == -3) {
+                    if (pressedZone == -3 && !toolsOpen) {
                         clipArmed = true
                         handler.postDelayed(clipHoldRunnable, 380)
                     }
                     if (pressedZone != -1) invalidateStrip()
                     return true
                 }
+
+                if (toolsOpen) setToolsOpen(false)
 
                 val k = find(x, y) ?: return true
 
@@ -999,6 +1362,19 @@ class KeyboardView(context: Context) : View(context) {
                     }
                     if (clipScrolling) {
                         clipScroll = (clipScroll0 - dy).coerceIn(0f, clipMaxScroll)
+                        invalidate()
+                    }
+                    return true
+                }
+
+                if (page == Pages.LANGS) {
+                    val dy = y - langDownY
+                    if (!langScrolling && Math.abs(dy) > dp(8f)) {
+                        langScrolling = true
+                        langPressed = -1
+                    }
+                    if (langScrolling) {
+                        langScroll = (langScroll0 - dy).coerceIn(0f, langMaxScroll)
                         invalidate()
                     }
                     return true
@@ -1057,6 +1433,24 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
+                if (page == Pages.LANGS) {
+                    val i = langPressed
+                    val dragged = langScrolling
+                    langPressed = -1
+                    langScrolling = false
+                    invalidate()
+                    if (dragged) return true
+                    if (langDoneRect.contains(x, y)) { listener?.onLangPick(""); return true }
+                    if (i >= 0) {
+                        val code = langCodeAt(i)
+                        if (code != null) {
+                            Store.setTrLang(context, langForDst, code)
+                            listener?.onLangPick(code)
+                        }
+                    }
+                    return true
+                }
+
                 if (altList.isNotEmpty()) {
                     val out = closeAlts(true)
                     pressed = null
@@ -1089,7 +1483,7 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
-                if (showSugg && page != Pages.EMOJI &&
+                if (stripVisible &&
                     y < zonePad + panelPadTop + suggH
                 ) {
                     val z = pressedZone
@@ -1104,8 +1498,16 @@ class KeyboardView(context: Context) : View(context) {
                     invalidateStrip()
                     if (dragged || hadHold) return true
                     when {
-                        z == -2 -> listener?.onMic()
+                        z == -2 -> setToolsOpen(!toolsOpen)
                         z == -3 -> listener?.onClipTap()
+                        z <= -4 && z >= -7 -> {
+                            setToolsOpen(false)
+                            listener?.onTool(-(z + 4))
+                        }
+                        z == -10 -> listener?.onTransLang(false)
+                        z == -11 -> listener?.onTransSwap()
+                        z == -12 -> listener?.onTransLang(true)
+                        z == -13 -> listener?.onTransClose()
                         z >= 0 && suggAt(x, width.toFloat()) == z -> {
                             if (suggs.getOrNull(z).isNullOrEmpty()) {
                                 if (suggText.isNotEmpty()) listener?.onSuggestionTap()
@@ -1240,7 +1642,23 @@ class KeyboardView(context: Context) : View(context) {
     private fun stripZone(x: Float): Int {
         val left = zonePad
         val right = width - zonePad
+
+        if (transOn) {
+            if (trCloseRect.left - dp(4f) <= x) return -13
+            if (trDstRect.contains(x, trDstRect.centerY())) return -12
+            if (trSwapRect.left <= x && x <= trSwapRect.right) return -11
+            if (trSrcRect.left - dp(4f) <= x) return -10
+            return -1
+        }
+
         if (micInStrip && x > right - micEdge - micW * 1.25f) return -2
+        if (toolsOpen) {
+            for (i in toolRects.indices) {
+                val r = toolRects[i]
+                if (x >= r.left - dp(2f) && x <= r.right + dp(2f)) return -(4 + i)
+            }
+            return -1
+        }
         if (clipOn && x < left + micEdge + micW * 1.25f) return -3
         return suggAt(x, width.toFloat())
     }

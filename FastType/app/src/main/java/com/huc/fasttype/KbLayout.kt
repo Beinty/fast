@@ -34,6 +34,11 @@ object Ico {
     const val GLOBE = 7
     const val MIC = 8
     const val CLIP = 9
+    const val GEAR = 10
+    const val TRANS = 11
+    const val BACK = 12
+    const val SWAP = 13
+    const val COG = 14
 }
 
 class Key(
@@ -94,6 +99,7 @@ object Pages {
     const val NPAD = 3
     const val EMOJI = 4
     const val CLIP = 5
+    const val LANGS = 6
 }
 
 object KbLayout {

@@ -1,6 +1,7 @@
 package com.huc.fasttype
 
 import android.content.Context
+import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.media.AudioManager
 import android.view.HapticFeedbackConstants
@@ -19,6 +20,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     private var kv: KeyboardView? = null
     private val ui = Handler(Looper.getMainLooper())
+
+    /** Translate mode: what he is typing into the box, and what we put in the field. */
+    private var transOn = false
+    private val transBuf = StringBuilder()
+    private var transComposing = false
+    private var transJob: Runnable? = null
     private var voice: Voice? = null
     private var voiceBase = ""
     private var voicePartial = 0
@@ -156,6 +163,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         super.onWindowHidden()
         voice?.stop()
         kv?.listening = false
+        if (transOn) onTransClose()
         UserDict.save()
     }
 
@@ -171,6 +179,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         clipWatcher = null
         voice?.stop()
         voice = null
+        Tr.release()
         UserDict.save()
         super.onDestroy()
     }
@@ -183,7 +192,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         pendingShortcut = null
         shift = 0
         page = Pages.LETTERS
+        if (transOn) {
+            transOn = false
+            transComposing = false
+            transBuf.setLength(0)
+        }
         kv?.let {
+            it.setTranslate(false)
+            it.setToolsOpen(false)
             it.applySettings()
             it.shift = 0
             it.page = page
@@ -211,6 +227,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     // ---------------- listener ----------------
 
     override fun onChar(s: String) {
+        if (transOn) {
+            transBuf.append(s)
+            afterTransEdit()
+            return
+        }
         val ic = currentInputConnection ?: return
         undoTyped = null
         undoFixed = null
@@ -322,6 +343,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onDelete() {
+        if (transOn) {
+            if (transBuf.isNotEmpty()) transBuf.setLength(transBuf.length - 1)
+            afterTransEdit()
+            return
+        }
         val ic = currentInputConnection ?: return
         releaseComposing(ic)
 
@@ -437,6 +463,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onEnter() {
         feedback()
+        // in translate mode the key means "I'm done" — the translation stays behind
+        if (transOn) { onTransClose(); return }
         val ic = currentInputConnection ?: return
         val ei = currentInputEditorInfo
         val action = ei?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
@@ -522,6 +550,107 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     // ---------------- voice typing ----------------
+
+    // ---- the strip's icon bar, and translation -----------------------------
+
+    override fun onTool(which: Int) {
+        feedback()
+        when (which) {
+            0 -> onMic()
+            1 -> openTranslate()
+            2 -> onClipTap()
+            3 -> {
+                try {
+                    val i = Intent(this, MainActivity::class.java)
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(i)
+                } catch (_: Throwable) {
+                }
+            }
+        }
+    }
+
+    private fun openTranslate() {
+        val ic = currentInputConnection
+        if (ic != null) releaseComposing(ic)
+        transOn = true
+        transComposing = false
+        transBuf.setLength(0)
+        kv?.setTranslate(true)
+        kv?.setTransText("", "")
+    }
+
+    override fun onTransClose() {
+        val ic = currentInputConnection
+        if (ic != null && transComposing) ic.finishComposingText()
+        transComposing = false
+        transOn = false
+        transBuf.setLength(0)
+        transJob?.let { ui.removeCallbacks(it) }
+        transJob = null
+        kv?.setTranslate(false)
+        refreshSugg()
+    }
+
+    override fun onTransSwap() {
+        val src = Store.kbTrSrc
+        val dst = Store.kbTrDst
+        Store.setTrLang(this, false, dst)
+        Store.setTrLang(this, true, if (src == Tr.AUTO) "ar" else src)
+        kv?.invalidate()
+        afterTransEdit()
+    }
+
+    override fun onTransLang(dst: Boolean) {
+        feedback()
+        kv?.openLangs(dst)
+    }
+
+    override fun onLangPick(code: String) {
+        feedback()
+        page = Pages.LETTERS
+        kv?.page = Pages.LETTERS
+        kv?.rebuild()
+        if (code.isNotEmpty()) afterTransEdit()
+    }
+
+    /** Redraws the box and queues a translation once the hand settles. */
+    private fun afterTransEdit() {
+        feedback()
+        kv?.setTransText(transBuf.toString(), Tr.status)
+        transJob?.let { ui.removeCallbacks(it) }
+        val job = Runnable { runTranslate() }
+        transJob = job
+        // a short wait beats translating on every letter, and it still feels live
+        ui.postDelayed(job, 160)
+    }
+
+    private fun runTranslate() {
+        val text = transBuf.toString()
+        if (text.isBlank()) {
+            val ic = currentInputConnection
+            if (ic != null && transComposing) {
+                ic.setComposingText("", 1)
+                ic.finishComposingText()
+            }
+            transComposing = false
+            kv?.setTransText(text, "")
+            return
+        }
+        Tr.translate(text, Store.kbTrSrc, Store.kbTrDst) { out ->
+            kv?.setTransText(transBuf.toString(), Tr.status)
+            if (out != null && transOn) {
+                val ic = currentInputConnection
+                if (ic != null) {
+                    // composing text replaces itself, so each new guess simply lands
+                    // on top of the last one without any deleting
+                    ic.setComposingText(out, 1)
+                    transComposing = true
+                }
+            }
+        }
+        kv?.setTransText(text, Tr.status)
+    }
 
     override fun onMic() {
         Log.i(Voice.TAG, "mic key pressed")

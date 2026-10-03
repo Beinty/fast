@@ -11,8 +11,8 @@ android {
         applicationId = "com.huc.fasttype"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "6.2"
+        versionCode = 35
+        versionName = "6.3"
     }
 
     signingConfigs {
@@ -45,4 +45,7 @@ android {
 }
 
 dependencies {
+    // on-device translation: no API key, and nothing typed ever leaves the phone
+    implementation("com.google.mlkit:translate:17.0.3")
+    implementation("com.google.mlkit:language-id:17.0.6")
 }
