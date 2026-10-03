@@ -29,6 +29,34 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var transOut = ""
     private var transLastSent = ""
 
+    /** The last finished word, and how much of it has been rubbed out since. */
+    private var lastDone = ""
+    private var eraseCount = 0
+
+    /** A word he deleted whole, waiting to see what he types in its place. */
+    private var repairFrom: String? = null
+    private var repairAt = 0L
+
+    /**
+     * Is [good] the same word typed again, or a different word altogether?
+     *
+     * Only the first means anything: he backspaced over a slip and wrote it properly.
+     * Deleting a word and writing something else entirely is just editing, and
+     * filing that as a correction would teach the keyboard nonsense.
+     */
+    private fun looksLikeRepair(bad: String, good: String): Boolean {
+        if (bad == good) return false
+        if (bad.length < 3 || good.length < 3) return false
+        if (Math.abs(bad.length - good.length) > 2) return false
+        val left = good.toMutableList()
+        var common = 0
+        for (c in bad) {
+            val i = left.indexOf(c)
+            if (i >= 0) { left.removeAt(i); common++ }
+        }
+        return common >= Math.max(2, Math.min(bad.length, good.length) - 1)
+    }
+
     /** For each letter in [buffer], the keys the finger was between. */
     private val nearBuf = ArrayList<String>(32)
 
@@ -303,21 +331,45 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
         }
 
-        if (isBreak && buffer.isNotEmpty() && Store.kbLearn) {
-            val w = buffer.toString()
-            UserDict.seen(w, arabic)
-            if (lastWord.isNotEmpty()) UserDict.seenPair(lastWord, w, arabic)
-            lastWord = w
-        }
-
-        if (isBreak && Store.kbCorrect && buffer.isNotEmpty()) {
+        if (isBreak && buffer.isNotEmpty()) {
             val typed = buffer.toString()
-            // a spelling he writes himself is his, not a mistake
-            val fixed = if (Store.kbLearn && UserDict.isOwn(typed, arabic)) null
-            else UserDict.correct(typed, arabic)
-                // what the finger was actually near beats guessing the whole alphabet
-                ?: Dict.correctNear(typed, nearBuf, arabic)
-                ?: Dict.correct(typed, arabic)
+
+            var fixed: String? = null
+            if (Store.kbCorrect) {
+                // a slip he has made before is repaired from memory, no guessing at all
+                fixed = UserDict.fixFor(typed, arabic)
+                if (fixed == null && !(Store.kbLearn && UserDict.isOwn(typed, arabic))) {
+                    // his own words first, then the dictionary — weighted by what
+                    // the finger was actually near, not by which word is commoner
+                    fixed = UserDict.correct(typed, arabic)
+                        ?: Dict.correctNear(typed, nearBuf, arabic)
+                }
+            }
+
+            // The word that joins his vocabulary is the right one, never the slip.
+            // Counting the slip was what poisoned this: typed wrong twice, it became
+            // "his own spelling" and the keyboard stopped fixing it for good.
+            val learnt = fixed ?: typed
+            if (Store.kbLearn) {
+                UserDict.seen(learnt, arabic)
+                if (lastWord.isNotEmpty()) UserDict.seenPair(lastWord, learnt, arabic)
+
+                // he rubbed out a word a moment ago and has just retyped it — that
+                // second attempt is him telling us what the first one should have been
+                val rf = repairFrom
+                if (rf != null) {
+                    repairFrom = null
+                    if (System.currentTimeMillis() - repairAt < 25_000L &&
+                        looksLikeRepair(rf, learnt)
+                    ) {
+                        UserDict.learnFix(rf, learnt, arabic)
+                    }
+                }
+            }
+            lastWord = learnt
+            lastDone = learnt
+            eraseCount = 0
+
             if (fixed != null) {
                 ic.beginBatchEdit()
                 ic.deleteSurroundingText(typed.length, 0)
@@ -325,6 +377,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 ic.endBatchEdit()
                 undoTyped = typed
                 undoFixed = fixed
+                // worth remembering straight away; one backspace takes it back out
+                if (Store.kbLearn) UserDict.learnFix(typed, fixed, arabic)
                 resetWord()
                 feedback()
                 scheduleSugg()
@@ -339,6 +393,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         else {
             buffer.append(s)
             nearBuf.add(kv?.lastNear ?: "")
+            eraseCount = 0
             if (buffer.length > 32) {
                 buffer.delete(0, buffer.length - 32)
                 while (nearBuf.size > buffer.length) nearBuf.removeAt(0)
@@ -393,6 +448,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             undoTyped = null
             undoFixed = null
             if (Store.kbLearn) UserDict.keepAsIs(t, arabic)
+            repairFrom = null
+            lastDone = t
+            eraseCount = 0
             ic.beginBatchEdit()
             ic.deleteSurroundingText(f.length + 1, 0)
             ic.commitText(t, 1)
@@ -418,8 +476,20 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         ic.deleteSurroundingText(1, 0)
-        if (buffer.isNotEmpty()) buffer.setLength(buffer.length - 1)
-        if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
+        if (buffer.isNotEmpty()) {
+            buffer.setLength(buffer.length - 1)
+            if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
+        } else if (lastDone.isNotEmpty()) {
+            // past the start of the word being typed, so these presses are eating
+            // the word before it — the separator first, then its letters
+            eraseCount++
+            if (eraseCount >= lastDone.length + 1) {
+                repairFrom = lastDone
+                repairAt = System.currentTimeMillis()
+                lastDone = ""
+                eraseCount = 0
+            }
+        }
         feedback()
         scheduleSugg()
     }

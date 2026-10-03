@@ -17,19 +17,23 @@ object UserDict {
     private const val K_COUNTS = "counts"
     private const val K_KEEP = "keep"
     private const val K_PAIRS = "pairs"
+    private const val K_FIXES = "fixes"
 
     /** Beyond this the rarest entries are dropped, so the file cannot grow forever. */
     private const val MAX = 4000
     private const val TRIM_TO = 3000
 
     /** Seen this many times, a word is treated as the person's own spelling. */
-    private const val OWN = 2
+    // Two was too low: one word typed wrong twice became protected for good, and
+    // the keyboard then refused to fix it ever again.
+    private const val OWN = 4
 
     private val counts = HashMap<String, Int>(512)
 
     /** "prev\u0000next" -> how often this person put those two words together. */
     private val pairs = HashMap<String, Int>(512)
     private const val MAX_PAIRS = 6000
+    private const val MAX_FIX = 1500
     private val keep = HashSet<String>(128)
 
     @Volatile private var loaded = false
@@ -56,6 +60,14 @@ object UserDict {
                 while (it2.hasNext()) {
                     val k = it2.next()
                     pairs[k] = o.optInt(k, 1)
+                }
+            }
+            JSONObject(p.getString(K_FIXES, "{}") ?: "{}").let { o ->
+                val it3 = o.keys()
+                while (it3.hasNext()) {
+                    val k = it3.next()
+                    val v = o.optString(k, "")
+                    if (v.isNotEmpty()) fixes[k] = v
                 }
             }
         } catch (_: Exception) {
@@ -103,7 +115,51 @@ object UserDict {
     }
 
     /** Marks a spelling as deliberate — used when a correction is undone. */
+    /**
+     * Mistakes this person makes, and what they actually meant.
+     *
+     * The general corrector guesses from a dictionary; this remembers. Once a repair
+     * is in here it is applied straight away, every time, with no guessing at all —
+     * which is what makes a keyboard feel like it has learnt someone's hands.
+     */
+    private val fixes = HashMap<String, String>()
+
+    /** Remembers that [bad] should have been [good]. */
+    fun learnFix(bad: String, good: String, arabic: Boolean) {
+        if (bad.length < 2 || good.length < 2) return
+        if (bad.length > 24 || good.length > 24) return
+        if (!isWordy(bad, arabic) || !isWordy(good, arabic)) return
+        val k = Dict.fold(bad, arabic)
+        if (k == Dict.fold(good, arabic)) return
+        if (keep.contains(k)) return          // he insisted on this spelling before
+        if (fixes[k] == good) return
+        fixes[k] = good
+        if (fixes.size > MAX_FIX) {
+            val it = fixes.keys.iterator()
+            var drop = fixes.size - MAX_FIX
+            while (it.hasNext() && drop > 0) { it.next(); it.remove(); drop-- }
+        }
+        dirty = true
+        save()
+    }
+
+    /** What he meant, when this exact slip has been seen before. */
+    fun fixFor(word: String, arabic: Boolean): String? {
+        if (fixes.isEmpty()) return null
+        val k = Dict.fold(word, arabic)
+        if (keep.contains(k)) return null
+        val out = fixes[k] ?: return null
+        return if (out == word) null else out
+    }
+
+    /** He put the typed word back, so it was never a mistake. */
+    fun forgetFix(word: String, arabic: Boolean) {
+        val k = Dict.fold(word, arabic)
+        if (fixes.remove(k) != null) { dirty = true; save() }
+    }
+
     fun keepAsIs(word: String, arabic: Boolean) {
+        forgetFix(word, arabic)
         val k = Dict.fold(word, arabic)
         keep.add(k)
         counts[k] = (counts[k] ?: 0) + OWN
@@ -202,6 +258,9 @@ object UserDict {
                 .putString(K_PAIRS, JSONObject().also { pj ->
                     for ((k, v) in pairs) pj.put(k, v)
                 }.toString())
+                .putString(K_FIXES, JSONObject().also { fj ->
+                    for ((k, v) in fixes) fj.put(k, v)
+                }.toString())
                 .apply()
         } catch (_: Exception) {
         }
@@ -210,10 +269,14 @@ object UserDict {
     /** How many words the keyboard has picked up — shown in the settings screen. */
     fun learned(): Int = counts.count { it.value >= OWN }
 
+    /** How many of his own slips the keyboard now repairs on sight. */
+    fun fixCount(): Int = fixes.size
+
     fun forgetAll() {
         counts.clear()
         pairs.clear()
         keep.clear()
+        fixes.clear()
         dirty = true
         save()
     }

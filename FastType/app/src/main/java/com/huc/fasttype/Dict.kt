@@ -176,51 +176,57 @@ object Dict {
      * known, too short, or nothing close enough exists. Deliberately conservative — a
      * correction that fires on a word the writer meant is worse than no correction.
      */
+    // How much less likely each kind of slip is than a neighbouring-key slip.
+    // Without this the corrector picked whichever candidate was the commoner word,
+    // so "كياتي" came back as "يأتي" — a dropped letter — instead of "حياتي", which
+    // is one key away. Frequency alone is not evidence of what the hand did.
+    private const val W_NEAR = 1.0f    // the key beside the one he wanted
+    private const val W_FAR = 2.6f     // some other letter entirely
+    private const val W_SWAP = 1.8f    // two letters the wrong way round
+    private const val W_DROP = 3.6f    // a letter typed twice or one too many
+    private const val W_ADD = 5.0f     // a letter missed out
+    private const val CUT = 9000f      // past this, leave the word alone
+
     /**
      * Correction that knows what the finger was near.
      *
-     * [nears] holds, for each typed letter, the letters whose keys sat beside it. A
-     * mistyped word is almost always a neighbour slip, so trying those first finds
-     * the right word more often than substituting the whole alphabet does — and it
-     * is a few dozen lookups instead of a thousand.
+     * [nears] holds, for each typed letter, the letters whose keys sat beside it, so
+     * a slip onto a neighbour is scored as the likely thing it is. Words shorter than
+     * four letters are never touched: Iraqi dialect is full of short words no
+     * dictionary has, and mangling those is worse than leaving a typo alone.
      */
     fun correctNear(word: String, nears: List<String>, arabic: Boolean): String? {
         val l = lang(arabic) ?: return null
-        if (word.length < 2 || word.length > 18) return null
+        if (word.length < 4 || word.length > 18) return null
         val w = fold(word, arabic)
-        if (l.byFolded.containsKey(w)) return null
-        if (nears.size < word.length) return null
+        if (w.isEmpty() || l.byFolded.containsKey(w)) return null
 
+        val letters = if (arabic) AR_LETTERS else EN_LETTERS
         var bestIdx = -1
-        var bestRank = 14000
+        var bestScore = CUT
 
-        fun offer(cand: String) {
+        fun offer(cand: String, weight: Float) {
             val i = l.byFolded[cand] ?: return
-            if (l.rank[i] < bestRank) { bestRank = l.rank[i]; bestIdx = i }
+            // the forty most common words are not immune; the offset keeps their
+            // score from collapsing to nothing and winning on any weight
+            val score = (l.rank[i] + 40) * weight
+            if (score < bestScore) { bestScore = score; bestIdx = i }
         }
 
-        // one neighbour slip
         for (i in w.indices) {
-            val near = nears.getOrNull(i) ?: continue
-            for (c in near) {
-                val f = fold(c.toString(), arabic)
-                if (f.isEmpty() || f[0] == w[i]) continue
-                offer(w.substring(0, i) + f[0] + w.substring(i + 1))
+            val near = nears.getOrNull(i) ?: ""
+            for (c in letters) {
+                if (c == w[i]) continue
+                offer(w.substring(0, i) + c + w.substring(i + 1),
+                    if (near.indexOf(c) >= 0) W_NEAR else W_FAR)
             }
         }
-        // a doubled or dropped letter, and two letters the wrong way round
-        for (i in w.indices) offer(w.substring(0, i) + w.substring(i + 1))
         for (i in 0 until w.length - 1) {
-            offer(w.substring(0, i) + w[i + 1] + w[i] + w.substring(i + 2))
+            offer(w.substring(0, i) + w[i + 1] + w[i] + w.substring(i + 2), W_SWAP)
         }
-        // a neighbour pressed as well as the right key
-        for (i in w.indices) {
-            val near = nears.getOrNull(i) ?: continue
-            for (c in near) {
-                val f = fold(c.toString(), arabic)
-                if (f.isEmpty()) continue
-                offer(w.substring(0, i) + f[0] + w.substring(i))
-            }
+        for (i in w.indices) offer(w.substring(0, i) + w.substring(i + 1), W_DROP)
+        for (i in 0..w.length) {
+            for (c in letters) offer(w.substring(0, i) + c + w.substring(i), W_ADD)
         }
 
         if (bestIdx < 0) return null
