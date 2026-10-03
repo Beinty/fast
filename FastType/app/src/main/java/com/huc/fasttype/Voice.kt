@@ -11,6 +11,7 @@ import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 
 /**
  * Voice typing. Wraps the system speech recogniser and reports what it hears back to
@@ -23,6 +24,12 @@ import android.speech.SpeechRecognizer
  * so each language is a list that steps down to letting the engine choose.
  */
 class Voice(private val ctx: Context) {
+
+    companion object {
+        /** Everything this class does is logged here: `adb logcat -s HUCVOICE`. */
+        const val TAG = "HUCVOICE"
+    }
+
 
     interface Sink {
         /** Called repeatedly with the best guess so far. */
@@ -71,6 +78,8 @@ class Voice(private val ctx: Context) {
     }
 
     fun start(useArabic: Boolean) {
+        Log.i(TAG, "start arabic=$useArabic perm=${hasPermission()} " +
+            "net=${available()} onDev=${onDeviceAvailable()} sdk=${Build.VERSION.SDK_INT}")
         arabic = useArabic
         tagIndex = 0
         onDevice = false
@@ -117,7 +126,8 @@ class Voice(private val ctx: Context) {
             if (onDevice && Build.VERSION.SDK_INT >= 33)
                 SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
             else SpeechRecognizer.createSpeechRecognizer(ctx)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "create failed onDevice=$onDevice", e)
             sink?.onState(false, "ما كدرت أشغّل المايك")
             return
         }
@@ -125,20 +135,23 @@ class Voice(private val ctx: Context) {
 
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(p: Bundle?) {
+                Log.i(TAG, "ready — engine is listening")
                 active = true
                 disconnects = 0
                 sink?.onState(true, "تفضّل… أسمعك")
             }
 
-            override fun onBeginningOfSpeech() {}
+            override fun onBeginningOfSpeech() { Log.i(TAG, "speech began") }
             override fun onRmsChanged(v: Float) {}
             override fun onBufferReceived(b: ByteArray?) {}
 
             override fun onEndOfSpeech() {
+                Log.i(TAG, "speech ended")
                 sink?.onState(true, "لحظة…")
             }
 
             override fun onError(code: Int) {
+                Log.w(TAG, "error $code (${message(code)}) onDevice=$onDevice tag=$tagIndex")
                 active = false
                 ui.post { handleError(code) }
             }
@@ -149,6 +162,7 @@ class Voice(private val ctx: Context) {
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     .orEmpty()
+                Log.i(TAG, "final: '" + best + "'")
                 sink?.onFinal(best)
                 teardown()
             }
@@ -182,9 +196,11 @@ class Voice(private val ctx: Context) {
             if (onDevice) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
 
+        Log.i(TAG, "startListening tag='" + tag + "' onDevice=" + onDevice)
         try {
             r.startListening(i)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "startListening threw", e)
             active = false
             sink?.onState(false, "ما كدرت أشغّل المايك")
             teardown()
@@ -222,6 +238,7 @@ class Voice(private val ctx: Context) {
             return
         }
 
+        Log.w(TAG, "giving up on error $code")
         teardown()
         sink?.onState(false, message(code))
     }

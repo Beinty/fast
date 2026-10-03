@@ -7,6 +7,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.util.Log
 import android.os.Handler
 import android.os.Looper
 
@@ -349,6 +350,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     // ---------------- voice typing ----------------
 
     override fun onMic() {
+        Log.i(Voice.TAG, "mic key pressed")
         val vo = voice ?: Voice(this).also { it.sink = this; voice = it }
 
         if (vo.isListening) {
@@ -360,6 +362,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         if (!vo.hasPermission()) {
+            Log.w(Voice.TAG, "RECORD_AUDIO not granted")
             showStrip("وافق على صلاحية المايك وارجع دوس")
             vo.askPermission()
             return
