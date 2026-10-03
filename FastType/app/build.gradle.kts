@@ -13,6 +13,12 @@ android {
         targetSdk = 35
         versionCode = 35
         versionName = "6.3"
+
+        // the translation engine ships a native library per processor type, and four
+        // copies of it is most of the download. This phone is arm64, so keep that one.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     signingConfigs {
