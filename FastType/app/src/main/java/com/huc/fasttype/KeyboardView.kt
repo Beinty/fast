@@ -380,7 +380,7 @@ class KeyboardView(context: Context) : View(context) {
         val bottom = top + suggH
         val left = zonePad
         val right = w - zonePad
-        val zoneRight = right - micW
+        val zoneRight = right - micW - micEdge
 
         // pressed zone gets a soft highlight, nothing else is painted
         if (pressedZone in 0..2 && suggs.size > pressedZone) {
@@ -416,7 +416,7 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (micInStrip) {
-            val mcx = right - micW / 2f
+            val mcx = right - micEdge - micW / 2f
             val mcy = (top + bottom) / 2f
             val r = micW * 0.46f
 
@@ -783,13 +783,16 @@ class KeyboardView(context: Context) : View(context) {
     /** Width the mic reserves at the right end of the strip. */
     private val micW get() = if (micInStrip) suggH * 0.9f else 0f
 
+    /** Clear space kept between the mic and the screen edge. */
+    private val micEdge get() = if (micInStrip) sideMargin + dp(4f) else 0f
+
     /** Which third of the strip a touch is in; -2 for the mic, -1 for nothing. */
     private fun stripZone(x: Float): Int {
         val left = zonePad
         val right = width - zonePad
         // a comfortable reach, not just the glyph — this sits at the screen edge
-        if (micInStrip && x > right - micW * 1.35f) return -2
-        val zw = (right - left - micW) / 3f
+        if (micInStrip && x > right - micEdge - micW * 1.3f) return -2
+        val zw = (right - left - micW - micEdge) / 3f
         val i = ((x - left) / zw).toInt()
         return if (i in 0..2) i else -1
     }

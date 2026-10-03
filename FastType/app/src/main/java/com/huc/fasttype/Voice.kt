@@ -41,6 +41,11 @@ class Voice(private val ctx: Context) {
         fun onPartial(text: String)
         /** One finished sentence. More may follow while the session is open. */
         fun onSegment(text: String)
+        /**
+         * A sentence is over and the next is about to start. Whatever is on screen
+         * from the live text must be kept, or the next sentence overwrites it.
+         */
+        fun onSegmentEnd()
         /** The session ended for good. */
         fun onFinal()
         /** Listening started, stopped, or failed — [message] is already user-facing. */
@@ -232,6 +237,8 @@ class Voice(private val ctx: Context) {
     fun stop() {
         wanted = false
         active = false
+        sink?.onSegmentEnd()
+        sink?.onFinal()
         teardown()
     }
 
@@ -313,7 +320,7 @@ class Voice(private val ctx: Context) {
                 Log.i(TAG, "segment: '" + best + "' wanted=" + wanted)
                 if (best.isNotEmpty()) heardAnything = true
                 sink?.onSegment(best)
-                if (wanted) keepGoing() else { sink?.onFinal(); teardown() }
+                if (wanted) keepGoing() else { sink?.onSegmentEnd(); sink?.onFinal(); teardown() }
             }
 
             override fun onPartialResults(partial: Bundle?) {
@@ -367,6 +374,8 @@ class Voice(private val ctx: Context) {
     /** Starts the next sentence. This is what makes silence harmless. */
     private fun keepGoing() {
         restarts++
+        // freeze the live text first — a restart must never eat the last sentence
+        sink?.onSegmentEnd()
         sink?.onState(true, "ساكت… دوس المايك حتى يوقف")
         retryAfter(220)
     }

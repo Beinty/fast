@@ -429,14 +429,26 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
     }
 
+    /** Keeps the live text as written, so the next sentence starts after it. */
+    override fun onSegmentEnd() {
+        ui.post {
+            if (voicePartial > 0) {
+                currentInputConnection?.commitText(" ", 1)
+                voicePartial = 0
+                buffer.setLength(0)
+            }
+        }
+    }
+
     override fun onFinal() {
         ui.post {
             voicePartial = 0
             buffer.setLength(0)
             kv?.listening = false
             kv?.level = 0f
-            refreshSugg()
         }
+        // let the "stopped" line sit for a moment before the strip goes back
+        ui.postDelayed({ if (voice?.isListening != true) refreshSugg() }, 900)
     }
 
     override fun onLevel(rms: Float) {
