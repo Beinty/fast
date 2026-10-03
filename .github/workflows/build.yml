@@ -70,3 +70,10 @@ jobs:
           name: FastType-apk
           path: '**/app/build/outputs/apk/debug/app-debug.apk'
           if-no-files-found: error
+
+      - name: Upload launcher APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Glass-launcher-apk
+          path: '**/glass/build/outputs/apk/debug/glass-debug.apk'
+          if-no-files-found: error

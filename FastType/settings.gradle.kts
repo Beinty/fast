@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "FastType"
 include(":app")
+include(":glass")
