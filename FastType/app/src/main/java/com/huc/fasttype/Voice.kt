@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.os.Build
 
 /**
  * Voice typing. Wraps the system speech recogniser and reports what it hears back to
@@ -28,6 +29,8 @@ class Voice(private val ctx: Context) {
 
     private var rec: SpeechRecognizer? = null
     private var active = false
+    private var triedOnDevice = false
+    private var lastArabic = false
 
     val isListening: Boolean get() = active
 
@@ -49,14 +52,29 @@ class Voice(private val ctx: Context) {
     }
 
     fun start(arabic: Boolean) {
+        triedOnDevice = false
+        lastArabic = arabic
+        begin(arabic, false)
+    }
+
+    private fun begin(arabic: Boolean, onDevice: Boolean) {
         stop()
-        if (!available()) {
-            sink?.onState(false, "التعرّف على الصوت مو متوفر بالجهاز")
+        if (!onDevice && !available()) {
+            // no network recogniser registered; the on-device one may still exist
+            if (Build.VERSION.SDK_INT >= 33 &&
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
+            ) {
+                begin(arabic, true)
+                return
+            }
+            sink?.onState(false, "ما لكيت محرك تعرّف صوت بالجهاز — نزّل تطبيق Google")
             return
         }
         val r = try {
-            SpeechRecognizer.createSpeechRecognizer(ctx)
-        } catch (_: Exception) {
+            if (onDevice && Build.VERSION.SDK_INT >= 33)
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(ctx)
+            else SpeechRecognizer.createSpeechRecognizer(ctx)
+        } catch (e: Exception) {
             sink?.onState(false, "ما كدرت أشغّل المايك")
             return
         }
@@ -76,8 +94,21 @@ class Voice(private val ctx: Context) {
 
             override fun onError(code: Int) {
                 active = false
-                sink?.onState(false, message(code))
                 release()
+                // the network recogniser is the one that usually refuses inside a
+                // keyboard; retry once on the device's own engine before giving up
+                val retryable = code == SpeechRecognizer.ERROR_CLIENT ||
+                    code == SpeechRecognizer.ERROR_NETWORK ||
+                    code == SpeechRecognizer.ERROR_NETWORK_TIMEOUT ||
+                    code == SpeechRecognizer.ERROR_SERVER
+                if (!triedOnDevice && retryable && Build.VERSION.SDK_INT >= 33 &&
+                    SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
+                ) {
+                    triedOnDevice = true
+                    begin(lastArabic, true)
+                    return
+                }
+                sink?.onState(false, message(code))
             }
 
             override fun onResults(results: Bundle?) {
@@ -112,6 +143,7 @@ class Voice(private val ctx: Context) {
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, onDevice)
         }
         try {
             r.startListening(i)
@@ -142,14 +174,15 @@ class Voice(private val ctx: Context) {
     }
 
     private fun message(code: Int): String = when (code) {
-        SpeechRecognizer.ERROR_AUDIO -> "مشكلة بالمايك"
-        SpeechRecognizer.ERROR_CLIENT -> ""
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "محتاج صلاحية المايك"
-        SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
-            "محتاج إنترنت للتعرّف على الصوت"
-        SpeechRecognizer.ERROR_NO_MATCH -> "ما سمعت شي"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "المايك مشغول، جرّب بعد ثانية"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ما سمعت شي"
-        else -> "ما زبطت، جرّب مرة ثانية"
+        SpeechRecognizer.ERROR_AUDIO -> "مشكلة بالمايك (٣)"
+        SpeechRecognizer.ERROR_CLIENT -> "محرك الصوت رفض الطلب (٥)"
+        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "محتاج صلاحية المايك (٩)"
+        SpeechRecognizer.ERROR_NETWORK -> "محتاج إنترنت (٢)"
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "الإنترنت بطيء (١)"
+        SpeechRecognizer.ERROR_NO_MATCH -> "ما سمعت شي (٧)"
+        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "المحرك مشغول (٨)"
+        SpeechRecognizer.ERROR_SERVER -> "الخادم رفض (٤)"
+        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ما سمعت صوت (٦)"
+        else -> "ما زبطت (خطأ $code)"
     }
 }

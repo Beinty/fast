@@ -41,6 +41,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         super.onCreate()
         Store.load(this)
         Dict.warm(this)
+        UserDict.load(this)
     }
 
     override fun onCreateInputView(): View {
@@ -93,11 +94,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         super.onWindowHidden()
         voice?.stop()
         kv?.listening = false
+        UserDict.save()
     }
 
     override fun onDestroy() {
         voice?.stop()
         voice = null
+        UserDict.save()
         super.onDestroy()
     }
 
@@ -149,9 +152,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
         }
 
+        if (isBreak && buffer.isNotEmpty() && Store.kbLearn) {
+            UserDict.seen(buffer.toString(), arabic)
+        }
+
         if (isBreak && Store.kbCorrect && buffer.isNotEmpty()) {
             val typed = buffer.toString()
-            val fixed = Dict.correct(typed, arabic)
+            // a spelling he writes himself is his, not a mistake
+            val fixed = if (Store.kbLearn && UserDict.isOwn(typed, arabic)) null
+            else UserDict.correct(typed, arabic) ?: Dict.correct(typed, arabic)
             if (fixed != null) {
                 ic.beginBatchEdit()
                 ic.deleteSurroundingText(typed.length, 0)
@@ -207,6 +216,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (t != null && f != null) {
             undoTyped = null
             undoFixed = null
+            if (Store.kbLearn) UserDict.keepAsIs(t, arabic)
             ic.beginBatchEdit()
             ic.deleteSurroundingText(f.length + 1, 0)
             ic.commitText(t, 1)
@@ -327,6 +337,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (buffer.isNotEmpty()) ic.deleteSurroundingText(buffer.length, 0)
         ic.commitText("$word ", 1)
         ic.endBatchEdit()
+        if (Store.kbLearn) UserDict.seen(word, arabic)
         buffer.setLength(0)
         undoTyped = null
         undoFixed = null
@@ -428,8 +439,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         val word = buffer.toString()
-        val zones = if (Store.kbPredict && word.isNotEmpty())
-            Dict.predict(word, arabic, 3) else emptyList()
+        val zones = if (Store.kbPredict && word.isNotEmpty()) {
+            val mine = if (Store.kbLearn) UserDict.predict(word, arabic, 2) else emptyList()
+            val rest = Dict.predict(word, arabic, 3)
+            (mine + rest).distinct().take(3)
+        } else emptyList()
 
         if (v.suggText.isNotEmpty() || v.suggs != zones) {
             v.suggText = ""

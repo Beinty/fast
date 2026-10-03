@@ -56,6 +56,8 @@ object Store {
     private const val K_KB_PRESSFX = "kb_press_fx"
     private const val K_KB_PREDICT = "kb_predict"
     private const val K_KB_CORRECT = "kb_correct"
+    private const val K_KB_CLEAR = "kb_clear_edges"
+    private const val K_KB_LEARN = "kb_learn"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -194,6 +196,14 @@ object Store {
     @Volatile var kbCorrect: Boolean = true
         private set
 
+    /** Leave everything outside the panel unpainted, so the app shows through. */
+    @Volatile var kbClearEdges: Boolean = true
+        private set
+
+    /** Learn the words this person writes and favour them. */
+    @Volatile var kbLearn: Boolean = true
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -240,6 +250,8 @@ object Store {
         kbPressFx = p.getBoolean(K_KB_PRESSFX, true)
         kbPredict = p.getBoolean(K_KB_PREDICT, true)
         kbCorrect = p.getBoolean(K_KB_CORRECT, true)
+        kbClearEdges = p.getBoolean(K_KB_CLEAR, true)
+        kbLearn = p.getBoolean(K_KB_LEARN, true)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -339,6 +351,8 @@ object Store {
             "pressfx" -> { kbPressFx = v; e.putBoolean(K_KB_PRESSFX, v) }
             "predict" -> { kbPredict = v; e.putBoolean(K_KB_PREDICT, v) }
             "correct" -> { kbCorrect = v; e.putBoolean(K_KB_CORRECT, v) }
+            "clear" -> { kbClearEdges = v; e.putBoolean(K_KB_CLEAR, v) }
+            "learn" -> { kbLearn = v; e.putBoolean(K_KB_LEARN, v) }
         }
         e.apply()
     }

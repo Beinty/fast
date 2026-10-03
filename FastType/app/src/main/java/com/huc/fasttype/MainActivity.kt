@@ -64,6 +64,7 @@ class MainActivity : Activity() {
     private lateinit var tabKb: TextView
     private lateinit var panelKb: LinearLayout
     private var kbPreview: KeyboardView? = null
+    private var kbOuterRow: View? = null
 
     private lateinit var permBanner: TextView
     private lateinit var repeatValue: TextView
@@ -76,6 +77,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Store.load(this)
+        UserDict.load(this)
         data = Store.items.toMutableList()
 
         val root = LinearLayout(this)
@@ -715,9 +717,12 @@ class MainActivity : Activity() {
         p.addView(sliderRow("حجم الحرف", Store.kbLetter, 40, 58) {
             Store.setKbInt(this, "letter", it); syncPreview()
         }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
+        val outerRow = sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
             Store.setKbInt(this, "outer", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
+        }
+        outerRow.visibility = if (Store.kbGlobeRow) View.GONE else View.VISIBLE
+        kbOuterRow = outerRow
+        p.addView(outerRow, lp(true, bottom = dp(8)))
         p.addView(sliderRow("المسافة من أسفل الشاشة", Store.kbBottomPad, 0, 48) {
             Store.setKbInt(this, "bottom", it); syncPreview()
         }, lp(true, bottom = dp(14)))
@@ -730,6 +735,13 @@ class MainActivity : Activity() {
             Store.kbCorrect) {
             Store.setKbFlag(this, "correct", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow(
+            "يتعلّم من كتابتك",
+            "يحفظ الكلمات اللي تكتبها ويقدّمها، وما يصحّح كلمة ترفض تصحيحها — تعلّم ${UserDict.learned()} كلمة",
+            Store.kbLearn
+        ) {
+            Store.setKbFlag(this, "learn", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون",
             Store.kbHair) {
             Store.setKbFlag(this, "hair", it); syncPreview()
@@ -740,8 +752,13 @@ class MainActivity : Activity() {
         p.addView(switchRow("زر اللغة جنب الإيموجي", "ينشال الشريط السفلي ويقصر الكيبورد",
             Store.kbGlobeRow) {
             Store.setKbFlag(this, "globerow", it)
-            Store.setKbInt(this, "outer", if (it) 0 else 40)
+            if (!it && Store.kbOuterH == 0) Store.setKbInt(this, "outer", 40)
+            kbOuterRow?.visibility = if (it) View.GONE else View.VISIBLE
             syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("حواف شفافة", "ما يتلوّن أي شي برّا اللوحة — يبين التطبيق وراها",
+            Store.kbClearEdges) {
+            Store.setKbFlag(this, "clear", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("تظليل الزر عند الضغط", "طفّيه لأسرع استجابة ممكنة",
             Store.kbPressFx) {
