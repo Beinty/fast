@@ -56,7 +56,7 @@ object Store {
     private const val K_KB_PRESSFX = "kb_press_fx"
     private const val K_KB_PREDICT = "kb_predict"
     private const val K_KB_CORRECT = "kb_correct"
-    private const val K_KB_CLEAR = "kb_clear_edges"
+    private const val K_KB_CLEAR = "kb_clear_bottom"
     private const val K_KB_LEARN = "kb_learn"
 
     @Volatile
@@ -196,8 +196,12 @@ object Store {
     @Volatile var kbCorrect: Boolean = true
         private set
 
-    /** Leave everything outside the panel unpainted, so the app shows through. */
-    @Volatile var kbClearEdges: Boolean = true
+    /**
+     * Leave the clear space under the panel unpainted. Off by default: the rounded
+     * corners already show the app, and a matching band under the keys reads better
+     * than a see-through gap.
+     */
+    @Volatile var kbClearBottom: Boolean = false
         private set
 
     /** Learn the words this person writes and favour them. */
@@ -250,7 +254,7 @@ object Store {
         kbPressFx = p.getBoolean(K_KB_PRESSFX, true)
         kbPredict = p.getBoolean(K_KB_PREDICT, true)
         kbCorrect = p.getBoolean(K_KB_CORRECT, true)
-        kbClearEdges = p.getBoolean(K_KB_CLEAR, true)
+        kbClearBottom = p.getBoolean(K_KB_CLEAR, false)
         kbLearn = p.getBoolean(K_KB_LEARN, true)
     }
 
@@ -351,7 +355,7 @@ object Store {
             "pressfx" -> { kbPressFx = v; e.putBoolean(K_KB_PRESSFX, v) }
             "predict" -> { kbPredict = v; e.putBoolean(K_KB_PREDICT, v) }
             "correct" -> { kbCorrect = v; e.putBoolean(K_KB_CORRECT, v) }
-            "clear" -> { kbClearEdges = v; e.putBoolean(K_KB_CLEAR, v) }
+            "clear" -> { kbClearBottom = v; e.putBoolean(K_KB_CLEAR, v) }
             "learn" -> { kbLearn = v; e.putBoolean(K_KB_LEARN, v) }
         }
         e.apply()

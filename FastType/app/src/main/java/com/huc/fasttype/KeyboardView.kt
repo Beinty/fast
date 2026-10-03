@@ -71,7 +71,7 @@ class KeyboardView(context: Context) : View(context) {
     private var micInStrip = true
     private var letterScale = 0.49f
     private var pressFx = true
-    private var clearEdges = true
+    private var clearBottom = false
     private var pressedZone = -1
     private var outerH = dp(40f)
     private var bottomPad = dp(10f)
@@ -155,7 +155,7 @@ class KeyboardView(context: Context) : View(context) {
         micInStrip = Store.kbMicStrip
         letterScale = Store.kbLetter / 100f
         pressFx = Store.kbPressFx
-        clearEdges = Store.kbClearEdges
+        clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
         requestLayout()
         invalidate()
@@ -306,7 +306,7 @@ class KeyboardView(context: Context) : View(context) {
             edgePaint.strokeWidth = dp(1f)
             canvas.drawRoundRect(rf, panelRad, panelRad, edgePaint)
         }
-        if (bottomPad > 0f && !clearEdges) {
+        if (bottomPad > 0f && !clearBottom) {
             bgPaint.color = theme.panel
             canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }

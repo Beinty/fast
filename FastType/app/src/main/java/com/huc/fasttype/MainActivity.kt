@@ -756,8 +756,9 @@ class MainActivity : Activity() {
             kbOuterRow?.visibility = if (it) View.GONE else View.VISIBLE
             syncPreview()
         }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("حواف شفافة", "ما يتلوّن أي شي برّا اللوحة — يبين التطبيق وراها",
-            Store.kbClearEdges) {
+        p.addView(switchRow("المسافة السفلية شفافة",
+            "مطفي = المسافة تحت الأزرار بلون الكيبورد",
+            Store.kbClearBottom) {
             Store.setKbFlag(this, "clear", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("تظليل الزر عند الضغط", "طفّيه لأسرع استجابة ممكنة",

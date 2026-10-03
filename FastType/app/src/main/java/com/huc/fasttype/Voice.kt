@@ -31,6 +31,17 @@ class Voice(private val ctx: Context) {
     private var active = false
     private var triedOnDevice = false
     private var lastArabic = false
+    private var tagIndex = 0
+
+    /**
+     * Recognisers reject a dialect tag they do not carry — "ar-IQ" comes back as
+     * ERROR_LANGUAGE_NOT_SUPPORTED on most phones. So each language is a list, from
+     * the most specific down to letting the engine pick, and a rejection moves along.
+     */
+    private val arTags = arrayOf("ar", "ar-SA", "ar-EG", "")
+    private val enTags = arrayOf("en-US", "en", "")
+
+    private fun tags(arabic: Boolean) = if (arabic) arTags else enTags
 
     val isListening: Boolean get() = active
 
@@ -53,6 +64,7 @@ class Voice(private val ctx: Context) {
 
     fun start(arabic: Boolean) {
         triedOnDevice = false
+        tagIndex = 0
         lastArabic = arabic
         begin(arabic, false)
     }
@@ -95,6 +107,14 @@ class Voice(private val ctx: Context) {
             override fun onError(code: Int) {
                 active = false
                 release()
+
+                // the engine does not carry this dialect — step down the list
+                if ((code == 12 || code == 13) && tagIndex < tags(lastArabic).size - 1) {
+                    tagIndex++
+                    begin(lastArabic, triedOnDevice)
+                    return
+                }
+
                 // the network recogniser is the one that usually refuses inside a
                 // keyboard; retry once on the device's own engine before giving up
                 val retryable = code == SpeechRecognizer.ERROR_CLIENT ||
@@ -132,14 +152,18 @@ class Voice(private val ctx: Context) {
             override fun onEvent(type: Int, params: Bundle?) {}
         })
 
-        val tag = if (arabic) "ar-IQ" else "en-US"
+        val list = tags(arabic)
+        val tag = list[tagIndex.coerceIn(0, list.size - 1)]
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
             )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
+            // an empty tag means: engine, use whatever you have
+            if (tag.isNotEmpty()) {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, tag)
+            }
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, ctx.packageName)
@@ -183,6 +207,9 @@ class Voice(private val ctx: Context) {
         SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "المحرك مشغول (٨)"
         SpeechRecognizer.ERROR_SERVER -> "الخادم رفض (٤)"
         SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ما سمعت صوت (٦)"
+        10 -> "طلبات كثيرة، جرّب بعد شوي (١٠)"
+        11 -> "انقطع الاتصال بالمحرك (١١)"
+        12, 13 -> "محرك الصوت ما يدعم اللغة (١٢)"
         else -> "ما زبطت (خطأ $code)"
     }
 }
