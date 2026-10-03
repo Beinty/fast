@@ -1,6 +1,7 @@
 package com.huc.glass
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -15,53 +16,80 @@ import kotlin.math.abs
 import kotlin.math.ceil
 
 /**
- * The home screen, drawn on one canvas.
+ * The home screen.
  *
- * Same shape as the keyboard: every rect is measured once and the whole screen is a
- * single view, so a scroll never walks a view tree. The glass itself lives in
- * Glass, the background and its frosted copy in Wall.
+ * Every ratio here was measured off a screenshot of the real thing, in pixels, on a
+ * 1175-wide screen: icon 180, side margin 90, column gap 91.7, row pitch 272, dock
+ * panel 1095x272 with a radius of 85 sitting 95 up from the bottom. Pages run
+ * sideways; nothing scrolls down.
+ *
+ * The window shows the live wallpaper underneath, so this view paints no background
+ * of its own — that is also why coming back from an app is instant.
  */
 class HomeView(ctx: Context) : View(ctx) {
 
     interface Host {
         fun openApp(e: AppEntry)
         fun appInfo(e: AppEntry)
-        fun pickWall()
-        fun forgetWall()
+        fun pickWallpaper()
         fun homeSettings()
+        fun search()
+        fun pageOffset(fraction: Float)
     }
 
     companion object {
         private const val COLS = 4
-        private const val LONG_MS = 420L
+        private const val LONG_MS = 400L
+
+        // fractions of the screen width, straight off the measurements
+        private const val F_SIDE = 0.0766f
+        private const val F_ICON = 0.1532f
+        private const val F_GAPX = 0.0780f
+        private const val F_PITCH = 0.2315f
+        private const val F_LABEL_GAP = 0.0128f
+        private const val F_LABEL = 0.0289f
+        private const val F_GRID_TOP = 0.062f
+        private const val F_DOCK_SIDE = 0.034f
+        private const val F_DOCK_PAD = 0.0391f      // 46 / 1175
+        private const val F_DOCK_BOTTOM = 0.0298f
+        private const val F_PILL_H = 0.0443f
+        private const val F_PILL_W = 0.1870f
+        private const val F_PILL_GAP = 0.0545f
     }
 
     var host: Host? = null
 
-    var deviceDark = false
+    /** True when the wallpaper is pale, so the dock has to darken instead of lighten. */
+    var lightWall = false
 
     private var insetTop = 0
     private var insetBottom = 0
 
-    // measured layout
     private var sideM = 0f
     private var gapX = 0f
     private var iconW = 0f
-    private var iconRad = 0f
+    private var pitch = 0f
     private var labelGap = 0f
-    private var labelH = 0f
-    private var rowH = 0f
     private var gridTop = 0f
-    private var gridBottom = 0f
-    private var dockPad = 0f
-    private var dockRad = 0f
+    private var rows = 6
+    private var perPage = 24
+
     private val dockR = RectF()
+    private var dockRad = 0f
+    private var dockPad = 0f
+
+    private val pillR = RectF()
+    private var dotsCy = 0f
+    private var dotR = 0f
+    private var dotGap = 0f
 
     private val dockApps = ArrayList<AppEntry>(4)
     private val gridApps = ArrayList<AppEntry>()
+    private var pages = 1
 
-    private var scroll = 0f
-    private var maxScroll = 0f
+    private var scrollX = 0f
+    private var maxScrollX = 0f
+    private var lastOffset = -1f
 
     private val scroller = OverScroller(ctx)
     private var vt: VelocityTracker? = null
@@ -69,19 +97,19 @@ class HomeView(ctx: Context) : View(ctx) {
 
     private var downX = 0f
     private var downY = 0f
+    private var lastX = 0f
     private var dragging = false
     private var pressed: AppEntry? = null
 
     private val label = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val plain = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val stroke = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val icoPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val tmp = RectF()
 
-    private var glyphSize = 0
-    private var glyphGen = 0
-    private var wallGen = 0
+    private var iconPx = 0
+    private var iconGen = 0
 
-    // the long-press sheet
     private class MItem(val text: String, val act: Int)
 
     private var menu: List<MItem>? = null
@@ -90,12 +118,11 @@ class HomeView(ctx: Context) : View(ctx) {
     private var menuRowH = 0f
     private var menuPress = -1
 
-    /** One timer for both sheets: whatever the finger landed on decides which opens. */
     private val longPress = Runnable {
         if (!dragging && menu == null) {
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             val e = pressed
-            if (e != null) openAppMenu(e) else openWallMenu()
+            if (e != null) openAppMenu(e) else openHomeMenu()
         }
     }
 
@@ -103,8 +130,9 @@ class HomeView(ctx: Context) : View(ctx) {
         isClickable = true
         label.color = Color.WHITE
         label.textAlign = Paint.Align.CENTER
-        label.setShadowLayer(3.5f, 0f, 1f, Color.argb(140, 0, 0, 0))
-        glyphPaint.isFilterBitmap = true
+        label.setShadowLayer(4f, 0f, 1f, Color.argb(150, 0, 0, 0))
+        icoPaint.isFilterBitmap = true
+        stroke.style = Paint.Style.STROKE
     }
 
     fun setInsets(top: Int, bottom: Int) {
@@ -114,18 +142,11 @@ class HomeView(ctx: Context) : View(ctx) {
         invalidate()
     }
 
-    /** Called once the app list has been read, and again when a package changes. */
     fun appsChanged() {
         rebuildLists()
-        glyphSize = 0
+        iconPx = 0
         measureAll()
-        ensureGlyphs()
-        invalidate()
-    }
-
-    fun wallChanged() {
-        Glass.reset()
-        ensureWall()
+        ensureIcons()
         invalidate()
     }
 
@@ -138,17 +159,18 @@ class HomeView(ctx: Context) : View(ctx) {
         return true
     }
 
-    fun toTop() {
+    /** Home pressed while already here: back to the first page. */
+    fun toFirstPage() {
+        if (scrollX == 0f) return
         scroller.forceFinished(true)
-        scroll = 0f
-        invalidate()
+        scroller.startScroll(scrollX.toInt(), 0, -scrollX.toInt(), 0, 260)
+        postInvalidateOnAnimation()
     }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
         measureAll()
-        ensureWall()
-        ensureGlyphs()
+        ensureIcons()
     }
 
     // ---- layout ------------------------------------------------------------
@@ -158,32 +180,43 @@ class HomeView(ctx: Context) : View(ctx) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
-        sideM = w * 0.082f
-        gapX = w * 0.068f
-        iconW = (w - sideM * 2f - gapX * (COLS - 1)) / COLS
-        iconRad = iconW * 0.225f
+        sideM = w * F_SIDE
+        gapX = w * F_GAPX
+        iconW = w * F_ICON
+        pitch = w * F_PITCH
+        labelGap = w * F_LABEL_GAP
+        label.textSize = w * F_LABEL
 
-        label.textSize = iconW * 0.175f
-        labelGap = iconW * 0.11f
-        labelH = if (GStore.labels) label.textSize * 1.3f else 0f
-        rowH = iconW + labelGap + labelH + iconW * 0.26f
-
-        dockPad = iconW * 0.185f
+        dockPad = w * F_DOCK_PAD
         val dockH = iconW + dockPad * 2f
-        val dockSide = w * 0.034f
-        val dockBottom = h - insetBottom - w * 0.03f
+        val dockSide = w * F_DOCK_SIDE
+        val dockBottom = h - insetBottom - w * F_DOCK_BOTTOM
         dockR.set(dockSide, dockBottom - dockH, w - dockSide, dockBottom)
-        dockRad = dockH * 0.40f
+        dockRad = dockH * 0.3125f
 
-        gridTop = insetTop + w * 0.055f
-        gridBottom = dockR.top - w * 0.035f
+        val pillH = w * F_PILL_H
+        val pillW = w * F_PILL_W
+        val pillBottom = dockR.top - w * F_PILL_GAP
+        pillR.set((w - pillW) / 2f, pillBottom - pillH, (w + pillW) / 2f, pillBottom)
 
-        val rows = ceil(gridApps.size.toFloat() / COLS.toFloat()).toInt()
-        val contentH = rows * rowH
-        val viewport = gridBottom - gridTop
-        maxScroll = if (contentH > viewport) contentH - viewport else 0f
-        if (scroll > maxScroll) scroll = maxScroll
-        if (scroll < 0f) scroll = 0f
+        dotR = w * 0.0043f
+        dotGap = w * 0.0145f
+        dotsCy = pillR.top - w * 0.035f
+
+        gridTop = insetTop + w * F_GRID_TOP
+        val room = (dotsCy - dotR - w * 0.02f) - gridTop
+        var r = (room / pitch).toInt()
+        if (r > 6) r = 6
+        if (r < 3) r = 3
+        rows = r
+        perPage = rows * COLS
+
+        pages = if (gridApps.isEmpty()) 1
+        else ceil(gridApps.size.toFloat() / perPage.toFloat()).toInt()
+        if (pages < 1) pages = 1
+        maxScrollX = (pages - 1) * w
+        if (scrollX > maxScrollX) scrollX = maxScrollX
+        if (scrollX < 0f) scrollX = 0f
     }
 
     private fun rebuildLists() {
@@ -202,57 +235,22 @@ class HomeView(ctx: Context) : View(ctx) {
         for (e in Apps.all) if (!dockApps.contains(e)) gridApps.add(e)
     }
 
-    /** Right to left, the way an Arabic home screen fills. */
-    private fun gridRect(i: Int, out: RectF) {
-        val row = i / COLS
-        val col = i % COLS
-        val x = width - sideM - (col + 1) * iconW - col * gapX
-        val y = gridTop + row * rowH - scroll
-        out.set(x, y, x + iconW, y + iconW)
-    }
+    /** Column 0 is the rightmost — an Arabic home screen fills from the right. */
+    private fun colX(col: Int): Float = width - sideM - (col + 1) * iconW - col * gapX
 
-    private fun dockRect(i: Int, out: RectF) {
-        val inner = dockR.width() - dockPad * 2f
-        val cell = inner / COLS
-        val right = dockR.right - dockPad - cell * i
-        val cx = right - cell / 2f
-        val cy = dockR.centerY()
-        out.set(cx - iconW / 2f, cy - iconW / 2f, cx + iconW / 2f, cy + iconW / 2f)
-    }
-
-    // ---- background and glyphs --------------------------------------------
-
-    private fun ensureWall() {
-        val w = width
-        val h = height
-        if (w <= 0 || h <= 0) return
-        val gen = ++wallGen
-        val appCtx = context.applicationContext
-        val d = deviceDark
-        Thread {
-            Wall.build(appCtx, w, h, d)
-            if (gen == wallGen) {
-                post {
-                    Glass.reset()
-                    invalidate()
-                }
-            }
-        }.start()
-    }
-
-    private fun ensureGlyphs() {
+    private fun ensureIcons() {
         if (iconW <= 0f || Apps.all.isEmpty()) return
-        val size = (iconW * 0.74f).toInt()
-        if (size <= 8 || size == glyphSize) return
-        glyphSize = size
-        val gen = ++glyphGen
+        val size = iconW.toInt()
+        if (size <= 8 || size == iconPx) return
+        iconPx = size
+        val gen = ++iconGen
         val appCtx = context.applicationContext
         val list = ArrayList(Apps.all)
         Thread {
             var n = 0
             for (e in list) {
-                if (gen != glyphGen) return@Thread
-                Apps.buildGlyph(appCtx, e, size)
+                if (gen != iconGen) return@Thread
+                Apps.buildIcon(appCtx, e, size)
                 n++
                 if (n % 6 == 0) postInvalidateOnAnimation()
             }
@@ -264,107 +262,148 @@ class HomeView(ctx: Context) : View(ctx) {
 
     override fun onDraw(canvas: Canvas) {
         if (scroller.computeScrollOffset()) {
-            scroll = scroller.currY.toFloat()
-            if (scroll < 0f) scroll = 0f
-            if (scroll > maxScroll) scroll = maxScroll
+            scrollX = scroller.currX.toFloat()
             postInvalidateOnAnimation()
         }
+        if (iconW <= 0f) return
 
         val w = width.toFloat()
-        val h = height.toFloat()
-
-        val bg = Wall.src
-        if (bg != null) {
-            canvas.drawBitmap(bg, 0f, 0f, null)
-        } else {
-            plain.shader = null
-            plain.color = if (deviceDark) Color.BLACK else Color.argb(255, 32, 34, 40)
-            canvas.drawRect(0f, 0f, w, h, plain)
+        val off = if (maxScrollX > 0f) scrollX / maxScrollX else 0f
+        if (abs(off - lastOffset) > 0.004f) {
+            lastOffset = off
+            host?.pageOffset(off)
         }
 
-        if (iconW <= 0f) return
-        val blur = Wall.blur
-        val dark = Wall.dark
+        // only the one or two pages on screen
+        val first = (scrollX / w).toInt()
+        var p = first
+        while (p <= first + 1 && p < pages) {
+            if (p >= 0) drawPage(canvas, p, p * w - scrollX)
+            p++
+        }
 
-        // the grid
-        canvas.save()
-        canvas.clipRect(0f, insetTop.toFloat(), w, gridBottom)
+        if (pages > 1) drawDots(canvas)
+        drawPill(canvas)
+        drawDock(canvas)
+        drawMenu(canvas)
+    }
+
+    private fun drawPage(c: Canvas, page: Int, dx: Float) {
+        val start = page * perPage
         var i = 0
-        while (i < gridApps.size) {
-            gridRect(i, tmp)
-            if (tmp.bottom > insetTop - rowH && tmp.top < gridBottom + rowH) {
-                drawApp(canvas, gridApps[i], tmp, blur, dark, GStore.labels)
-            }
+        while (i < perPage) {
+            val idx = start + i
+            if (idx >= gridApps.size) break
+            val row = i / COLS
+            val col = i % COLS
+            val x = colX(col) + dx
+            val y = gridTop + row * pitch
+            tmp.set(x, y, x + iconW, y + iconW)
+            drawApp(c, gridApps[idx], tmp, true)
             i++
         }
-        canvas.restore()
-
-        // the dock
-        Glass.draw(canvas, dockR, dockRad, blur, dark, true)
-        i = 0
-        while (i < dockApps.size) {
-            dockRect(i, tmp)
-            drawApp(canvas, dockApps[i], tmp, blur, dark, false)
-            i++
-        }
-
-        drawMenu(canvas, blur, dark)
     }
 
-    private fun drawApp(
-        c: Canvas, e: AppEntry, r: RectF, blur: android.graphics.Bitmap?,
-        dark: Boolean, withLabel: Boolean
-    ) {
-        val down = e === pressed && menu == null
-        var box = r
-        if (down) {
-            val k = r.width() * 0.05f
-            box = RectF(r.left + k, r.top + k, r.right - k, r.bottom - k)
+    private fun drawApp(c: Canvas, e: AppEntry, r: RectF, withLabel: Boolean) {
+        val bm: Bitmap? = e.icon
+        icoPaint.alpha = if (e === pressed && menu == null) 150 else 255
+        if (bm != null) {
+            c.drawBitmap(bm, null, r, icoPaint)
+        } else {
+            fill.color = Color.argb(60, 255, 255, 255)
+            c.drawRoundRect(r, iconW * 0.225f, iconW * 0.225f, fill)
         }
-
-        Glass.draw(c, box, iconRad * (box.width() / r.width()), blur, dark, true)
-
-        val g = e.glyph
-        if (g != null) {
-            val frac = if (e.mono) 0.60f else 0.74f
-            val gw = box.width() * frac
-            val cx = box.centerX()
-            val cy = box.centerY()
-            c.drawBitmap(
-                g, null,
-                RectF(cx - gw / 2f, cy - gw / 2f, cx + gw / 2f, cy + gw / 2f),
-                glyphPaint
+        if (withLabel && GStore.labels) {
+            label.alpha = icoPaint.alpha
+            c.drawText(
+                fit(label, e.label, iconW * 1.22f),
+                r.centerX(), r.bottom + labelGap + label.textSize * 0.86f, label
             )
-        }
-
-        if (withLabel) {
-            val t = fit(label, e.label, iconW * 1.18f)
-            c.drawText(t, r.centerX(), r.bottom + labelGap + label.textSize, label)
+            label.alpha = 255
         }
     }
 
-    private fun drawMenu(c: Canvas, blur: android.graphics.Bitmap?, dark: Boolean) {
+    private fun drawDock(c: Canvas) {
+        fill.color = if (lightWall) Color.argb(40, 0, 0, 0) else Color.argb(33, 255, 255, 255)
+        c.drawRoundRect(dockR, dockRad, dockRad, fill)
+        stroke.strokeWidth = 1.2f
+        stroke.color = if (lightWall) Color.argb(26, 0, 0, 0) else Color.argb(44, 255, 255, 255)
+        c.drawRoundRect(
+            dockR.left + 0.6f, dockR.top + 0.6f, dockR.right - 0.6f, dockR.bottom - 0.6f,
+            dockRad, dockRad, stroke
+        )
+        var i = 0
+        while (i < dockApps.size) {
+            val x = colX(i)
+            val y = dockR.top + dockPad
+            tmp.set(x, y, x + iconW, y + iconW)
+            drawApp(c, dockApps[i], tmp, false)
+            i++
+        }
+    }
+
+    private fun drawPill(c: Canvas) {
+        val rad = pillR.height() / 2f
+        fill.color = if (lightWall) Color.argb(36, 0, 0, 0) else Color.argb(38, 255, 255, 255)
+        c.drawRoundRect(pillR, rad, rad, fill)
+
+        val ts = pillR.height() * 0.46f
+        label.textSize = ts
+        val cy = pillR.centerY() + ts * 0.36f
+        val gl = pillR.height() * 0.30f
+        val gx = pillR.centerX() + pillR.width() * 0.18f
+        stroke.strokeWidth = pillR.height() * 0.075f
+        stroke.color = Color.WHITE
+        c.drawCircle(gx, pillR.centerY() - gl * 0.12f, gl * 0.42f, stroke)
+        c.drawLine(
+            gx + gl * 0.30f, pillR.centerY() + gl * 0.18f,
+            gx + gl * 0.52f, pillR.centerY() + gl * 0.42f, stroke
+        )
+        c.drawText("بحث", pillR.centerX() - pillR.width() * 0.05f, cy, label)
+        label.textSize = width * F_LABEL
+    }
+
+    private fun drawDots(c: Canvas) {
+        val span = (pages - 1) * dotGap
+        val startX = width / 2f + span / 2f   // right to left
+        val cur = if (maxScrollX > 0f) Math.round(scrollX / width.toFloat()) else 0
+        var i = 0
+        while (i < pages) {
+            fill.color = if (i == cur) Color.argb(235, 255, 255, 255)
+            else Color.argb(92, 255, 255, 255)
+            c.drawCircle(startX - i * dotGap, dotsCy, dotR, fill)
+            i++
+        }
+    }
+
+    private fun drawMenu(c: Canvas) {
         val items = menu ?: return
-        Glass.draw(c, menuR, iconW * 0.17f, blur, dark, true)
+        val rad = iconW * 0.16f
+        fill.color = Color.argb(238, 28, 28, 30)
+        c.drawRoundRect(menuR, rad, rad, fill)
+        stroke.strokeWidth = 1f
+        stroke.color = Color.argb(30, 255, 255, 255)
+        c.drawRoundRect(
+            menuR.left + 0.5f, menuR.top + 0.5f, menuR.right - 0.5f, menuR.bottom - 0.5f,
+            rad, rad, stroke
+        )
 
         label.textAlign = Paint.Align.RIGHT
-        val pad = iconW * 0.22f
+        label.setShadowLayer(0f, 0f, 0f, 0)
+        val pad = iconW * 0.20f
+        val ts = iconW * 0.185f
+        label.textSize = ts
         var i = 0
         while (i < items.size) {
             val top = menuR.top + i * menuRowH
             if (i == menuPress) {
-                plain.shader = null
-                plain.color = Color.argb(34, 255, 255, 255)
-                val rr = RectF(menuR.left, top, menuR.right, top + menuRowH)
-                c.drawRect(rr, plain)
+                fill.color = Color.argb(30, 255, 255, 255)
+                c.drawRect(menuR.left, top, menuR.right, top + menuRowH, fill)
             }
             if (i > 0) {
-                plain.shader = null
-                plain.color = Color.argb(26, 255, 255, 255)
-                c.drawRect(menuR.left + pad, top, menuR.right - pad, top + 1f, plain)
+                fill.color = Color.argb(26, 255, 255, 255)
+                c.drawRect(menuR.left + pad, top, menuR.right - pad, top + 1f, fill)
             }
-            val ts = iconW * 0.185f
-            label.textSize = ts
             c.drawText(
                 fit(label, items[i].text, menuR.width() - pad * 2f),
                 menuR.right - pad, top + menuRowH / 2f + ts * 0.36f, label
@@ -372,7 +411,8 @@ class HomeView(ctx: Context) : View(ctx) {
             i++
         }
         label.textAlign = Paint.Align.CENTER
-        label.textSize = iconW * 0.175f
+        label.textSize = width * F_LABEL
+        label.setShadowLayer(4f, 0f, 1f, Color.argb(150, 0, 0, 0))
     }
 
     private fun fit(p: Paint, s: String, max: Float): String {
@@ -386,7 +426,7 @@ class HomeView(ctx: Context) : View(ctx) {
         return "…"
     }
 
-    // ---- the sheets --------------------------------------------------------
+    // ---- sheets ------------------------------------------------------------
 
     private fun openAppMenu(e: AppEntry) {
         val inDock = dockApps.contains(e)
@@ -398,21 +438,13 @@ class HomeView(ctx: Context) : View(ctx) {
         showMenu(items)
     }
 
-    private fun openWallMenu() {
-        val items = ArrayList<MItem>(5)
+    private fun openHomeMenu() {
+        val items = ArrayList<MItem>(4)
         items.add(MItem("تغيير الخلفية", 3))
-        if (GStore.ownWall) items.add(MItem("رجّع خلفية الجهاز", 4))
-        items.add(MItem("درجة الزجاج: " + glassName(), 5))
         items.add(MItem(if (GStore.labels) "خفّي أسماء التطبيقات" else "ظهّر أسماء التطبيقات", 6))
         items.add(MItem("اختر الشاشة الرئيسية", 7))
         menuApp = null
         showMenu(items)
-    }
-
-    private fun glassName(): String = when (GStore.glass) {
-        0 -> "خفيف"
-        2 -> "قوي"
-        else -> "متوسط"
     }
 
     private fun showMenu(items: List<MItem>) {
@@ -423,7 +455,7 @@ class HomeView(ctx: Context) : View(ctx) {
         val mw = width * 0.70f
         val mh = items.size * menuRowH
         val left = (width - mw) / 2f
-        var top = height * 0.5f - mh / 2f
+        var top = height * 0.46f - mh / 2f
         val minTop = insetTop + iconW * 0.3f
         val maxTop = dockR.top - mh - iconW * 0.3f
         if (top < minTop) top = minTop
@@ -452,19 +484,13 @@ class HomeView(ctx: Context) : View(ctx) {
                 }
             }
             2 -> if (e != null) host?.appInfo(e)
-            3 -> host?.pickWall()
-            4 -> host?.forgetWall()
-            5 -> {
-                GStore.glass = (GStore.glass + 1) % 3
-                invalidate()
-            }
+            3 -> host?.pickWallpaper()
             6 -> {
                 GStore.labels = !GStore.labels
-                measureAll()
                 invalidate()
             }
             7 -> host?.homeSettings()
-            8 -> openWallMenu()
+            8 -> openHomeMenu()
         }
     }
 
@@ -472,35 +498,62 @@ class HomeView(ctx: Context) : View(ctx) {
 
     private fun hitRow(y: Float): Int {
         if (menuRowH <= 0f) return -1
-        val i = ((y - menuR.top) / menuRowH).toInt()
         val items = menu ?: return -1
+        val i = ((y - menuR.top) / menuRowH).toInt()
         return if (i in items.indices) i else -1
     }
 
     private fun findApp(x: Float, y: Float): AppEntry? {
-        if (dockR.contains(x, y)) {
+        if (y >= dockR.top && y <= dockR.bottom) {
             var i = 0
             while (i < dockApps.size) {
-                dockRect(i, tmp)
-                if (grown(tmp).contains(x, y)) return dockApps[i]
+                val cx = colX(i)
+                tmp.set(cx, dockR.top + dockPad, cx + iconW, dockR.top + dockPad + iconW)
+                if (grown(tmp, false).contains(x, y)) return dockApps[i]
                 i++
             }
             return null
         }
-        if (y < gridTop - rowH || y > gridBottom) return null
+        if (y < gridTop - iconW * 0.2f) return null
+        val w = width.toFloat()
+        val page = Math.round(scrollX / w)
+        val dx = page * w - scrollX
+        val start = page * perPage
         var i = 0
-        while (i < gridApps.size) {
-            gridRect(i, tmp)
-            if (grown(tmp).contains(x, y)) return gridApps[i]
+        while (i < perPage) {
+            val idx = start + i
+            if (idx >= gridApps.size) break
+            val row = i / COLS
+            val col = i % COLS
+            val cx = colX(col) + dx
+            val cy = gridTop + row * pitch
+            tmp.set(cx, cy, cx + iconW, cy + iconW)
+            if (grown(tmp, true).contains(x, y)) return gridApps[idx]
             i++
         }
         return null
     }
 
-    /** A finger is wider than an icon; take the label strip and the gaps too. */
-    private fun grown(r: RectF): RectF {
+    private fun grown(r: RectF, withLabel: Boolean): RectF {
         val gx = gapX * 0.45f
-        return RectF(r.left - gx, r.top - iconW * 0.12f, r.right + gx, r.bottom + labelGap + labelH)
+        val below = if (withLabel) labelGap + label.textSize * 1.2f else iconW * 0.14f
+        return RectF(r.left - gx, r.top - iconW * 0.12f, r.right + gx, r.bottom + below)
+    }
+
+    private fun snap(velocity: Float) {
+        val w = width.toFloat()
+        if (w <= 0f) return
+        var target = Math.round(scrollX / w)
+        if (abs(velocity) > 700f) {
+            // a flick decides the direction regardless of how far it travelled
+            target = if (velocity < 0f) (scrollX / w).toInt() + 1 else ceil(scrollX / w).toInt() - 1
+        }
+        if (target < 0) target = 0
+        if (target > pages - 1) target = pages - 1
+        val dest = target * w
+        scroller.forceFinished(true)
+        scroller.startScroll(scrollX.toInt(), 0, (dest - scrollX).toInt(), 0, 300)
+        postInvalidateOnAnimation()
     }
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
@@ -527,11 +580,7 @@ class HomeView(ctx: Context) : View(ctx) {
                 MotionEvent.ACTION_UP -> {
                     val items = menu
                     val r = menuPress
-                    if (items != null && r >= 0 && r < items.size) {
-                        act(items[r].act)
-                    } else {
-                        closeMenu()
-                    }
+                    if (items != null && r >= 0 && r < items.size) act(items[r].act) else closeMenu()
                 }
                 MotionEvent.ACTION_CANCEL -> closeMenu()
             }
@@ -543,6 +592,7 @@ class HomeView(ctx: Context) : View(ctx) {
                 scroller.forceFinished(true)
                 downX = x
                 downY = y
+                lastX = x
                 dragging = false
                 pressed = findApp(x, y)
                 vt?.recycle()
@@ -555,19 +605,24 @@ class HomeView(ctx: Context) : View(ctx) {
 
             MotionEvent.ACTION_MOVE -> {
                 vt?.addMovement(ev)
-                if (!dragging && (abs(y - downY) > slop || abs(x - downX) > slop)) {
+                if (!dragging && abs(x - downX) > slop && abs(x - downX) > abs(y - downY)) {
                     dragging = true
+                    pressed = null
+                    removeCallbacks(longPress)
+                }
+                if (!dragging && abs(y - downY) > slop) {
                     pressed = null
                     removeCallbacks(longPress)
                     invalidate()
                 }
-                if (dragging && maxScroll > 0f) {
-                    scroll += (downY - y)
-                    downY = y
-                    if (scroll < 0f) scroll = 0f
-                    if (scroll > maxScroll) scroll = maxScroll
+                if (dragging && maxScrollX > 0f) {
+                    scrollX -= (x - lastX)
+                    val over = width * 0.12f
+                    if (scrollX < -over) scrollX = -over
+                    if (scrollX > maxScrollX + over) scrollX = maxScrollX + over
                     invalidate()
                 }
+                lastX = x
             }
 
             MotionEvent.ACTION_UP -> {
@@ -576,18 +631,13 @@ class HomeView(ctx: Context) : View(ctx) {
                 if (dragging) {
                     vt?.addMovement(ev)
                     vt?.computeCurrentVelocity(1000)
-                    val vy = vt?.yVelocity ?: 0f
-                    if (maxScroll > 0f && abs(vy) > 180f) {
-                        scroller.fling(
-                            0, scroll.toInt(), 0, (-vy).toInt(),
-                            0, 0, 0, maxScroll.toInt()
-                        )
-                        postInvalidateOnAnimation()
-                    }
+                    snap(vt?.xVelocity ?: 0f)
                 } else if (e != null) {
                     pressed = null
                     invalidate()
                     host?.openApp(e)
+                } else if (pillR.contains(x, y)) {
+                    host?.search()
                 }
                 pressed = null
                 dragging = false
@@ -598,6 +648,7 @@ class HomeView(ctx: Context) : View(ctx) {
 
             MotionEvent.ACTION_CANCEL -> {
                 removeCallbacks(longPress)
+                if (dragging) snap(0f)
                 pressed = null
                 dragging = false
                 vt?.recycle()

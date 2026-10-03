@@ -5,39 +5,34 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ResolveInfo
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffColorFilter
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import java.text.Collator
 
 class AppEntry(val pkg: String, val cls: String, val label: String) {
-    /** The white glyph, built once and kept. */
-    @Volatile var glyph: Bitmap? = null
-    /** False when the icon had no shape to carry and kept its own colours. */
-    var mono = true
+    @Volatile var icon: Bitmap? = null
     val key: String get() = pkg + "/" + cls
 }
 
 /**
- * The installed apps, and the job of turning their icons into glass.
+ * The installed apps, and the job of making their icons look like iOS icons.
  *
- * A coloured square inside a pane of glass looks like a sticker. iOS gets its clear
- * look by throwing the icon's colour away and keeping only its silhouette, and
- * Android hands us exactly that when an icon ships a monochrome layer; failing that
- * the adaptive foreground usually works. Icons that are one full-bleed picture have
- * no silhouette to take, so those keep their colours rather than become white blobs.
+ * The app's own artwork is kept — only the outline changes. An adaptive icon is two
+ * layers on a 108-unit canvas whose middle 72 are guaranteed visible, so both layers
+ * are drawn at 1.5x and the squircle is cut out of the result. Letting
+ * AdaptiveIconDrawable draw itself would apply ColorOS's mask instead of ours, which
+ * is exactly what we are replacing, so the layers are drawn by hand.
  */
 object Apps {
 
-    /** Swapped whole, never mutated in place: the list is read while it is rebuilt. */
     @Volatile var all: List<AppEntry> = ArrayList()
         private set
 
@@ -52,7 +47,7 @@ object Apps {
         } catch (_: Throwable) {
             ArrayList()
         }
-        val out = ArrayList<AppEntry>(found.size + 1)
+        val out = ArrayList<AppEntry>(found.size)
         val seen = HashSet<String>()
         for (ri in found) {
             val ai = ri.activityInfo ?: continue
@@ -70,16 +65,13 @@ object Apps {
         val col = Collator.getInstance()
         out.sortWith(Comparator { a, b -> col.compare(a.label, b.label) })
 
-        // keep the glyphs we already built, so a package change does not redo them all
-        val prevList = all
-        val old = HashMap<String, AppEntry>(prevList.size)
-        for (e in prevList) old[e.key] = e
+        // carry over the icons we already rendered
+        val prev = all
+        val old = HashMap<String, AppEntry>(prev.size)
+        for (e in prev) old[e.key] = e
         for (e in out) {
             val p = old[e.key]
-            if (p != null) {
-                e.glyph = p.glyph
-                e.mono = p.mono
-            }
+            if (p != null) e.icon = p.icon
         }
 
         all = out
@@ -114,14 +106,10 @@ object Apps {
         }
     }
 
-    /**
-     * Picks four sensible dock apps the first time: phone, browser, messages, camera,
-     * each resolved by what actually handles that job on this phone.
-     */
+    /** Phone, browser, messages, camera — resolved by what actually handles each job. */
     fun defaultDock(ctx: Context): List<String> {
         val out = ArrayList<String>(4)
         val wanted = ArrayList<Intent>(4)
-
         wanted.add(Intent(Intent.ACTION_DIAL))
         val web = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com"))
         web.addCategory(Intent.CATEGORY_BROWSABLE)
@@ -141,7 +129,6 @@ object Apps {
             if (!out.contains(e.key)) out.add(e.key)
         }
 
-        // top up from the list if anything did not resolve
         val list = all
         var i = 0
         while (out.size < 4 && i < list.size) {
@@ -152,96 +139,147 @@ object Apps {
         return out
     }
 
-    // ---- the glyphs --------------------------------------------------------
+    // ---- icons -------------------------------------------------------------
 
-    fun buildGlyph(ctx: Context, e: AppEntry, size: Int) {
-        if (e.glyph != null || size <= 0) return
-        val pm = ctx.packageManager
-        var d: Drawable? = null
-        try { d = pm.getActivityIcon(ComponentName(e.pkg, e.cls)) } catch (_: Throwable) {}
-        if (d == null) {
-            try { d = pm.getApplicationIcon(e.pkg) } catch (_: Throwable) {}
-        }
-        val src = d
-        if (src == null) {
-            e.glyph = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            e.mono = false
-            return
-        }
+    fun buildIcon(ctx: Context, e: AppEntry, size: Int) {
+        if (e.icon != null || size <= 8) return
+        val d = rawIcon(ctx, e)
+        val tmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val tc = Canvas(tmp)
 
-        var shape: Bitmap? = null
-
-        if (src is AdaptiveIconDrawable) {
-            // an icon that ships a monochrome layer has already drawn its own silhouette
-            if (Build.VERSION.SDK_INT >= 33) {
-                val m = try { src.monochrome } catch (_: Throwable) { null }
-                if (m != null) {
-                    val b = inSafeZone(m, size)
-                    if (coverage(b) in 0.02f..0.92f) shape = b else b.recycle()
+        if (d is AdaptiveIconDrawable) {
+            // both layers by hand, unmasked, so ColorOS's own shape never gets applied
+            val big = (size * 1.5f).toInt()
+            val off = -((big - size) / 2)
+            val bg = try { d.background } catch (_: Throwable) { null }
+            val fg = try { d.foreground } catch (_: Throwable) { null }
+            if (bg == null && fg == null) {
+                d.setBounds(0, 0, size, size)
+                safeDraw(d, tc)
+            } else {
+                if (bg != null) {
+                    bg.setBounds(off, off, off + big, off + big)
+                    safeDraw(bg, tc)
+                } else {
+                    tc.drawColor(Color.WHITE)
                 }
-            }
-            if (shape == null) {
-                val fg = try { src.foreground } catch (_: Throwable) { null }
                 if (fg != null) {
-                    val b = inSafeZone(fg, size)
-                    if (coverage(b) in 0.02f..0.78f) shape = b else b.recycle()
+                    fg.setBounds(off, off, off + big, off + big)
+                    safeDraw(fg, tc)
                 }
             }
-        }
-
-        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        p.isFilterBitmap = true
-
-        val s = shape
-        if (s != null) {
-            p.colorFilter = PorterDuffColorFilter(Color.WHITE, PorterDuff.Mode.SRC_IN)
-            c.drawBitmap(s, 0f, 0f, p)
-            s.recycle()
-            e.mono = true
+        } else if (d != null) {
+            if (fillsCorners(d, size)) {
+                d.setBounds(0, 0, size, size)
+                safeDraw(d, tc)
+            } else {
+                // a legacy icon with its own silhouette: give it a tile to sit on,
+                // the way a themed iOS icon set does
+                tc.drawColor(tileColour(d, size))
+                val inset = size * 0.14f
+                val inner = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                d.setBounds(0, 0, size, size)
+                safeDraw(d, Canvas(inner))
+                val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                p.isFilterBitmap = true
+                tc.drawBitmap(
+                    inner, null,
+                    RectF(inset, inset, size - inset, size - inset), p
+                )
+                inner.recycle()
+            }
         } else {
-            // no silhouette in there — let it keep its colours, pulled in a little
-            val inset = size * 0.08f
-            src.setBounds(0, 0, size, size)
-            val tmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            src.draw(Canvas(tmp))
-            c.drawBitmap(tmp, null, RectF(inset, inset, size - inset, size - inset), p)
-            tmp.recycle()
-            e.mono = false
+            tc.drawColor(Color.argb(255, 120, 124, 132))
         }
-        e.glyph = out
+
+        // cut the squircle out of whatever we just drew, with clean edges
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val oc = Canvas(out)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = BitmapShader(tmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        oc.drawPath(Squircle.path(size.toFloat()), p)
+        tmp.recycle()
+        e.icon = out
+    }
+
+    private fun safeDraw(d: Drawable, c: Canvas) {
+        try { d.draw(c) } catch (_: Throwable) {}
     }
 
     /**
-     * An adaptive layer is 108 units across and only the middle 72 are guaranteed to
-     * be inside the mask, so render the whole thing at 1.5x and keep the centre.
+     * Loads the icon from the app's own resources rather than through the package
+     * manager, which on ColorOS hands back an already-reshaped icon.
      */
-    private fun inSafeZone(d: Drawable, size: Int): Bitmap {
-        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        val big = (size * 1.5f).toInt()
-        val off = -((big - size) / 2)
-        d.setBounds(off, off, off + big, off + big)
-        try { d.draw(c) } catch (_: Throwable) {}
-        return out
+    private fun rawIcon(ctx: Context, e: AppEntry): Drawable? {
+        val pm = ctx.packageManager
+        val dpi = ctx.resources.displayMetrics.densityDpi
+        try {
+            val ai = pm.getActivityInfo(ComponentName(e.pkg, e.cls), 0)
+            val res = pm.getResourcesForApplication(ai.applicationInfo)
+            val id = if (ai.icon != 0) ai.icon else ai.applicationInfo.icon
+            if (id != 0) {
+                val d = res.getDrawableForDensity(id, dpi, null)
+                if (d != null) return d
+            }
+        } catch (_: Throwable) {
+        }
+        try { return pm.getActivityIcon(ComponentName(e.pkg, e.cls)) } catch (_: Throwable) {}
+        try { return pm.getApplicationIcon(e.pkg) } catch (_: Throwable) {}
+        return null
     }
 
-    /** How much of the tile the glyph actually fills, 0..1. */
-    private fun coverage(bm: Bitmap): Float {
+    /** True when the artwork already reaches the corners, so masking is enough. */
+    private fun fillsCorners(d: Drawable, size: Int): Boolean {
         return try {
-            val n = 26
-            val s = Bitmap.createScaledBitmap(bm, n, n, true)
+            val n = 24
+            val bm = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
+            d.setBounds(0, 0, n, n)
+            safeDraw(d, Canvas(bm))
             var on = 0
+            var total = 0
             for (y in 0 until n) {
                 for (x in 0 until n) {
-                    if (Color.alpha(s.getPixel(x, y)) > 110) on++
+                    // only the band just inside the edge matters
+                    val edge = x < 2 || y < 2 || x >= n - 2 || y >= n - 2
+                    if (!edge) continue
+                    total++
+                    if (Color.alpha(bm.getPixel(x, y)) > 120) on++
                 }
             }
-            s.recycle()
-            on.toFloat() / (n * n).toFloat()
+            bm.recycle()
+            total > 0 && on.toFloat() / total.toFloat() > 0.72f
         } catch (_: Throwable) {
-            1f
+            true
+        }
+    }
+
+    /** A pale tile that suits the icon, for legacy artwork that needs a backing. */
+    private fun tileColour(d: Drawable, size: Int): Int {
+        return try {
+            val n = 20
+            val bm = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
+            d.setBounds(0, 0, n, n)
+            safeDraw(d, Canvas(bm))
+            var r = 0L; var g = 0L; var b = 0L; var c = 0L
+            for (y in 0 until n) {
+                for (x in 0 until n) {
+                    val px = bm.getPixel(x, y)
+                    if (Color.alpha(px) < 150) continue
+                    r += Color.red(px); g += Color.green(px); b += Color.blue(px); c++
+                }
+            }
+            bm.recycle()
+            if (c == 0L) return Color.argb(255, 244, 244, 247)
+            // pull it most of the way to white so the artwork still reads on top
+            val mr = (r / c).toInt(); val mg = (g / c).toInt(); val mb = (b / c).toInt()
+            Color.argb(
+                255,
+                mr + ((255 - mr) * 0.80f).toInt(),
+                mg + ((255 - mg) * 0.80f).toInt(),
+                mb + ((255 - mb) * 0.80f).toInt()
+            )
+        } catch (_: Throwable) {
+            Color.argb(255, 244, 244, 247)
         }
     }
 }

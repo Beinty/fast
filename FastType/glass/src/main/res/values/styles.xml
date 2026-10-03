@@ -1,15 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- a home screen draws its own background edge to edge and never animates in -->
+    <!--
+      The live wallpaper is drawn by the system behind this window, so the home screen
+      never paints a background of its own. That is what makes it appear the instant an
+      app closes instead of flashing black first.
+    -->
     <style name="HomeTheme" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:windowShowWallpaper">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:colorBackgroundCacheHint">@null</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowDisablePreview">true</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
-        <item name="android:windowShowWallpaper">false</item>
     </style>
 
 </resources>

@@ -1,6 +1,7 @@
 package com.huc.glass
 
 import android.app.Activity
+import android.app.WallpaperManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -18,16 +19,12 @@ import android.widget.Toast
 /**
  * The home screen itself.
  *
- * A launcher is an ordinary activity that happens to answer CATEGORY_HOME. Once it
- * is the chosen home, the home button lands here instead of on ColorOS, which is
- * why the glass dock can exist at all — the system's own dock is not being hidden,
- * it is simply not on screen any more.
+ * The window is set to show the live wallpaper, which does two jobs at once: his real
+ * wallpaper is what appears, with no permission to read it, and there is no black
+ * frame when an app closes — the wallpaper is already on screen before anything of
+ * ours has been drawn.
  */
 class HomeActivity : Activity(), HomeView.Host {
-
-    companion object {
-        private const val REQ_WALL = 71
-    }
 
     private var view: HomeView? = null
     private var pkgWatch: BroadcastReceiver? = null
@@ -51,7 +48,7 @@ class HomeActivity : Activity(), HomeView.Host {
 
         val v = HomeView(this)
         v.host = this
-        v.deviceDark = isDark()
+        v.lightWall = wallpaperIsPale()
         setContentView(v)
         view = v
 
@@ -112,6 +109,8 @@ class HomeActivity : Activity(), HomeView.Host {
     override fun onResume() {
         super.onResume()
         view?.closeMenu()
+        view?.lightWall = wallpaperIsPale()
+        view?.invalidate()
         if (!hinted && !isDefaultHome()) {
             hinted = true
             Toast.makeText(
@@ -122,30 +121,35 @@ class HomeActivity : Activity(), HomeView.Host {
         }
     }
 
-    /** Home pressed while already here: shut the sheet, otherwise go back to the top. */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         val v = view ?: return
-        if (!v.closeMenu()) v.toTop()
+        if (!v.closeMenu()) v.toFirstPage()
     }
 
     @Suppress("DEPRECATION", "MissingSuperCall")
     override fun onBackPressed() {
-        // a home screen has nowhere to go back to; back only shuts the sheet
         view?.closeMenu()
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        val v = view ?: return
-        v.deviceDark = isDark()
-        Wall.invalidate()
-        v.wallChanged()
+        view?.lightWall = wallpaperIsPale()
+        view?.invalidate()
     }
 
-    private fun isDark(): Boolean =
-        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-            Configuration.UI_MODE_NIGHT_YES
+    /** Pale wallpaper means the dock has to darken rather than lighten. */
+    private fun wallpaperIsPale(): Boolean {
+        if (Build.VERSION.SDK_INT < 27) return false
+        return try {
+            val wc = WallpaperManager.getInstance(this)
+                .getWallpaperColors(WallpaperManager.FLAG_SYSTEM) ?: return false
+            val p = wc.primaryColor.toArgb()
+            (0.299 * Color.red(p) + 0.587 * Color.green(p) + 0.114 * Color.blue(p)) > 150.0
+        } catch (_: Throwable) {
+            false
+        }
+    }
 
     private fun isDefaultHome(): Boolean {
         return try {
@@ -172,22 +176,12 @@ class HomeActivity : Activity(), HomeView.Host {
         Apps.info(this, e)
     }
 
-    override fun pickWall() {
-        val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
-        i.addCategory(Intent.CATEGORY_OPENABLE)
-        i.type = "image/*"
+    override fun pickWallpaper() {
         try {
-            startActivityForResult(i, REQ_WALL)
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "الخلفية"))
         } catch (_: Throwable) {
-            val g = Intent(Intent.ACTION_GET_CONTENT)
-            g.type = "image/*"
-            try { startActivityForResult(g, REQ_WALL) } catch (_: Throwable) {}
+            try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Throwable) {}
         }
-    }
-
-    override fun forgetWall() {
-        Wall.forget(this)
-        view?.wallChanged()
     }
 
     override fun homeSettings() {
@@ -198,27 +192,24 @@ class HomeActivity : Activity(), HomeView.Host {
         }
     }
 
-    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
-        super.onActivityResult(req, res, data)
-        if (req != REQ_WALL || res != RESULT_OK) return
-        val uri = data?.data ?: return
-        val app = applicationContext
-        Thread {
-            var ok = false
+    override fun search() {
+        try {
+            startActivity(Intent(Intent.ACTION_WEB_SEARCH))
+        } catch (_: Throwable) {
             try {
-                contentResolver.openInputStream(uri)?.use { ins ->
-                    ok = Wall.adopt(app, ins, 2400)
-                }
+                startActivity(Intent(Intent.ACTION_ASSIST).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             } catch (_: Throwable) {
             }
-            val done = ok
-            runOnUiThread {
-                if (done) {
-                    view?.wallChanged()
-                } else {
-                    Toast.makeText(this, "ما كدرت أقرا الصورة", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }.start()
+        }
+    }
+
+    /** Slides the live wallpaper along with the pages, the way a launcher should. */
+    override fun pageOffset(fraction: Float) {
+        val v = view ?: return
+        val token = v.windowToken ?: return
+        try {
+            WallpaperManager.getInstance(this).setWallpaperOffsets(token, fraction, 0f)
+        } catch (_: Throwable) {
+        }
     }
 }
