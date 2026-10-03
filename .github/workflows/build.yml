@@ -40,6 +40,12 @@ jobs:
       - name: Publish errors to summary
         if: failure()
         run: |
+          # annotations survive where the raw log download does not
+          grep -E "^e: " /tmp/build.log | head -40 | while IFS= read -r line; do
+            echo "::error::$line"
+          done || true
+          grep -E "FAILURE:|What went wrong|Caused by" /tmp/build.log | head -10 \
+            | while IFS= read -r line; do echo "::error::$line"; done || true
           echo '## أخطاء الترجمة' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           grep -E "^(e|w): |error:|Caused by|FAILURE:|\* What went wrong|Unresolved|Expecting" /tmp/build.log \
