@@ -32,6 +32,21 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /** For each letter in [buffer], the keys the finger was between. */
     private val nearBuf = ArrayList<String>(32)
 
+    /**
+     * Suggestions are computed after the letter is on screen, never before.
+     *
+     * Building them means a dictionary search and a repaint, and doing that inside
+     * the keypress is what put a gap between the finger and the letter. A few
+     * milliseconds' wait also means a burst of fast typing works the dictionary once
+     * instead of once per key.
+     */
+    private val suggJob = Runnable { refreshSugg() }
+
+    private fun scheduleSugg() {
+        ui.removeCallbacks(suggJob)
+        ui.postDelayed(suggJob, 24)
+    }
+
     /** Forgets the word being typed, and the touch trail that goes with it. */
     private fun resetWord() {
         buffer.setLength(0)
@@ -263,7 +278,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 lastSpaceAt = 0L
                 lastWord = ""
                 feedback()
-                refreshSugg()
+                scheduleSugg()
                 afterType()
                 return
             }
@@ -282,7 +297,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 ic.endBatchEdit()
                 resetWord()
                 feedback()
-                refreshSugg()
+                scheduleSugg()
                 afterType()
                 return
             }
@@ -312,7 +327,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 undoFixed = fixed
                 resetWord()
                 feedback()
-                refreshSugg()
+                scheduleSugg()
                 afterType()
                 return
             }
@@ -341,7 +356,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         feedback()
-        refreshSugg()
+        scheduleSugg()
         afterType()
     }
 
@@ -358,7 +373,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (shift == 1 && !arabic && page == Pages.LETTERS) {
             shift = 0
             kv?.shift = 0
-            kv?.rebuild()
+            kv?.relabel()
         }
     }
 
@@ -385,7 +400,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             resetWord()
             buffer.append(t)
             feedback()
-            refreshSugg()
+            scheduleSugg()
             return
         }
 
@@ -397,7 +412,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 ic.commitText("", 1)
                 resetWord()
                 feedback()
-                refreshSugg()
+                scheduleSugg()
                 return
             }
         }
@@ -406,7 +421,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (buffer.isNotEmpty()) buffer.setLength(buffer.length - 1)
         if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
         feedback()
-        refreshSugg()
+        scheduleSugg()
     }
 
     /** Deletes back to the start of the previous word, for a long backspace hold. */
@@ -509,7 +524,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         shift = if (now - lastShiftAt < 400) 2 else if (shift > 0) 0 else 1
         lastShiftAt = now
         kv?.shift = shift
-        kv?.rebuild()
+        kv?.relabel()
     }
 
     override fun onLang() {
@@ -906,7 +921,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 v.suggText = t
                 v.suggNew = listOf(false, false)
                 v.suggs = listOf(hit.phrase, "\u201C${hit.trigger}\u201D")
-                v.invalidate()
+                v.stripChanged()
             }
             return
         }
@@ -952,7 +967,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             v.suggText = ""
             v.suggNew = kinds
             v.suggs = zones
-            v.invalidate()
+            v.stripChanged()
         }
     }
 

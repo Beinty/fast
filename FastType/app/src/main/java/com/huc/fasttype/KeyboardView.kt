@@ -91,6 +91,23 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    /** Repaints the suggestion strip alone — the keys have not changed. */
+    fun stripChanged() = invalidateStrip()
+
+    /**
+     * Same keys, different labels.
+     *
+     * Shift only swaps the letters drawn on the caps; every rect stays exactly where
+     * it was. Going through rebuild() would ask the whole window to measure and lay
+     * out again for nothing, and that is felt as a stutter at speed.
+     */
+    fun relabel() {
+        rows = if (page == Pages.EMOJI) listOf(KbLayout.emojiBottom(arabic))
+        else KbLayout.rows(if (page == Pages.LANGS) Pages.CLIP else page, arabic, shift, numRow)
+        if (width > 0) measureKeys(width.toFloat())
+        invalidate()
+    }
+
     private fun invalidateStrip() {
         val top = (zonePad + panelPadTop).toInt()
         invalidate(0, top - 2, width, (top + suggH).toInt() + 2)
@@ -1361,6 +1378,26 @@ class KeyboardView(context: Context) : View(context) {
                 }
                 return true
             }
+
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // A second finger landing while the first is still down is what fast
+                // typing looks like. Handling only the first pointer meant every such
+                // letter was silently lost.
+                if (page == Pages.EMOJI || page == Pages.CLIP || page == Pages.LANGS) return true
+                if (altList.isNotEmpty() || blank || transOn) return true
+                val i = e.actionIndex
+                val px = e.getX(i)
+                val py = e.getY(i)
+                if (stripVisible && py < zonePad + panelPadTop + suggH) return true
+                if (outerH > 0f && py >= globeRect.top) return true
+                val k2 = find(px, py) ?: return true
+                // a held delete or a modifier is a gesture, not a tap to repeat
+                if (k2.code == Code.DEL || k2.code == Code.SHIFT) return true
+                fire(k2)
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> return true
 
             MotionEvent.ACTION_MOVE -> {
                 if (page == Pages.CLIP) {
