@@ -28,6 +28,22 @@ object Themes {
     private fun c(s: String) = Color.parseColor(s)
 
     val all: List<KbTheme> = listOf(
+        // measured off a real iOS screenshot: every key white, only the action key tinted
+        KbTheme(
+            "iosLight", "iOS نهاري",
+            c("#E3E4E6"), c("#E3E4E6"), c("#E3E4E6"), c("#E3E4E6"),
+            c("#FFFFFF"), c("#D8D9DC"), c("#FFFFFF"),
+            c("#337FDF"), c("#FFFFFF"),
+            c("#000000"), c("#8A8A8E"), c("#000000"), c("#FFFFFF"), c("#3C3C43"),
+            lightKeys = true
+        ),
+        KbTheme(
+            "iosDark", "iOS ليلي",
+            c("#1C1C1E"), c("#1C1C1E"), c("#1C1C1E"), c("#1C1C1E"),
+            c("#4A4A4C"), c("#6B6B6E"), c("#4A4A4C"),
+            c("#337FDF"), c("#FFFFFF"),
+            c("#FFFFFF"), c("#8A8A8E"), c("#FFFFFF"), c("#1C1C1E"), c("#D1D1D6")
+        ),
         KbTheme(
             "black", "أسود",
             c("#000000"), c("#0B0B0B"), c("#1E1E1E"), c("#1A1A1A"),

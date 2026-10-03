@@ -47,9 +47,11 @@ class KeyboardView(context: Context) : View(context) {
     private var panelRad = 24f
 
     private var zonePad = dp(0f)
-    private val panelPadX get() = dp(5f)
-    private val panelPadTop get() = dp(7f)
-    private val panelPadBottom get() = dp(8f)
+    /** Ratios measured off a real iOS keyboard, relative to key height. */
+    private val sideMargin get() = keyH * 0.148f
+    private val vGap get() = gap * 1.7f
+    private val panelPadTop get() = keyH * 0.148f
+    private val panelPadBottom get() = keyH * 0.148f
     private val suggH get() = dp(30f)
     private var outerH = dp(40f)
     private var bottomPad = dp(10f)
@@ -135,13 +137,13 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun contentHeight(): Float {
         var h = zonePad * 2 + panelPadTop + panelPadBottom
-        if (showSugg && page != Pages.EMOJI) h += suggH + gap
+        if (showSugg && page != Pages.EMOJI) h += suggH + vGap
         if (page == Pages.EMOJI) {
             h += catH + gap
             h += keyH * 4 + gap * 3
-            h += gap
+            h += vGap
         }
-        h += rowCount() * keyH + max(0, rowCount() - 1) * gap
+        h += rowCount() * keyH + max(0, rowCount() - 1) * vGap
         h += outerH + bottomPad
         return h
     }
@@ -158,12 +160,12 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun measureKeys(width: Float) {
         if (rows.isEmpty()) return
-        val left = zonePad + panelPadX
-        val right = width - zonePad - panelPadX
+        val left = zonePad + sideMargin
+        val right = width - zonePad - sideMargin
         val usable = right - left
 
         var y = zonePad + panelPadTop
-        if (showSugg && page != Pages.EMOJI) y += suggH + gap
+        if (showSugg && page != Pages.EMOJI) y += suggH + vGap
 
         if (page == Pages.EMOJI) {
             catRects.clear()
@@ -178,7 +180,7 @@ class KeyboardView(context: Context) : View(context) {
             emojiBottom = y + gridH
             val rowsNeeded = Math.ceil(emojiKeys.size / 8.0).toInt()
             emojiMaxScroll = max(0f, rowsNeeded * emojiCell - gridH)
-            y = emojiBottom + gap
+            y = emojiBottom + vGap
         }
 
         val stripTop = contentHeight() - bottomPad - outerH
@@ -198,7 +200,7 @@ class KeyboardView(context: Context) : View(context) {
                 k.h = keyH
                 x += k.w + gap
             }
-            y += keyH + gap
+            y += keyH + vGap
         }
     }
 
@@ -206,7 +208,7 @@ class KeyboardView(context: Context) : View(context) {
         val w = width.toFloat()
         val h = height.toFloat()
 
-        bgPaint.color = theme.bg
+        bgPaint.color = if (zonePad <= 0.5f) theme.panel else theme.bg
         canvas.drawRect(0f, 0f, w, h, bgPaint)
 
         // panel — flush to the edges when the inset is zero, rounded on top only
@@ -228,10 +230,12 @@ class KeyboardView(context: Context) : View(context) {
 
         // suggestion strip
         if (showSugg && page != Pages.EMOJI) {
-            rf.set(zonePad + panelPadX, zonePad + panelPadTop,
-                w - zonePad - panelPadX, zonePad + panelPadTop + suggH)
-            bgPaint.color = theme.sugg
-            canvas.drawRoundRect(rf, dp(12f), dp(12f), bgPaint)
+            rf.set(zonePad + sideMargin, zonePad + panelPadTop,
+                w - zonePad - sideMargin, zonePad + panelPadTop + suggH)
+            if (theme.sugg != theme.panel) {
+                bgPaint.color = theme.sugg
+                canvas.drawRoundRect(rf, dp(12f), dp(12f), bgPaint)
+            }
             txtPaint.typeface = arFont
             txtPaint.textSize = dp(13f)
             txtPaint.color = if (suggText.isEmpty()) theme.dim else theme.text
@@ -262,10 +266,10 @@ class KeyboardView(context: Context) : View(context) {
         txtPaint.alpha = 255
 
         canvas.save()
-        canvas.clipRect(zonePad + panelPadX, emojiTop, width - zonePad - panelPadX, emojiBottom)
+        canvas.clipRect(zonePad + sideMargin, emojiTop, width - zonePad - sideMargin, emojiBottom)
         txtPaint.textSize = emojiCell * 0.62f
         txtPaint.color = theme.text
-        val left = zonePad + panelPadX
+        val left = zonePad + sideMargin
         for (i in emojiKeys.indices) {
             val col = i % 8
             val row = i / 8
@@ -451,12 +455,12 @@ class KeyboardView(context: Context) : View(context) {
 
                 val k = find(x, y) ?: return true
                 pressed = k
+                if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
                 invalidateKey(k)
                 if (k.code == Code.DEL) {
                     repeating = true
                     handler.postDelayed(repeatRunnable, 380)
                 }
-                if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
                 return true
             }
 
@@ -483,7 +487,7 @@ class KeyboardView(context: Context) : View(context) {
                 }
 
                 if (page == Pages.EMOJI && !scrolling && y >= emojiTop && y <= emojiBottom) {
-                    val col = ((x - zonePad - panelPadX) / emojiCell).toInt()
+                    val col = ((x - zonePad - sideMargin) / emojiCell).toInt()
                     val row = ((y + emojiScroll - emojiTop) / emojiCell).toInt()
                     val idx = row * 8 + col
                     if (col in 0..7 && idx >= 0 && idx < emojiKeys.size) {

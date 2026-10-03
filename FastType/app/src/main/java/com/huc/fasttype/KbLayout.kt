@@ -78,12 +78,12 @@ object KbLayout {
         return out
     }
 
-    private fun del() = Key(weight = 1.45f, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
-    private fun enter() = Key(weight = 1.45f, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
+    private fun del() = Key(weight = 1.37f, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
+    private fun enter() = Key(weight = 1.37f, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
     private fun emoji() = Key(style = Style.DARK, code = Code.TO_EMOJI, icon = Ico.SMILE)
 
     private fun space(ar: Boolean) =
-        Key(label = if (ar) "العربية" else "English", out = " ", weight = 5f,
+        Key(label = if (ar) "العربية" else "English", out = " ", weight = 5.78f,
             code = Code.SPACE, arabic = ar)
 
     private fun lastRow(ar: Boolean, first: Key): MutableList<Key> =
@@ -135,7 +135,7 @@ object KbLayout {
                     val third = ArrayList<Key>()
                     third.add(
                         Key(
-                            weight = 1.45f, style = Style.DARK, code = Code.SHIFT,
+                            weight = 1.37f, style = Style.DARK, code = Code.SHIFT,
                             icon = if (shift == 2) Ico.CAPS else Ico.SHIFT
                         )
                     )
@@ -154,7 +154,7 @@ object KbLayout {
                 r.add(row1)
                 r.add(chars("@#\$_&-+()/", false))
                 val row3 = ArrayList<Key>()
-                row3.add(Key("=\\<", "", 1.45f, Style.DARK, Code.TO_SYM2, smallText = true))
+                row3.add(Key("=\\<", "", 1.37f, Style.DARK, Code.TO_SYM2, smallText = true))
                 row3.addAll(chars(if (arabic) "*\"':؛!؟" else "*\"':;!?", arabic))
                 row3.add(del())
                 r.add(row3)
@@ -167,7 +167,7 @@ object KbLayout {
                 val row3 = ArrayList<Key>()
                 row3.add(
                     Key(
-                        if (arabic) "؟١٢٣" else "?123", "", 1.45f,
+                        if (arabic) "؟١٢٣" else "?123", "", 1.37f,
                         Style.DARK, Code.TO_SYM, arabic = arabic, smallText = true
                     )
                 )
@@ -213,7 +213,7 @@ object KbLayout {
     fun emojiBottom(arabic: Boolean): List<Key> = mutableListOf(
         abcKey(arabic),
         space(arabic),
-        Key(weight = 1.45f, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
+        Key(weight = 1.37f, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
     )
 }
 

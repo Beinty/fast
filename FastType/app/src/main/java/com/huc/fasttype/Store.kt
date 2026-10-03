@@ -98,23 +98,23 @@ object Store {
     var callerPitch: Float = 1.0f
         private set
 
-    @Volatile var kbTheme: String = "black"
+    @Volatile var kbTheme: String = "iosLight"
         private set
     @Volatile var kbKeyHeight: Int = 44
         private set
     @Volatile var kbGap: Int = 5
         private set
-    @Volatile var kbRadius: Int = 9
+    @Volatile var kbRadius: Int = 5
         private set
-    @Volatile var kbPanelRadius: Int = 24
+    @Volatile var kbPanelRadius: Int = 0
         private set
     @Volatile var kbNumberRow: Boolean = false
         private set
     @Volatile var kbSuggBar: Boolean = true
         private set
-    @Volatile var kbSound: Boolean = true
+    @Volatile var kbSound: Boolean = false
         private set
-    @Volatile var kbVibrate: Boolean = true
+    @Volatile var kbVibrate: Boolean = false
         private set
     @Volatile var kbArabicFirst: Boolean = true
         private set
@@ -158,15 +158,15 @@ object Store {
         callerRate = p.getFloat(K_RATE, 1.0f)
         callerPitch = p.getFloat(K_PITCH, 1.0f)
 
-        kbTheme = p.getString(K_KB_THEME, "black") ?: "black"
+        kbTheme = p.getString(K_KB_THEME, "iosLight") ?: "iosLight"
         kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
         kbGap = p.getInt(K_KB_GAP, 5).coerceIn(2, 10)
-        kbRadius = p.getInt(K_KB_RAD, 9).coerceIn(2, 18)
-        kbPanelRadius = p.getInt(K_KB_PRAD, 24).coerceIn(0, 34)
+        kbRadius = p.getInt(K_KB_RAD, 5).coerceIn(2, 18)
+        kbPanelRadius = p.getInt(K_KB_PRAD, 0).coerceIn(0, 34)
         kbNumberRow = p.getBoolean(K_KB_NUM, false)
         kbSuggBar = p.getBoolean(K_KB_SUGG, true)
-        kbSound = p.getBoolean(K_KB_SOUND, true)
-        kbVibrate = p.getBoolean(K_KB_VIB, true)
+        kbSound = p.getBoolean(K_KB_SOUND, false)
+        kbVibrate = p.getBoolean(K_KB_VIB, false)
         kbArabicFirst = p.getBoolean(K_KB_AR, true)
         kbExpand = p.getBoolean(K_KB_EXP, true)
         kbExpandInstant = p.getBoolean(K_KB_EXP_INST, false)
