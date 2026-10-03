@@ -66,6 +66,7 @@ class MainActivity : Activity() {
     private var kbPreview: KeyboardView? = null
     private var kbOuterRow: View? = null
     private var voiceReport: TextView? = null
+    private var googleBtn: View? = null
 
     private lateinit var permBanner: TextView
     private lateinit var repeatValue: TextView
@@ -672,7 +673,17 @@ class MainActivity : Activity() {
             v.rescan()
             refreshVoiceReport()
         }
-        p.addView(vb, lp(true, bottom = dp(14)))
+        p.addView(vb, lp(true, bottom = dp(8)))
+
+        val gb = Button(this)
+        gb.text = "نزّل تطبيق Google (للإدخال الصوتي)"
+        gb.isAllCaps = false
+        gb.setTextColor(Color.WHITE)
+        gb.background = round(ACC)
+        gb.visibility = if (Voice(this).hasRealEngine()) View.GONE else View.VISIBLE
+        googleBtn = gb
+        gb.setOnClickListener { openStore(Voice.GOOGLE) }
+        p.addView(gb, lp(true, bottom = dp(14)))
 
         val tl = TextView(this)
         tl.text = "الثيم"
@@ -869,10 +880,37 @@ class MainActivity : Activity() {
     /** Re-reads what the phone offers for voice input and shows it plainly. */
     private fun refreshVoiceReport() {
         val t = voiceReport ?: return
+        val v = Voice(this)
         t.text = try {
-            "حالة الإدخال الصوتي\n" + Voice(this).report()
+            "حالة الإدخال الصوتي\n" + v.report()
         } catch (e: Exception) {
             "ما كدرت أفحص: " + e.message
+        }
+        googleBtn?.visibility = try {
+            if (v.hasRealEngine()) View.GONE else View.VISIBLE
+        } catch (e: Exception) {
+            View.VISIBLE
+        }
+    }
+
+    /** Opens a package's page, in the Play Store when it is there. */
+    private fun openStore(pkg: String) {
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$pkg"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            try {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
+                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (e2: Exception) {
+                toast("ما كدرت أفتح المتجر")
+            }
         }
     }
 

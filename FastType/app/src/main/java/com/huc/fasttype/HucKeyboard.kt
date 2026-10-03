@@ -367,8 +367,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             vo.askPermission()
             return
         }
-        if (!vo.available() && !vo.onDeviceAvailable()) {
-            showStrip("ما لكيت محرك تعرّف صوت بالجهاز")
+        if (!vo.hasRealEngine()) {
+            showStrip("محتاج تطبيق Google — افتح إعدادات الكيبورد")
             return
         }
 

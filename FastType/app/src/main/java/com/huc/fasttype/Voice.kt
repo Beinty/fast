@@ -30,6 +30,9 @@ class Voice(private val ctx: Context) {
     companion object {
         /** Everything this class does is logged here: `adb logcat -s HUCVOICE`. */
         const val TAG = "HUCVOICE"
+
+        /** The app that actually provides voice typing on Android. */
+        const val GOOGLE = "com.google.android.googlequicksearchbox"
     }
 
 
@@ -89,9 +92,12 @@ class Voice(private val ctx: Context) {
                 val si = ri.serviceInfo ?: continue
                 val cn = ComponentName(si.packageName, si.name)
                 val score = when {
-                    si.packageName == "com.google.android.googlequicksearchbox" -> 0
+                    si.packageName == GOOGLE -> 0
                     si.packageName.startsWith("com.google.android.as") -> 1
+                    // speech *synthesis*; its recognition service is a stub that
+                    // drops the connection, so it is the very last thing to try
                     si.packageName == "com.google.android.tts" -> 90
+                    si.packageName == ctx.packageName -> 95
                     else -> 50
                 }
                 found.add(score to cn)
@@ -108,6 +114,16 @@ class Voice(private val ctx: Context) {
 
     fun onDeviceAvailable(): Boolean =
         Build.VERSION.SDK_INT >= 33 && SpeechRecognizer.isOnDeviceRecognitionAvailable(ctx)
+
+    /** Whether a package known to really do recognition is installed. */
+    fun hasRealEngine(): Boolean {
+        if (onDeviceAvailable()) return true
+        return engines().any {
+            it.packageName == GOOGLE || it.packageName.startsWith("com.google.android.as")
+        }
+    }
+
+    fun googleInstalled(): Boolean = engines().any { it.packageName == GOOGLE }
 
     /**
      * A plain-language report of what the phone offers, for the settings screen.
@@ -127,6 +143,11 @@ class Voice(private val ctx: Context) {
             lines.add("محركات التعرّف (" + e.size + "):")
             for (c in e) lines.add("  • " + c.packageName)
             lines.add("راح يستعمل: " + e[0].packageName)
+        }
+        if (!hasRealEngine()) {
+            lines.add("")
+            lines.add("ماكو محرك تعرّف كلام حقيقي بالجهاز.")
+            lines.add("نزّل تطبيق Google من المتجر وراح يشتغل.")
         }
         return lines.joinToString("\n")
     }
