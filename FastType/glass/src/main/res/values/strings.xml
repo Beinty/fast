@@ -1,4 +1,38 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">زجاج</string>
+    <string name="app_name">Glass</string>
+    <string name="search">Search</string>
+
+    <string name="dock_add">Add to Dock</string>
+    <string name="dock_remove">Remove from Dock</string>
+    <string name="app_info">App info</string>
+    <string name="home_settings">Home screen settings</string>
+    <string name="wallpaper">Change wallpaper</string>
+    <string name="labels_hide">Hide app names</string>
+    <string name="labels_show">Show app names</string>
+    <string name="default_home">Choose home screen</string>
+
+    <string name="hint_default">To make this your home screen: long-press the wallpaper → Choose home screen</string>
+    <string name="cant_open">Couldn\'t open %1$s</string>
+
+    <string name="sec_home">Home screen</string>
+    <string name="sec_speed">Speed</string>
+    <string name="sec_about">About</string>
+
+    <string name="labels_title">App names</string>
+    <string name="labels_desc">Show the name under every icon.</string>
+    <string name="dock_reset">Reset the dock</string>
+    <string name="dock_reset_desc">Go back to phone, browser, messages and camera.</string>
+
+    <string name="keep_title">Keep in memory</string>
+    <string name="keep_desc">Stops the system from closing the home screen, so it is there the moment you leave an app. Leaves one silent notification.</string>
+    <string name="battery_title">Ignore battery optimisation</string>
+    <string name="battery_desc">ColorOS closes home screens that are not on this list. This is the single biggest cause of the wait.</string>
+    <string name="autostart_title">Allow background activity</string>
+    <string name="autostart_desc">In the app page: turn on background running and auto-launch, and set battery usage to unrestricted.</string>
+    <string name="rebuild_title">Rebuild icons</string>
+    <string name="rebuild_desc">Draw every icon again. Use this after changing icon settings on the phone.</string>
+    <string name="rebuild_done">Icons will be redrawn.</string>
+
+    <string name="version">Version %1$s</string>
 </resources>

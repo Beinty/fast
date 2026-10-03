@@ -46,11 +46,16 @@ class HomeActivity : Activity(), HomeView.Host {
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
 
+        // the remembered list first: the screen is complete before PackageManager
+        // has even been asked, which is what removes the wait after leaving an app
+        Apps.loadCached(this)
+
         val v = HomeView(this)
         v.host = this
         v.lightWall = wallpaperIsPale()
         setContentView(v)
         view = v
+        if (Apps.ready) v.appsChanged()
 
         v.setOnApplyWindowInsetsListener { _, insets ->
             if (Build.VERSION.SDK_INT >= 30) {
@@ -65,6 +70,7 @@ class HomeActivity : Activity(), HomeView.Host {
 
         loadApps()
         watchPackages()
+        KeepService.apply(this)
     }
 
     private fun loadApps() {
@@ -109,13 +115,14 @@ class HomeActivity : Activity(), HomeView.Host {
     override fun onResume() {
         super.onResume()
         view?.closeMenu()
+        view?.appsChanged()
         view?.lightWall = wallpaperIsPale()
         view?.invalidate()
         if (!hinted && !isDefaultHome()) {
             hinted = true
             Toast.makeText(
                 this,
-                "حتى يصير شاشتك الرئيسية: ضغطة مطوّلة على الخلفية ← اختر الشاشة الرئيسية",
+                getString(R.string.hint_default),
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -168,7 +175,7 @@ class HomeActivity : Activity(), HomeView.Host {
 
     override fun openApp(e: AppEntry) {
         if (!Apps.launch(this, e)) {
-            Toast.makeText(this, "ما كدرت أفتح " + e.label, Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.cant_open, e.label), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -178,7 +185,7 @@ class HomeActivity : Activity(), HomeView.Host {
 
     override fun pickWallpaper() {
         try {
-            startActivity(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "الخلفية"))
+            startActivity(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), getString(R.string.wallpaper)))
         } catch (_: Throwable) {
             try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Throwable) {}
         }
@@ -189,6 +196,13 @@ class HomeActivity : Activity(), HomeView.Host {
             startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
         } catch (_: Throwable) {
             try { startActivity(Intent(Settings.ACTION_SETTINGS)) } catch (_: Throwable) {}
+        }
+    }
+
+    override fun openSettings() {
+        try {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        } catch (_: Throwable) {
         }
     }
 

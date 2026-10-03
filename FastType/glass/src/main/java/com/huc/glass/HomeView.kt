@@ -34,6 +34,7 @@ class HomeView(ctx: Context) : View(ctx) {
         fun pickWallpaper()
         fun homeSettings()
         fun search()
+        fun openSettings()
         fun pageOffset(fraction: Float)
     }
 
@@ -73,6 +74,9 @@ class HomeView(ctx: Context) : View(ctx) {
     private var gridTop = 0f
     private var rows = 6
     private var perPage = 24
+    /** Follows the phone's language: Arabic fills from the right, English from the left. */
+    private var rtl = false
+    private var dir = 1f
 
     private val dockR = RectF()
     private var dockRad = 0f
@@ -180,6 +184,9 @@ class HomeView(ctx: Context) : View(ctx) {
         val h = height.toFloat()
         if (w <= 0f || h <= 0f) return
 
+        rtl = resources.configuration.layoutDirection == View.LAYOUT_DIRECTION_RTL
+        dir = if (rtl) -1f else 1f
+
         sideM = w * F_SIDE
         gapX = w * F_GAPX
         iconW = w * F_ICON
@@ -235,8 +242,10 @@ class HomeView(ctx: Context) : View(ctx) {
         for (e in Apps.all) if (!dockApps.contains(e)) gridApps.add(e)
     }
 
-    /** Column 0 is the rightmost — an Arabic home screen fills from the right. */
-    private fun colX(col: Int): Float = width - sideM - (col + 1) * iconW - col * gapX
+    /** Column 0 sits where reading starts: right in Arabic, left in English. */
+    private fun colX(col: Int): Float =
+        if (rtl) width - sideM - (col + 1) * iconW - col * gapX
+        else sideM + col * (iconW + gapX)
 
     private fun ensureIcons() {
         if (iconW <= 0f || Apps.all.isEmpty()) return
@@ -278,7 +287,7 @@ class HomeView(ctx: Context) : View(ctx) {
         val first = (scrollX / w).toInt()
         var p = first
         while (p <= first + 1 && p < pages) {
-            if (p >= 0) drawPage(canvas, p, p * w - scrollX)
+            if (p >= 0) drawPage(canvas, p, (p * w - scrollX) * dir)
             p++
         }
 
@@ -351,7 +360,8 @@ class HomeView(ctx: Context) : View(ctx) {
         label.textSize = ts
         val cy = pillR.centerY() + ts * 0.36f
         val gl = pillR.height() * 0.30f
-        val gx = pillR.centerX() + pillR.width() * 0.18f
+        // the magnifier leads the word: on its right in Arabic, on its left in English
+        val gx = pillR.centerX() + pillR.width() * 0.18f * dir
         stroke.strokeWidth = pillR.height() * 0.075f
         stroke.color = Color.WHITE
         c.drawCircle(gx, pillR.centerY() - gl * 0.12f, gl * 0.42f, stroke)
@@ -359,19 +369,22 @@ class HomeView(ctx: Context) : View(ctx) {
             gx + gl * 0.30f, pillR.centerY() + gl * 0.18f,
             gx + gl * 0.52f, pillR.centerY() + gl * 0.42f, stroke
         )
-        c.drawText("بحث", pillR.centerX() - pillR.width() * 0.05f, cy, label)
+        c.drawText(
+            context.getString(R.string.search),
+            pillR.centerX() - pillR.width() * 0.05f * dir, cy, label
+        )
         label.textSize = width * F_LABEL
     }
 
     private fun drawDots(c: Canvas) {
         val span = (pages - 1) * dotGap
-        val startX = width / 2f + span / 2f   // right to left
+        val startX = width / 2f - span / 2f * dir
         val cur = if (maxScrollX > 0f) Math.round(scrollX / width.toFloat()) else 0
         var i = 0
         while (i < pages) {
             fill.color = if (i == cur) Color.argb(235, 255, 255, 255)
             else Color.argb(92, 255, 255, 255)
-            c.drawCircle(startX - i * dotGap, dotsCy, dotR, fill)
+            c.drawCircle(startX + i * dotGap * dir, dotsCy, dotR, fill)
             i++
         }
     }
@@ -431,18 +444,23 @@ class HomeView(ctx: Context) : View(ctx) {
     private fun openAppMenu(e: AppEntry) {
         val inDock = dockApps.contains(e)
         val items = ArrayList<MItem>(3)
-        items.add(MItem(if (inDock) "شيله من الشريط السفلي" else "ضيفه للشريط السفلي", 1))
-        items.add(MItem("معلومات التطبيق", 2))
-        items.add(MItem("إعدادات الشاشة", 8))
+        items.add(
+            MItem(context.getString(if (inDock) R.string.dock_remove else R.string.dock_add), 1)
+        )
+        items.add(MItem(context.getString(R.string.app_info), 2))
+        items.add(MItem(context.getString(R.string.home_settings), 8))
         menuApp = e
         showMenu(items)
     }
 
     private fun openHomeMenu() {
         val items = ArrayList<MItem>(4)
-        items.add(MItem("تغيير الخلفية", 3))
-        items.add(MItem(if (GStore.labels) "خفّي أسماء التطبيقات" else "ظهّر أسماء التطبيقات", 6))
-        items.add(MItem("اختر الشاشة الرئيسية", 7))
+        items.add(MItem(context.getString(R.string.wallpaper), 3))
+        items.add(
+            MItem(context.getString(if (GStore.labels) R.string.labels_hide else R.string.labels_show), 6)
+        )
+        items.add(MItem(context.getString(R.string.default_home), 7))
+        items.add(MItem(context.getString(R.string.sec_speed), 9))
         menuApp = null
         showMenu(items)
     }
@@ -491,6 +509,7 @@ class HomeView(ctx: Context) : View(ctx) {
             }
             7 -> host?.homeSettings()
             8 -> openHomeMenu()
+            9 -> host?.openSettings()
         }
     }
 
@@ -517,7 +536,7 @@ class HomeView(ctx: Context) : View(ctx) {
         if (y < gridTop - iconW * 0.2f) return null
         val w = width.toFloat()
         val page = Math.round(scrollX / w)
-        val dx = page * w - scrollX
+        val dx = (page * w - scrollX) * dir
         val start = page * perPage
         var i = 0
         while (i < perPage) {
@@ -616,7 +635,7 @@ class HomeView(ctx: Context) : View(ctx) {
                     invalidate()
                 }
                 if (dragging && maxScrollX > 0f) {
-                    scrollX -= (x - lastX)
+                    scrollX -= (x - lastX) * dir
                     val over = width * 0.12f
                     if (scrollX < -over) scrollX = -over
                     if (scrollX > maxScrollX + over) scrollX = maxScrollX + over

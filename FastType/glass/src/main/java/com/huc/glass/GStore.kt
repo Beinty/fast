@@ -27,4 +27,9 @@ object GStore {
     var labels: Boolean
         get() = p?.getBoolean("labels", true) ?: true
         set(v) { p?.edit()?.putBoolean("labels", v)?.apply() }
+
+    /** Holds the process in memory so coming home is never a cold start. */
+    var keepAlive: Boolean
+        get() = p?.getBoolean("keepAlive", true) ?: true
+        set(v) { p?.edit()?.putBoolean("keepAlive", v)?.apply() }
 }

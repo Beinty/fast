@@ -17,29 +17,91 @@ import android.net.Uri
 import android.provider.Settings
 import java.text.Collator
 
-class AppEntry(val pkg: String, val cls: String, val label: String) {
+class AppEntry(
+    val pkg: String,
+    val cls: String,
+    val label: String,
+    val stamp: Long
+) {
     @Volatile var icon: Bitmap? = null
     val key: String get() = pkg + "/" + cls
 }
 
 /**
- * The installed apps, and the job of making their icons look like iOS icons.
+ * The installed apps, their icons, and a remembered copy of both.
  *
- * The app's own artwork is kept — only the outline changes. An adaptive icon is two
+ * Two paths in here. The fast one reads the list straight out of preferences and the
+ * icons off disk, so the screen is complete within a frame or two of a cold start.
+ * The slow one asks PackageManager what is really installed and quietly corrects the
+ * fast one. The user only ever sees the fast path.
+ *
+ * Icon artwork is the app's own; only the outline changes. An adaptive icon is two
  * layers on a 108-unit canvas whose middle 72 are guaranteed visible, so both layers
- * are drawn at 1.5x and the squircle is cut out of the result. Letting
- * AdaptiveIconDrawable draw itself would apply ColorOS's mask instead of ours, which
- * is exactly what we are replacing, so the layers are drawn by hand.
+ * are drawn by hand at 1.5x and the squircle is cut out of the result — letting
+ * AdaptiveIconDrawable draw itself would apply ColorOS's mask, which is the very
+ * thing being replaced.
  */
 object Apps {
+
+    private const val PREF = "huc_glass"
+    private const val K_LIST = "applist"
+    private const val SEP = "\u0001"
 
     @Volatile var all: List<AppEntry> = ArrayList()
         private set
 
     @Volatile var ready = false
 
+    // ---- the fast path -----------------------------------------------------
+
+    /** Rebuilds the list from what was saved last time. Cheap enough for onCreate. */
+    fun loadCached(ctx: Context): Boolean {
+        return try {
+            val raw = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+                .getString(K_LIST, "") ?: ""
+            if (raw.isEmpty()) return false
+            val out = ArrayList<AppEntry>(64)
+            for (line in raw.split("\n")) {
+                if (line.isEmpty()) continue
+                val p = line.split(SEP)
+                if (p.size < 4) continue
+                out.add(AppEntry(p[0], p[1], p[2], p[3].toLongOrNull() ?: 0L))
+            }
+            if (out.isEmpty()) return false
+            all = out
+            ready = true
+            true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun saveList(ctx: Context, list: List<AppEntry>) {
+        try {
+            val sb = StringBuilder(list.size * 48)
+            for (e in list) {
+                sb.append(e.pkg).append(SEP).append(e.cls).append(SEP)
+                    .append(e.label.replace("\n", " ")).append(SEP).append(e.stamp).append("\n")
+            }
+            ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+                .putString(K_LIST, sb.toString()).apply()
+        } catch (_: Throwable) {
+        }
+    }
+
+    // ---- the slow path -----------------------------------------------------
+
     fun load(ctx: Context) {
         val pm = ctx.packageManager
+
+        val stamps = HashMap<String, Long>(128)
+        try {
+            for (pi in pm.getInstalledPackages(0)) {
+                if (pi.packageName != null) stamps[pi.packageName] = pi.lastUpdateTime
+            }
+        } catch (_: Throwable) {
+        }
+
         val q = Intent(Intent.ACTION_MAIN)
         q.addCategory(Intent.CATEGORY_LAUNCHER)
         val found: List<ResolveInfo> = try {
@@ -60,22 +122,36 @@ object Apps {
                 ""
             }
             if (label.isEmpty()) label = ai.packageName
-            out.add(AppEntry(ai.packageName, ai.name, label))
+            out.add(AppEntry(ai.packageName, ai.name, label, stamps[ai.packageName] ?: 0L))
         }
         val col = Collator.getInstance()
         out.sortWith(Comparator { a, b -> col.compare(a.label, b.label) })
 
-        // carry over the icons we already rendered
-        val prev = all
-        val old = HashMap<String, AppEntry>(prev.size)
-        for (e in prev) old[e.key] = e
+        // keep the bitmaps we already have, but only where the app has not changed
+        val old = HashMap<String, AppEntry>(all.size)
+        for (e in all) old[e.key] = e
         for (e in out) {
             val p = old[e.key]
-            if (p != null) e.icon = p.icon
+            if (p != null && p.stamp == e.stamp) e.icon = p.icon
         }
 
         all = out
         ready = true
+        saveList(ctx, out)
+    }
+
+    /** Deletes cached icon files that no app at this size refers to any more. */
+    fun sweepCache(ctx: Context, size: Int) {
+        if (size <= 8) return
+        val keep = HashSet<String>(all.size)
+        for (e in all) keep.add(IconCache.fileName(e.key, size, e.stamp))
+        IconCache.sweep(ctx, keep)
+    }
+
+    /** Drops every rendered icon, in memory and on disk, so they are drawn again. */
+    fun forgetIcons(ctx: Context) {
+        for (e in all) e.icon = null
+        IconCache.clear(ctx)
     }
 
     fun byKey(k: String): AppEntry? {
@@ -143,12 +219,18 @@ object Apps {
 
     fun buildIcon(ctx: Context, e: AppEntry, size: Int) {
         if (e.icon != null || size <= 8) return
+
+        val cached = IconCache.load(ctx, e.key, size, e.stamp)
+        if (cached != null) {
+            e.icon = cached
+            return
+        }
+
         val d = rawIcon(ctx, e)
         val tmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val tc = Canvas(tmp)
 
         if (d is AdaptiveIconDrawable) {
-            // both layers by hand, unmasked, so ColorOS's own shape never gets applied
             val big = (size * 1.5f).toInt()
             val off = -((big - size) / 2)
             val bg = try { d.background } catch (_: Throwable) { null }
@@ -169,30 +251,24 @@ object Apps {
                 }
             }
         } else if (d != null) {
-            if (fillsCorners(d, size)) {
+            if (fillsCorners(d)) {
                 d.setBounds(0, 0, size, size)
                 safeDraw(d, tc)
             } else {
-                // a legacy icon with its own silhouette: give it a tile to sit on,
-                // the way a themed iOS icon set does
-                tc.drawColor(tileColour(d, size))
+                tc.drawColor(tileColour(d))
                 val inset = size * 0.14f
                 val inner = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
                 d.setBounds(0, 0, size, size)
                 safeDraw(d, Canvas(inner))
                 val p = Paint(Paint.ANTI_ALIAS_FLAG)
                 p.isFilterBitmap = true
-                tc.drawBitmap(
-                    inner, null,
-                    RectF(inset, inset, size - inset, size - inset), p
-                )
+                tc.drawBitmap(inner, null, RectF(inset, inset, size - inset, size - inset), p)
                 inner.recycle()
             }
         } else {
             tc.drawColor(Color.argb(255, 120, 124, 132))
         }
 
-        // cut the squircle out of whatever we just drew, with clean edges
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val oc = Canvas(out)
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -200,6 +276,7 @@ object Apps {
         oc.drawPath(Squircle.path(size.toFloat()), p)
         tmp.recycle()
         e.icon = out
+        IconCache.save(ctx, e.key, size, e.stamp, out)
     }
 
     private fun safeDraw(d: Drawable, c: Canvas) {
@@ -229,7 +306,7 @@ object Apps {
     }
 
     /** True when the artwork already reaches the corners, so masking is enough. */
-    private fun fillsCorners(d: Drawable, size: Int): Boolean {
+    private fun fillsCorners(d: Drawable): Boolean {
         return try {
             val n = 24
             val bm = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
@@ -239,9 +316,7 @@ object Apps {
             var total = 0
             for (y in 0 until n) {
                 for (x in 0 until n) {
-                    // only the band just inside the edge matters
-                    val edge = x < 2 || y < 2 || x >= n - 2 || y >= n - 2
-                    if (!edge) continue
+                    if (!(x < 2 || y < 2 || x >= n - 2 || y >= n - 2)) continue
                     total++
                     if (Color.alpha(bm.getPixel(x, y)) > 120) on++
                 }
@@ -254,7 +329,7 @@ object Apps {
     }
 
     /** A pale tile that suits the icon, for legacy artwork that needs a backing. */
-    private fun tileColour(d: Drawable, size: Int): Int {
+    private fun tileColour(d: Drawable): Int {
         return try {
             val n = 20
             val bm = Bitmap.createBitmap(n, n, Bitmap.Config.ARGB_8888)
@@ -270,7 +345,6 @@ object Apps {
             }
             bm.recycle()
             if (c == 0L) return Color.argb(255, 244, 244, 247)
-            // pull it most of the way to white so the artwork still reads on top
             val mr = (r / c).toInt(); val mg = (g / c).toInt(); val mb = (b / c).toInt()
             Color.argb(
                 255,

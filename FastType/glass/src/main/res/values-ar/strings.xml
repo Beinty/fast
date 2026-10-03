@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">زجاج</string>
+    <string name="search">بحث</string>
+
+    <string name="dock_add">ضيفه للشريط السفلي</string>
+    <string name="dock_remove">شيله من الشريط السفلي</string>
+    <string name="app_info">معلومات التطبيق</string>
+    <string name="home_settings">إعدادات الشاشة</string>
+    <string name="wallpaper">تغيير الخلفية</string>
+    <string name="labels_hide">خفّي أسماء التطبيقات</string>
+    <string name="labels_show">ظهّر أسماء التطبيقات</string>
+    <string name="default_home">اختر الشاشة الرئيسية</string>
+
+    <string name="hint_default">حتى يصير شاشتك الرئيسية: ضغطة مطوّلة على الخلفية ← اختر الشاشة الرئيسية</string>
+    <string name="cant_open">ما كدرت أفتح %1$s</string>
+
+    <string name="sec_home">الشاشة الرئيسية</string>
+    <string name="sec_speed">السرعه</string>
+    <string name="sec_about">عن التطبيق</string>
+
+    <string name="labels_title">أسماء التطبيقات</string>
+    <string name="labels_desc">يظهر اسم كل تطبيق تحت أيقونته.</string>
+    <string name="dock_reset">صفّر الشريط السفلي</string>
+    <string name="dock_reset_desc">يرجع للهاتف والمتصفّح والرسائل والكاميرا.</string>
+
+    <string name="keep_title">خلّيه بالذاكره</string>
+    <string name="keep_desc">يمنع النظام من إغلاق الشاشة الرئيسية، فتكون حاضره بلحظة ما تطلع من أي تطبيق. يخلّي إشعار واحد صامت.</string>
+    <string name="battery_title">استثنيه من تحسين البطاريه</string>
+    <string name="battery_desc">ColorOS يغلق الشاشات الرئيسيه اللي مو بهاي القائمه. هذا أكبر سبب للانتظار.</string>
+    <string name="autostart_title">اسمح له بالعمل بالخلفيه</string>
+    <string name="autostart_desc">بصفحة التطبيق: شغّل العمل بالخلفيه والتشغيل التلقائي، وخلّي استهلاك البطاريه «بدون قيود».</string>
+    <string name="rebuild_title">أعِد رسم الأيقونات</string>
+    <string name="rebuild_desc">يرسم كل الأيقونات من جديد. استخدمه إذا غيّرت إعدادات الأيقونات بالجهاز.</string>
+    <string name="rebuild_done">راح تنرسم الأيقونات من جديد.</string>
+
+    <string name="version">الإصدار %1$s</string>
+</resources>
