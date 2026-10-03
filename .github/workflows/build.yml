@@ -44,7 +44,12 @@ jobs:
           grep -E "^e: " /tmp/build.log | head -40 | while IFS= read -r line; do
             echo "::error::$line"
           done || true
-          grep -E "FAILURE:|What went wrong|Caused by" /tmp/build.log | head -10 \
+          # annotations are the only part of a failed build we can read back, so the
+          # lines that actually name the cause have to come through them
+          grep -E -A 8 "What went wrong" /tmp/build.log | head -24 \
+            | while IFS= read -r line; do echo "::error::$line"; done || true
+          grep -E "Could not (find|resolve|determine)|No matching variant|Unresolved reference|Caused by" \
+            /tmp/build.log | head -20 \
             | while IFS= read -r line; do echo "::error::$line"; done || true
           echo '## أخطاء الترجمة' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

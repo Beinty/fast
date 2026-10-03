@@ -4,8 +4,6 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.nl.languageid.LanguageIdentification
-import com.google.mlkit.nl.languageid.LanguageIdentifier
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
@@ -54,7 +52,6 @@ object Tr {
 
     private val main = Handler(Looper.getMainLooper())
     private val pool = HashMap<String, Translator>()
-    private var ident: LanguageIdentifier? = null
 
     /** Bumped on every request so a slow answer cannot overwrite a newer one. */
     private var seq = 0
@@ -101,32 +98,38 @@ object Tr {
             main.post { if (mine == seq) done("") }
             return
         }
-        if (srcPref == AUTO) {
-            identify(body) { found ->
-                val from = pickSource(found, dst)
-                run(mine, body, from, dst, done)
+        val from = if (srcPref == AUTO) guess(body, dst) else srcPref
+        run(mine, body, from, dst, done)
+    }
+
+    /**
+     * Which language he is typing in, read straight off the letters.
+     *
+     * A statistical identifier would be more general, but it means another model to
+     * download and another round trip before a single word can be translated. The
+     * script answers the only question that matters here — Arabic or not — with no
+     * model and no wait, and anything it cannot place falls back to whichever side
+     * of the pair he is not translating into.
+     */
+    private fun guess(text: String, dst: String): String {
+        var arabic = 0
+        var latin = 0
+        var cyrillic = 0
+        for (ch in text) {
+            when {
+                ch in '\u0600'..'\u06FF' || ch in '\u0750'..'\u077F' -> arabic++
+                ch in 'a'..'z' || ch in 'A'..'Z' -> latin++
+                ch in '\u0400'..'\u04FF' -> cyrillic++
             }
-        } else {
-            run(mine, body, srcPref, dst, done)
         }
-    }
-
-    /** What the auto setting should fall back to when the guess is useless. */
-    private fun pickSource(found: String?, dst: String): String {
-        if (found != null && found != "und" && found != dst) return found
-        // a sentence the identifier could not place: assume he is going the other way
+        val best = when {
+            arabic >= latin && arabic >= cyrillic && arabic > 0 -> "ar"
+            latin >= cyrillic && latin > 0 -> "en"
+            cyrillic > 0 -> "ru"
+            else -> ""
+        }
+        if (best.isNotEmpty() && best != dst) return best
         return if (dst == "ar") "en" else "ar"
-    }
-
-    private fun identify(text: String, done: (String?) -> Unit) {
-        try {
-            val id = ident ?: LanguageIdentification.getClient().also { ident = it }
-            id.identifyLanguage(text)
-                .addOnSuccessListener { code -> done(code) }
-                .addOnFailureListener { done(null) }
-        } catch (_: Throwable) {
-            done(null)
-        }
     }
 
     private fun run(mine: Int, body: String, from: String, to: String, done: (String?) -> Unit) {
@@ -168,8 +171,6 @@ object Tr {
             try { t.close() } catch (_: Throwable) {}
         }
         pool.clear()
-        try { ident?.close() } catch (_: Throwable) {}
-        ident = null
         status = ""
         seq++
     }

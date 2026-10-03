@@ -47,5 +47,4 @@ android {
 dependencies {
     // on-device translation: no API key, and nothing typed ever leaves the phone
     implementation("com.google.mlkit:translate:17.0.3")
-    implementation("com.google.mlkit:language-id:17.0.6")
 }
