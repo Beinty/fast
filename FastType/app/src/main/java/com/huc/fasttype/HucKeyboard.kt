@@ -621,7 +621,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         Store.setTrLang(this, false, dst)
         Store.setTrLang(this, true, if (src == Tr.AUTO) "ar" else src)
         kv?.invalidate()
-        afterTransEdit()
+        transLastSent = ""
+        afterTransEdit(true)
     }
 
     override fun onTransLang(dst: Boolean) {
@@ -634,7 +635,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         page = Pages.LETTERS
         kv?.page = Pages.LETTERS
         kv?.rebuild()
-        if (code.isNotEmpty()) afterTransEdit()
+        if (code.isNotEmpty()) {
+            transLastSent = ""
+            afterTransEdit(true)
+        }
     }
 
     /** Redraws the box and queues a translation; a finished word jumps the queue. */
