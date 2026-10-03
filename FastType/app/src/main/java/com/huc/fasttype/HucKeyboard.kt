@@ -24,8 +24,19 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /** Translate mode: what he is typing into the box, and what we put in the field. */
     private var transOn = false
     private val transBuf = StringBuilder()
-    private var transComposing = false
     private var transJob: Runnable? = null
+    /** Exactly what we last put in the app's field, so it can be replaced cleanly. */
+    private var transOut = ""
+    private var transLastSent = ""
+
+    /** For each letter in [buffer], the keys the finger was between. */
+    private val nearBuf = ArrayList<String>(32)
+
+    /** Forgets the word being typed, and the touch trail that goes with it. */
+    private fun resetWord() {
+        buffer.setLength(0)
+        nearBuf.clear()
+    }
     private var voice: Voice? = null
     private var voiceBase = ""
     private var voicePartial = 0
@@ -155,7 +166,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ic.beginBatchEdit()
         ic.commitText("$text ", 1)
         ic.endBatchEdit()
-        buffer.setLength(0)
+        resetWord()
         refreshSugg()
     }
 
@@ -187,14 +198,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         Store.load(this)
-        buffer.setLength(0)
+        resetWord()
         lastWord = ""
         pendingShortcut = null
         shift = 0
         page = Pages.LETTERS
         if (transOn) {
             transOn = false
-            transComposing = false
+            transOut = ""
+            transLastSent = ""
             transBuf.setLength(0)
         }
         kv?.let {
@@ -220,7 +232,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
         }
         super.onFinishInput()
-        buffer.setLength(0)
+        resetWord()
         pendingShortcut = null
     }
 
@@ -229,7 +241,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onChar(s: String) {
         if (transOn) {
             transBuf.append(s)
-            afterTransEdit()
+            // a space ends a word, and that is the moment a translation is worth having
+            afterTransEdit(s == " " || s == "\n")
             return
         }
         val ic = currentInputConnection ?: return
@@ -267,7 +280,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 ic.deleteSurroundingText(hit.trigger.length, 0)
                 ic.commitText(hit.phrase + s, 1)
                 ic.endBatchEdit()
-                buffer.setLength(0)
+                resetWord()
                 feedback()
                 refreshSugg()
                 afterType()
@@ -286,7 +299,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             val typed = buffer.toString()
             // a spelling he writes himself is his, not a mistake
             val fixed = if (Store.kbLearn && UserDict.isOwn(typed, arabic)) null
-            else UserDict.correct(typed, arabic) ?: Dict.correct(typed, arabic)
+            else UserDict.correct(typed, arabic)
+                // what the finger was actually near beats guessing the whole alphabet
+                ?: Dict.correctNear(typed, nearBuf, arabic)
+                ?: Dict.correct(typed, arabic)
             if (fixed != null) {
                 ic.beginBatchEdit()
                 ic.deleteSurroundingText(typed.length, 0)
@@ -294,7 +310,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 ic.endBatchEdit()
                 undoTyped = typed
                 undoFixed = fixed
-                buffer.setLength(0)
+                resetWord()
                 feedback()
                 refreshSugg()
                 afterType()
@@ -304,10 +320,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         ic.commitText(s, 1)
 
-        if (isBreak) buffer.setLength(0)
+        if (isBreak) resetWord()
         else {
             buffer.append(s)
-            if (buffer.length > 32) buffer.delete(0, buffer.length - 32)
+            nearBuf.add(kv?.lastNear ?: "")
+            if (buffer.length > 32) {
+                buffer.delete(0, buffer.length - 32)
+                while (nearBuf.size > buffer.length) nearBuf.removeAt(0)
+            }
             if (Store.kbExpandInstant && Store.kbExpand) {
                 val hit = matchShortcut()
                 if (hit != null) {
@@ -315,7 +335,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                     ic.deleteSurroundingText(hit.trigger.length, 0)
                     ic.commitText(hit.phrase, 1)
                     ic.endBatchEdit()
-                    buffer.setLength(0)
+                    resetWord()
                 }
             }
         }
@@ -345,7 +365,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onDelete() {
         if (transOn) {
             if (transBuf.isNotEmpty()) transBuf.setLength(transBuf.length - 1)
-            afterTransEdit()
+            afterTransEdit(false)
             return
         }
         val ic = currentInputConnection ?: return
@@ -362,7 +382,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             ic.deleteSurroundingText(f.length + 1, 0)
             ic.commitText(t, 1)
             ic.endBatchEdit()
-            buffer.setLength(0)
+            resetWord()
             buffer.append(t)
             feedback()
             refreshSugg()
@@ -375,7 +395,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             val sel = ic.getSelectedText(0)
             if (sel != null && sel.isNotEmpty()) {
                 ic.commitText("", 1)
-                buffer.setLength(0)
+                resetWord()
                 feedback()
                 refreshSugg()
                 return
@@ -384,6 +404,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         ic.deleteSurroundingText(1, 0)
         if (buffer.isNotEmpty()) buffer.setLength(buffer.length - 1)
+        if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
         feedback()
         refreshSugg()
     }
@@ -402,7 +423,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         releaseComposing(ic)
         ic.commitText(t, 1)
         Clip.used()
-        buffer.setLength(0)
+        resetWord()
         lastWord = ""
         feedback()
         refreshSugg()
@@ -428,7 +449,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             ic.commitText(t, 1)
         }
         Clip.used()
-        buffer.setLength(0)
+        resetWord()
         lastWord = ""
         feedback()
         refreshSugg()
@@ -452,7 +473,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         while (i > 0 && before[i - 1] != ' ' && before[i - 1] != '\n') i--
         val n = (before.length - i).coerceAtLeast(1)
         ic.deleteSurroundingText(n, 0)
-        buffer.setLength(0)
+        resetWord()
         refreshSugg()
     }
 
@@ -478,7 +499,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         }
-        buffer.setLength(0)
+        resetWord()
         refreshSugg()
     }
 
@@ -495,7 +516,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         feedback()
         arabic = !arabic
         shift = 0
-        buffer.setLength(0)
+        resetWord()
         kv?.let {
             it.arabic = arabic
             it.shift = 0
@@ -518,7 +539,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ic.deleteSurroundingText(hit.trigger.length, 0)
         ic.commitText(hit.phrase, 1)
         ic.endBatchEdit()
-        buffer.setLength(0)
+        resetWord()
         refreshSugg()
     }
 
@@ -542,7 +563,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             if (prev.isNotEmpty()) UserDict.seenPair(prev, word, arabic)
         }
         lastWord = word
-        buffer.setLength(0)
+        resetWord()
         undoTyped = null
         undoFixed = null
         feedback()
@@ -574,17 +595,19 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val ic = currentInputConnection
         if (ic != null) releaseComposing(ic)
         transOn = true
-        transComposing = false
+        transOut = ""
+        transLastSent = ""
         transBuf.setLength(0)
         kv?.setTranslate(true)
         kv?.setTransText("", "")
+        // fetch the language pack now rather than on the first letter he types
+        Tr.warm(Store.kbTrSrc, Store.kbTrDst)
     }
 
     override fun onTransClose() {
-        val ic = currentInputConnection
-        if (ic != null && transComposing) ic.finishComposingText()
-        transComposing = false
         transOn = false
+        transOut = ""
+        transLastSent = ""
         transBuf.setLength(0)
         transJob?.let { ui.removeCallbacks(it) }
         transJob = null
@@ -614,42 +637,60 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (code.isNotEmpty()) afterTransEdit()
     }
 
-    /** Redraws the box and queues a translation once the hand settles. */
-    private fun afterTransEdit() {
+    /** Redraws the box and queues a translation; a finished word jumps the queue. */
+    private fun afterTransEdit(now: Boolean) {
         feedback()
         kv?.setTransText(transBuf.toString(), Tr.status)
         transJob?.let { ui.removeCallbacks(it) }
         val job = Runnable { runTranslate() }
         transJob = job
-        // a short wait beats translating on every letter, and it still feels live
-        ui.postDelayed(job, 160)
+        ui.postDelayed(job, if (now) 0L else 260L)
     }
 
     private fun runTranslate() {
-        val text = transBuf.toString()
-        if (text.isBlank()) {
-            val ic = currentInputConnection
-            if (ic != null && transComposing) {
-                ic.setComposingText("", 1)
-                ic.finishComposingText()
-            }
-            transComposing = false
-            kv?.setTransText(text, "")
+        val text = transBuf.toString().trim()
+        if (text.isEmpty()) {
+            replaceOutput("")
+            transLastSent = ""
+            kv?.setTransText(transBuf.toString(), "")
             return
         }
+        // nothing changed since the last request, so there is nothing to ask for
+        if (text == transLastSent) return
+        transLastSent = text
         Tr.translate(text, Store.kbTrSrc, Store.kbTrDst) { out ->
-            kv?.setTransText(transBuf.toString(), Tr.status)
-            if (out != null && transOn) {
-                val ic = currentInputConnection
-                if (ic != null) {
-                    // composing text replaces itself, so each new guess simply lands
-                    // on top of the last one without any deleting
-                    ic.setComposingText(out, 1)
-                    transComposing = true
-                }
+            if (transOn) {
+                kv?.setTransText(transBuf.toString(), Tr.status)
+                if (out != null) replaceOutput(out)
             }
         }
-        kv?.setTransText(text, Tr.status)
+        kv?.setTransText(transBuf.toString(), Tr.status)
+    }
+
+    /**
+     * Swaps what we wrote last time for [out].
+     *
+     * Composing text looked like the tidy way to do this, but apps are free to reset
+     * the composing region whenever they like, and when one did, the next update
+     * landed on top of his own words instead of ours — which is why text kept
+     * disappearing. Reading back what is actually there before deleting it means we
+     * only ever remove our own output.
+     */
+    private fun replaceOutput(out: String) {
+        val ic = currentInputConnection ?: return
+        if (out == transOut) return
+        ic.beginBatchEdit()
+        if (transOut.isNotEmpty()) {
+            val before = try {
+                ic.getTextBeforeCursor(transOut.length, 0)?.toString() ?: ""
+            } catch (_: Throwable) {
+                ""
+            }
+            if (before == transOut) ic.deleteSurroundingText(transOut.length, 0)
+        }
+        if (out.isNotEmpty()) ic.commitText(out, 1)
+        ic.endBatchEdit()
+        transOut = out
     }
 
     override fun onMic() {
@@ -789,14 +830,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ic.endBatchEdit()
         composing = false
         voiceLocked = ""
-        buffer.setLength(0)
+        resetWord()
     }
 
     override fun onFinal() {
         ui.post {
             currentInputConnection?.let { settleVoice(it) }
             voicePartial = 0
-            buffer.setLength(0)
+            resetWord()
             kv?.listening = false
             kv?.level = 0f
         }

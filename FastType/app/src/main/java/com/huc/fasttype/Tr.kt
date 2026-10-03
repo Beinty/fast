@@ -1,6 +1,5 @@
 package com.huc.fasttype
 
-import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import com.google.mlkit.common.model.DownloadConditions
@@ -175,9 +174,22 @@ object Tr {
         seq++
     }
 
-    /** Only here so a caller can warm the engine without waiting on a keystroke. */
-    fun warm(ctx: Context, from: String, to: String) {
-        if (from == AUTO) return
-        translator(from, to)
+    /**
+     * Builds the pair and starts fetching its pack before a single key is pressed,
+     * so the first word he types is not the thing that waits for the download.
+     */
+    fun warm(from: String, to: String) {
+        val f = if (from == AUTO) "en" else from
+        val t = translator(f, to) ?: return
+        try {
+            status = "ينزّل ملف اللغة…"
+            t.downloadModelIfNeeded(DownloadConditions.Builder().build())
+                .addOnSuccessListener { status = "" }
+                .addOnFailureListener { status = "" }
+        } catch (_: Throwable) {
+            status = ""
+        }
+        // the other direction is one tap away, so have it ready too
+        if (from == AUTO) translator("ar", to)
     }
 }

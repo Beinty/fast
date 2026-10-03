@@ -302,9 +302,18 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     fun setTransText(text: String, status: String) {
+        if (text == transText && status == transStatus) return
         transText = text
         transStatus = status
-        invalidate()
+        // repainting forty keys on every letter is what made the box feel heavy
+        if (trBoxRect.width() > 1f) {
+            invalidate(
+                (trBoxRect.left - 2f).toInt(), (trBoxRect.top - 2f).toInt(),
+                (trBoxRect.right + 2f).toInt(), (trBoxRect.bottom + 2f).toInt()
+            )
+        } else {
+            invalidate()
+        }
     }
 
     fun openLangs(dst: Boolean) {
@@ -1697,7 +1706,37 @@ class KeyboardView(context: Context) : View(context) {
         return if (bestD <= reach * reach) best else null
     }
 
+    /**
+     * The letters whose keys the finger was nearly on, for the tap just made.
+     *
+     * The keyboard is the only thing that knows a tap landed two pixels inside 'س'
+     * with 'ش' right beside it. Handing that to the corrector turns a blind guess
+     * over every letter in the alphabet into a short list of what he plausibly meant.
+     */
+    var lastNear: String = ""
+        private set
+
+    private fun neighbours(k: Key): String {
+        if (k.code != Code.CHAR || k.out.length != 1) return ""
+        val cx = k.x + k.w / 2f
+        val cy = k.y + k.h / 2f
+        val reach = (k.w * 1.35f) * (k.w * 1.35f)
+        val sb = StringBuilder(4)
+        for (row in rows) for (o in row) {
+            if (o.spacer || o === k) continue
+            if (o.code != Code.CHAR || o.out.length != 1) continue
+            val dx = (o.x + o.w / 2f) - cx
+            val dy = (o.y + o.h / 2f) - cy
+            // only the row above, below and either side — not the whole board
+            if (Math.abs(dy) > k.h * 1.2f) continue
+            if (dx * dx + dy * dy <= reach) sb.append(o.out)
+            if (sb.length >= 5) break
+        }
+        return sb.toString()
+    }
+
     private fun fire(k: Key) {
+        lastNear = if (k.code == Code.CHAR) neighbours(k) else ""
         when (k.code) {
             Code.DEL -> listener?.onDelete()
             Code.ENTER -> listener?.onEnter()

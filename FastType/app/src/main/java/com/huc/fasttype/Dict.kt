@@ -176,6 +176,58 @@ object Dict {
      * known, too short, or nothing close enough exists. Deliberately conservative — a
      * correction that fires on a word the writer meant is worse than no correction.
      */
+    /**
+     * Correction that knows what the finger was near.
+     *
+     * [nears] holds, for each typed letter, the letters whose keys sat beside it. A
+     * mistyped word is almost always a neighbour slip, so trying those first finds
+     * the right word more often than substituting the whole alphabet does — and it
+     * is a few dozen lookups instead of a thousand.
+     */
+    fun correctNear(word: String, nears: List<String>, arabic: Boolean): String? {
+        val l = lang(arabic) ?: return null
+        if (word.length < 2 || word.length > 18) return null
+        val w = fold(word, arabic)
+        if (l.byFolded.containsKey(w)) return null
+        if (nears.size < word.length) return null
+
+        var bestIdx = -1
+        var bestRank = 14000
+
+        fun offer(cand: String) {
+            val i = l.byFolded[cand] ?: return
+            if (l.rank[i] < bestRank) { bestRank = l.rank[i]; bestIdx = i }
+        }
+
+        // one neighbour slip
+        for (i in w.indices) {
+            val near = nears.getOrNull(i) ?: continue
+            for (c in near) {
+                val f = fold(c.toString(), arabic)
+                if (f.isEmpty() || f[0] == w[i]) continue
+                offer(w.substring(0, i) + f[0] + w.substring(i + 1))
+            }
+        }
+        // a doubled or dropped letter, and two letters the wrong way round
+        for (i in w.indices) offer(w.substring(0, i) + w.substring(i + 1))
+        for (i in 0 until w.length - 1) {
+            offer(w.substring(0, i) + w[i + 1] + w[i] + w.substring(i + 2))
+        }
+        // a neighbour pressed as well as the right key
+        for (i in w.indices) {
+            val near = nears.getOrNull(i) ?: continue
+            for (c in near) {
+                val f = fold(c.toString(), arabic)
+                if (f.isEmpty()) continue
+                offer(w.substring(0, i) + f[0] + w.substring(i))
+            }
+        }
+
+        if (bestIdx < 0) return null
+        val b = l.shown[bestIdx]
+        return if (b == word) null else b
+    }
+
     fun correct(word: String, arabic: Boolean): String? {
         val l = lang(arabic) ?: return null
         if (word.length < 3 || word.length > 18) return null
