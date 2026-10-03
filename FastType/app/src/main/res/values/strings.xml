@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">كتابة سريعة</string>
+    <string name="kb_name">كيبورد HUC</string>
+    <string name="kb_ar">العربية</string>
+    <string name="kb_en">English</string>
     <string name="svc_desc">يراقب ما تكتبه ويبدّل الاختصارات المحفوظة بالكلمات الكاملة تلقائياً داخل أي تطبيق. لا يتم إرسال أي شيء خارج الجهاز.</string>
 </resources>
