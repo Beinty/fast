@@ -896,6 +896,12 @@ class MainActivity : Activity() {
             override fun onClipClose() {}
             override fun onDeleteWord() {}
             override fun onRepeatState(active: Boolean) {}
+            // the preview shows the strip; none of its tools do anything here
+            override fun onTool(which: Int) {}
+            override fun onTransClose() {}
+            override fun onTransSwap() {}
+            override fun onTransLang(dst: Boolean) {}
+            override fun onLangPick(code: String) {}
         }
         pv.arabic = Store.kbArabicFirst
         pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"
