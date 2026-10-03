@@ -41,6 +41,9 @@ object Store {
     private const val K_KB_AR = "kb_ar_first"
     private const val K_KB_EXP = "kb_expand"
     private const val K_KB_EXP_INST = "kb_expand_instant"
+    private const val K_KB_OUTER = "kb_outer_h"
+    private const val K_KB_BOTTOM = "kb_bottom_pad"
+    private const val K_KB_FAST = "kb_fast"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -119,6 +122,18 @@ object Store {
     @Volatile var kbExpandInstant: Boolean = false
         private set
 
+    /** Height of the globe/mic strip under the panel. */
+    @Volatile var kbOuterH: Int = 40
+        private set
+
+    /** Clear space under everything, so the strip never touches the system bar. */
+    @Volatile var kbBottomPad: Int = 10
+        private set
+
+    /** Commit the character on finger-down instead of finger-up. */
+    @Volatile var kbFast: Boolean = true
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -150,6 +165,9 @@ object Store {
         kbArabicFirst = p.getBoolean(K_KB_AR, true)
         kbExpand = p.getBoolean(K_KB_EXP, true)
         kbExpandInstant = p.getBoolean(K_KB_EXP_INST, false)
+        kbOuterH = p.getInt(K_KB_OUTER, 40).coerceIn(0, 60)
+        kbBottomPad = p.getInt(K_KB_BOTTOM, 10).coerceIn(0, 48)
+        kbFast = p.getBoolean(K_KB_FAST, true)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -222,6 +240,8 @@ object Store {
             "gap" -> { kbGap = v.coerceIn(2, 10); prefs(ctx).edit().putInt(K_KB_GAP, kbGap).apply() }
             "rad" -> { kbRadius = v.coerceIn(2, 18); prefs(ctx).edit().putInt(K_KB_RAD, kbRadius).apply() }
             "prad" -> { kbPanelRadius = v.coerceIn(0, 34); prefs(ctx).edit().putInt(K_KB_PRAD, kbPanelRadius).apply() }
+            "outer" -> { kbOuterH = v.coerceIn(0, 60); prefs(ctx).edit().putInt(K_KB_OUTER, kbOuterH).apply() }
+            "bottom" -> { kbBottomPad = v.coerceIn(0, 48); prefs(ctx).edit().putInt(K_KB_BOTTOM, kbBottomPad).apply() }
         }
     }
     fun setKbFlag(ctx: Context, which: String, v: Boolean) {
@@ -234,6 +254,7 @@ object Store {
             "arfirst" -> { kbArabicFirst = v; e.putBoolean(K_KB_AR, v) }
             "expand" -> { kbExpand = v; e.putBoolean(K_KB_EXP, v) }
             "inst" -> { kbExpandInstant = v; e.putBoolean(K_KB_EXP_INST, v) }
+            "fast" -> { kbFast = v; e.putBoolean(K_KB_FAST, v) }
         }
         e.apply()
     }

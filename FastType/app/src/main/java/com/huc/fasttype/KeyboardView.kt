@@ -52,7 +52,9 @@ class KeyboardView(context: Context) : View(context) {
     private val panelPadTop get() = dp(7f)
     private val panelPadBottom get() = dp(8f)
     private val suggH get() = dp(30f)
-    private val outerH get() = dp(40f)
+    private var outerH = dp(40f)
+    private var bottomPad = dp(10f)
+    private var fastKeys = true
     private val catH get() = dp(30f)
 
     private var rows: List<List<Key>> = emptyList()
@@ -80,6 +82,7 @@ class KeyboardView(context: Context) : View(context) {
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+    private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val rf = RectF()
     private val path = Path()
 
@@ -106,6 +109,9 @@ class KeyboardView(context: Context) : View(context) {
         theme = Themes.byId(Store.kbTheme)
         numRow = Store.kbNumberRow
         showSugg = Store.kbSuggBar
+        outerH = dp(Store.kbOuterH.toFloat())
+        bottomPad = dp(Store.kbBottomPad.toFloat())
+        fastKeys = Store.kbFast
         requestLayout()
         invalidate()
     }
@@ -136,7 +142,7 @@ class KeyboardView(context: Context) : View(context) {
             h += gap
         }
         h += rowCount() * keyH + max(0, rowCount() - 1) * gap
-        h += outerH
+        h += outerH + bottomPad
         return h
     }
 
@@ -200,7 +206,7 @@ class KeyboardView(context: Context) : View(context) {
 
         // panel
         val pTop = zonePad
-        val pBottom = h - outerH - zonePad
+        val pBottom = h - outerH - bottomPad - zonePad
         rf.set(zonePad, pTop, w - zonePad, pBottom)
         bgPaint.color = theme.panel
         canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
@@ -225,7 +231,7 @@ class KeyboardView(context: Context) : View(context) {
 
         for (row in rows) for (k in row) drawKey(canvas, k)
 
-        drawOuterRow(canvas, w, h)
+        if (outerH > 0f) drawOuterRow(canvas, w, h)
     }
 
     private fun drawEmoji(canvas: Canvas) {
@@ -317,9 +323,8 @@ class KeyboardView(context: Context) : View(context) {
                 path.lineTo(cx + s * 0.45f, cy)
                 path.lineTo(cx + s, cy)
                 path.close()
-                val fill = Paint(icoPaint)
-                fill.style = Paint.Style.FILL
-                canvas.drawPath(path, fill)
+                fillPaint.color = icoPaint.color
+                canvas.drawPath(path, fillPaint)
                 if (icon == Ico.CAPS) {
                     canvas.drawLine(
                         cx - s * 0.45f, cy + s * 1.05f,
@@ -372,7 +377,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun drawOuterRow(canvas: Canvas, w: Float, h: Float) {
         icoPaint.color = theme.outer
         icoPaint.strokeWidth = dp(1.7f)
-        val cy = h - outerH / 2f
+        val cy = h - bottomPad - outerH / 2f
         val s = dp(11f)
 
         // globe
@@ -401,6 +406,7 @@ class KeyboardView(context: Context) : View(context) {
     private var downY = 0f
     private var scrollStart = 0f
     private var scrolling = false
+    private var firedOnDown = false
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -411,6 +417,7 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 downY = y
                 scrolling = false
+                firedOnDown = false
 
                 if (page == Pages.EMOJI && y >= emojiTop && y <= emojiBottom) {
                     scrollStart = emojiScroll
@@ -428,11 +435,12 @@ class KeyboardView(context: Context) : View(context) {
 
                 val k = find(x, y) ?: return true
                 pressed = k
-                invalidate()
+                invalidateKey(k)
                 if (k.code == Code.DEL) {
                     repeating = true
                     handler.postDelayed(repeatRunnable, 380)
                 }
+                if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
                 return true
             }
 
@@ -449,6 +457,14 @@ class KeyboardView(context: Context) : View(context) {
 
             MotionEvent.ACTION_UP -> {
                 stopRepeat()
+
+                if (firedOnDown) {
+                    val fk = pressed
+                    pressed = null
+                    firedOnDown = false
+                    invalidateKey(fk)
+                    return true
+                }
 
                 if (page == Pages.EMOJI && !scrolling && y >= emojiTop && y <= emojiBottom) {
                     val col = ((x - zonePad - panelPadX) / emojiCell).toInt()
@@ -474,16 +490,26 @@ class KeyboardView(context: Context) : View(context) {
 
                 val k = pressed
                 pressed = null
-                invalidate()
-                if (k != null && k.hit(x, y)) fire(k)
+                invalidateKey(k)
+                if (!firedOnDown && k != null && k.hit(x, y)) fire(k)
+                firedOnDown = false
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                stopRepeat(); pressed = null; invalidate(); return true
+                stopRepeat(); val k = pressed; pressed = null
+                firedOnDown = false; invalidateKey(k); return true
             }
         }
         return super.onTouchEvent(e)
+    }
+
+    private fun invalidateKey(k: Key?) {
+        if (k == null) { invalidate(); return }
+        invalidate(
+            (k.x - 2f).toInt(), (k.y - 2f).toInt(),
+            (k.x + k.w + 2f).toInt(), (k.y + k.h + 2f).toInt()
+        )
     }
 
     private fun stopRepeat() {

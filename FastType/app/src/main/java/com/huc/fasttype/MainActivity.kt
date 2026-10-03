@@ -62,7 +62,8 @@ class MainActivity : Activity() {
     private lateinit var panelShortcuts: LinearLayout
     private lateinit var panelCaller: ScrollView
     private lateinit var tabKb: TextView
-    private lateinit var panelKb: ScrollView
+    private lateinit var panelKb: LinearLayout
+    private var kbPreview: KeyboardView? = null
 
     private lateinit var permBanner: TextView
     private lateinit var repeatValue: TextView
@@ -613,7 +614,11 @@ class MainActivity : Activity() {
 
     private lateinit var kbBanner: TextView
 
-    private fun buildKbPanel(): ScrollView {
+    private fun buildKbPanel(): LinearLayout {
+        val wrap = LinearLayout(this)
+        wrap.orientation = LinearLayout.VERTICAL
+        wrap.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
         val sv = ScrollView(this)
         sv.layoutDirection = View.LAYOUT_DIRECTION_RTL
 
@@ -670,6 +675,7 @@ class MainActivity : Activity() {
             b.setOnClickListener {
                 Store.setKbTheme(this, t.id)
                 refreshThemeButtons(grid)
+                syncPreview()
                 toast("تم اختيار: ${t.name}")
             }
             b.tag = t.id
@@ -680,39 +686,48 @@ class MainActivity : Activity() {
         p.addView(grid, lp(true, bottom = dp(14)))
 
         p.addView(sliderRow("ارتفاع الزر", Store.kbKeyHeight, 34, 58) {
-            Store.setKbInt(this, "h", it)
+            Store.setKbInt(this, "h", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("المسافة بين الأزرار", Store.kbGap, 2, 10) {
-            Store.setKbInt(this, "gap", it)
+            Store.setKbInt(this, "gap", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("دوران زوايا الأزرار", Store.kbRadius, 2, 18) {
-            Store.setKbInt(this, "rad", it)
+            Store.setKbInt(this, "rad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("دوران اللوحة", Store.kbPanelRadius, 0, 34) {
-            Store.setKbInt(this, "prad", it)
+            Store.setKbInt(this, "prad", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
+            Store.setKbInt(this, "outer", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("المسافة من أسفل الشاشة", Store.kbBottomPad, 0, 48) {
+            Store.setKbInt(this, "bottom", it); syncPreview()
         }, lp(true, bottom = dp(14)))
 
         p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
-            Store.setKbFlag(this, "num", it)
+            Store.setKbFlag(this, "num", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("شريط الاقتراحات", "يعرض الاختصار قبل التبديل", Store.kbSuggBar) {
-            Store.setKbFlag(this, "sugg", it)
+            Store.setKbFlag(this, "sugg", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("يبدي بالعربي", "لغة الكيبورد عند الفتح", Store.kbArabicFirst) {
-            Store.setKbFlag(this, "arfirst", it)
+            Store.setKbFlag(this, "arfirst", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("صوت الضغط", null, Store.kbSound) {
-            Store.setKbFlag(this, "sound", it)
+            Store.setKbFlag(this, "sound", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("اهتزاز الضغط", null, Store.kbVibrate) {
-            Store.setKbFlag(this, "vib", it)
+            Store.setKbFlag(this, "vib", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("لمسة فورية", "الحرف ينكتب لحظة اللمس مو عند الرفع", Store.kbFast) {
+            Store.setKbFlag(this, "fast", it); syncPreview()
         }, lp(true, bottom = dp(14)))
 
         p.addView(switchRow("الاختصارات داخل الكيبورد", "بدون خدمة إمكانية الوصول", Store.kbExpand) {
-            Store.setKbFlag(this, "expand", it)
+            Store.setKbFlag(this, "expand", it); syncPreview()
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow("تبديل فوري", "مطفي = يتبدل بعد المسافة", Store.kbExpandInstant) {
-            Store.setKbFlag(this, "inst", it)
+            Store.setKbFlag(this, "inst", it); syncPreview()
         }, lp(true, bottom = dp(16)))
 
         val note = TextView(this)
@@ -725,7 +740,46 @@ class MainActivity : Activity() {
         p.addView(note, lp(true))
 
         sv.addView(p)
-        return sv
+        wrap.addView(sv, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        val pvLabel = TextView(this)
+        pvLabel.text = "معاينة حية — نفس الكيبورد الحقيقي"
+        pvLabel.setTextColor(MUT)
+        pvLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        pvLabel.setPadding(dp(4), dp(8), dp(4), dp(6))
+        wrap.addView(pvLabel, lp(true))
+
+        val pv = KeyboardView(this)
+        pv.listener = object : KeyboardView.Listener {
+            override fun onChar(s: String) {}
+            override fun onDelete() {}
+            override fun onEnter() {}
+            override fun onShift() {
+                pv.shift = if (pv.shift > 0) 0 else 1
+                pv.rebuild()
+            }
+            override fun onLang() { pv.arabic = !pv.arabic; pv.rebuild() }
+            override fun onPage(page: Int) { pv.page = page; pv.rebuild() }
+            override fun onSuggestionTap() {}
+        }
+        pv.arabic = Store.kbArabicFirst
+        pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"
+        pv.applySettings()
+        pv.rebuild()
+        kbPreview = pv
+        wrap.addView(pv, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        return wrap
+    }
+
+    /** Re-reads the saved settings into the preview so every change shows at once. */
+    private fun syncPreview() {
+        val pv = kbPreview ?: return
+        Store.load(this)
+        pv.applySettings()
+        pv.rebuild()
     }
 
     private fun refreshThemeButtons(grid: LinearLayout) {
