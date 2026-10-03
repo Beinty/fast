@@ -381,6 +381,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshPermBanner() {
+        if (!::permBanner.isInitialized) return
         val ok = permsOk()
         if (ok) {
             permBanner.text = "الأذونات ممنوحة"
@@ -439,11 +440,15 @@ class MainActivity : Activity() {
     }
 
     private fun isServiceOn(): Boolean {
-        val id = "$packageName/${ExpanderService::class.java.name}"
-        val enabled = Settings.Secure.getString(
-            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-        ) ?: return false
-        return enabled.split(':').any { it.equals(id, ignoreCase = true) }
+        return try {
+            val id = "$packageName/${ExpanderService::class.java.name}"
+            val enabled = Settings.Secure.getString(
+                contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: return false
+            enabled.split(':').any { it.equals(id, ignoreCase = true) }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun openAccessibilitySettings() {
@@ -736,6 +741,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshKbBanner() {
+        if (!::kbBanner.isInitialized) return
         val on = isKbEnabled()
         val def = isKbDefault()
         when {
@@ -745,17 +751,25 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Uses the documented InputMethodManager API; some OEM builds refuse the raw Secure read. */
     private fun isKbEnabled(): Boolean {
-        val id = "$packageName/.HucKeyboard"
-        val list = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
-            ?: return false
-        return list.split(':').any { it.startsWith(packageName) }
+        return try {
+            val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.enabledInputMethodList.any { it.packageName == packageName }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun isKbDefault(): Boolean {
-        val cur = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-            ?: return false
-        return cur.startsWith(packageName)
+        return try {
+            val cur = Settings.Secure.getString(
+                contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD
+            )
+            cur != null && cur.startsWith(packageName)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun openKbSettings() {
