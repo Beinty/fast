@@ -29,6 +29,19 @@ object Store {
     private const val K_RATE = "caller_rate"
     private const val K_PITCH = "caller_pitch"
 
+    private const val K_KB_THEME = "kb_theme"
+    private const val K_KB_H = "kb_h"
+    private const val K_KB_GAP = "kb_gap"
+    private const val K_KB_RAD = "kb_rad"
+    private const val K_KB_PRAD = "kb_prad"
+    private const val K_KB_NUM = "kb_num"
+    private const val K_KB_SUGG = "kb_sugg"
+    private const val K_KB_SOUND = "kb_sound"
+    private const val K_KB_VIB = "kb_vib"
+    private const val K_KB_AR = "kb_ar_first"
+    private const val K_KB_EXP = "kb_expand"
+    private const val K_KB_EXP_INST = "kb_expand_instant"
+
     @Volatile
     var items: List<Shortcut> = emptyList()
         private set
@@ -81,6 +94,19 @@ object Store {
     var callerPitch: Float = 1.0f
         private set
 
+    @Volatile var kbTheme: String = "black"; private set
+    @Volatile var kbKeyHeight: Int = 44; private set
+    @Volatile var kbGap: Int = 5; private set
+    @Volatile var kbRadius: Int = 9; private set
+    @Volatile var kbPanelRadius: Int = 24; private set
+    @Volatile var kbNumberRow: Boolean = false; private set
+    @Volatile var kbSuggBar: Boolean = true; private set
+    @Volatile var kbSound: Boolean = true; private set
+    @Volatile var kbVibrate: Boolean = true; private set
+    @Volatile var kbArabicFirst: Boolean = true; private set
+    @Volatile var kbExpand: Boolean = true; private set
+    @Volatile var kbExpandInstant: Boolean = false; private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -99,6 +125,19 @@ object Store {
         callerVoice = p.getString(K_VOICE, "") ?: ""
         callerRate = p.getFloat(K_RATE, 1.0f)
         callerPitch = p.getFloat(K_PITCH, 1.0f)
+
+        kbTheme = p.getString(K_KB_THEME, "black") ?: "black"
+        kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
+        kbGap = p.getInt(K_KB_GAP, 5).coerceIn(2, 10)
+        kbRadius = p.getInt(K_KB_RAD, 9).coerceIn(2, 18)
+        kbPanelRadius = p.getInt(K_KB_PRAD, 24).coerceIn(0, 34)
+        kbNumberRow = p.getBoolean(K_KB_NUM, false)
+        kbSuggBar = p.getBoolean(K_KB_SUGG, true)
+        kbSound = p.getBoolean(K_KB_SOUND, true)
+        kbVibrate = p.getBoolean(K_KB_VIB, true)
+        kbArabicFirst = p.getBoolean(K_KB_AR, true)
+        kbExpand = p.getBoolean(K_KB_EXP, true)
+        kbExpandInstant = p.getBoolean(K_KB_EXP_INST, false)
     }
 
     private fun setItems(list: List<Shortcut>) {
@@ -160,6 +199,31 @@ object Store {
     fun setCallerPitch(ctx: Context, v: Float) {
         callerPitch = v.coerceIn(0.5f, 2.0f)
         prefs(ctx).edit().putFloat(K_PITCH, callerPitch).apply()
+    }
+
+    fun setKbTheme(ctx: Context, v: String) {
+        kbTheme = v; prefs(ctx).edit().putString(K_KB_THEME, v).apply()
+    }
+    fun setKbInt(ctx: Context, which: String, v: Int) {
+        when (which) {
+            "h" -> { kbKeyHeight = v.coerceIn(34, 58); prefs(ctx).edit().putInt(K_KB_H, kbKeyHeight).apply() }
+            "gap" -> { kbGap = v.coerceIn(2, 10); prefs(ctx).edit().putInt(K_KB_GAP, kbGap).apply() }
+            "rad" -> { kbRadius = v.coerceIn(2, 18); prefs(ctx).edit().putInt(K_KB_RAD, kbRadius).apply() }
+            "prad" -> { kbPanelRadius = v.coerceIn(0, 34); prefs(ctx).edit().putInt(K_KB_PRAD, kbPanelRadius).apply() }
+        }
+    }
+    fun setKbFlag(ctx: Context, which: String, v: Boolean) {
+        val e = prefs(ctx).edit()
+        when (which) {
+            "num" -> { kbNumberRow = v; e.putBoolean(K_KB_NUM, v) }
+            "sugg" -> { kbSuggBar = v; e.putBoolean(K_KB_SUGG, v) }
+            "sound" -> { kbSound = v; e.putBoolean(K_KB_SOUND, v) }
+            "vib" -> { kbVibrate = v; e.putBoolean(K_KB_VIB, v) }
+            "arfirst" -> { kbArabicFirst = v; e.putBoolean(K_KB_AR, v) }
+            "expand" -> { kbExpand = v; e.putBoolean(K_KB_EXP, v) }
+            "inst" -> { kbExpandInstant = v; e.putBoolean(K_KB_EXP_INST, v) }
+        }
+        e.apply()
     }
 
     fun setLastEvent(ctx: Context, v: String) {

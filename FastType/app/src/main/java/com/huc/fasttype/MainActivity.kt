@@ -24,6 +24,7 @@ import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.ScrollView
+import android.view.inputmethod.InputMethodManager
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
@@ -60,6 +61,8 @@ class MainActivity : Activity() {
     private lateinit var tabCaller: TextView
     private lateinit var panelShortcuts: LinearLayout
     private lateinit var panelCaller: ScrollView
+    private lateinit var tabKb: TextView
+    private lateinit var panelKb: ScrollView
 
     private lateinit var permBanner: TextView
     private lateinit var repeatValue: TextView
@@ -67,7 +70,7 @@ class MainActivity : Activity() {
     private lateinit var eventView: TextView
 
     private var data: MutableList<Shortcut> = mutableListOf()
-    private var onCallerTab = false
+    private var tab = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,28 +98,34 @@ class MainActivity : Activity() {
 
         val tabs = LinearLayout(this)
         tabs.orientation = LinearLayout.HORIZONTAL
-        tabShortcuts = makeTab("الاختصارات") { showTab(false) }
-        tabCaller = makeTab("نطق المتصل") { showTab(true) }
+        tabShortcuts = makeTab("الاختصارات") { showTab(0) }
+        tabCaller = makeTab("نطق المتصل") { showTab(1) }
+        tabKb = makeTab("الكيبورد") { showTab(2) }
         val tp1 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         tp1.marginEnd = dp(4)
         val tp2 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         tp2.marginStart = dp(4)
+        val tp3 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        tp3.marginStart = dp(4)
         tabs.addView(tabShortcuts, tp1)
         tabs.addView(tabCaller, tp2)
+        tabs.addView(tabKb, tp3)
         root.addView(tabs, lp(true, bottom = dp(14)))
 
         val content = FrameLayout(this)
         panelShortcuts = buildShortcutsPanel()
         panelCaller = buildCallerPanel()
+        panelKb = buildKbPanel()
         content.addView(panelShortcuts)
         content.addView(panelCaller)
+        content.addView(panelKb)
         root.addView(
             content,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
         )
 
         setContentView(root)
-        showTab(false)
+        showTab(0)
         refreshCount()
     }
 
@@ -359,13 +368,16 @@ class MainActivity : Activity() {
         return sv
     }
 
-    private fun showTab(caller: Boolean) {
-        onCallerTab = caller
-        panelShortcuts.visibility = if (caller) View.GONE else View.VISIBLE
-        panelCaller.visibility = if (caller) View.VISIBLE else View.GONE
-        styleTab(tabShortcuts, !caller)
-        styleTab(tabCaller, caller)
-        if (caller) refreshPermBanner()
+    private fun showTab(which: Int) {
+        tab = which
+        panelShortcuts.visibility = if (which == 0) View.VISIBLE else View.GONE
+        panelCaller.visibility = if (which == 1) View.VISIBLE else View.GONE
+        panelKb.visibility = if (which == 2) View.VISIBLE else View.GONE
+        styleTab(tabShortcuts, which == 0)
+        styleTab(tabCaller, which == 1)
+        styleTab(tabKb, which == 2)
+        if (which == 1) refreshPermBanner()
+        if (which == 2) refreshKbBanner()
     }
 
     private fun refreshPermBanner() {
@@ -422,7 +434,8 @@ class MainActivity : Activity() {
         else
             "الخدمة متوقفة — اضغط هنا لتفعيل إمكانية الوصول"
         status.setTextColor(if (on) ACC else RED)
-        if (onCallerTab) refreshPermBanner()
+        if (tab == 1) refreshPermBanner()
+        if (tab == 2) refreshKbBanner()
     }
 
     private fun isServiceOn(): Boolean {
@@ -588,6 +601,208 @@ class MainActivity : Activity() {
 
             return row
         }
+    }
+
+
+    // ---------- tab 3 : keyboard ----------
+
+    private lateinit var kbBanner: TextView
+
+    private fun buildKbPanel(): ScrollView {
+        val sv = ScrollView(this)
+        sv.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        val p = LinearLayout(this)
+        p.orientation = LinearLayout.VERTICAL
+        p.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        kbBanner = TextView(this)
+        kbBanner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        kbBanner.setPadding(dp(12), dp(12), dp(12), dp(12))
+        kbBanner.background = round(CARD)
+        kbBanner.setOnClickListener { openKbSettings() }
+        p.addView(kbBanner, lp(true, bottom = dp(8)))
+
+        val pick = Button(this)
+        pick.text = "اختيار الكيبورد الافتراضي"
+        pick.setTextColor(Color.WHITE)
+        pick.background = round(ACC)
+        pick.setOnClickListener {
+            try {
+                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                imm.showInputMethodPicker()
+            } catch (e: Exception) {
+                toast("ما كدرت أفتح القائمة")
+            }
+        }
+        p.addView(pick, lp(true, bottom = dp(14)))
+
+        val tl = TextView(this)
+        tl.text = "الثيم"
+        tl.setTextColor(MUT)
+        tl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        tl.setPadding(dp(4), 0, dp(4), dp(6))
+        p.addView(tl)
+
+        val grid = LinearLayout(this)
+        grid.orientation = LinearLayout.VERTICAL
+        var rowBox: LinearLayout? = null
+        Themes.all.forEachIndexed { i, t ->
+            if (i % 2 == 0) {
+                rowBox = LinearLayout(this)
+                rowBox!!.orientation = LinearLayout.HORIZONTAL
+                val rp = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+                rp.bottomMargin = dp(6)
+                grid.addView(rowBox, rp)
+            }
+            val b = Button(this)
+            b.text = t.name
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            b.setTextColor(if (Store.kbTheme == t.id) Color.WHITE else TXT)
+            b.background = round(if (Store.kbTheme == t.id) ACC else CARD)
+            b.setOnClickListener {
+                Store.setKbTheme(this, t.id)
+                refreshThemeButtons(grid)
+                toast("تم اختيار: ${t.name}")
+            }
+            b.tag = t.id
+            val bp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            if (i % 2 == 0) bp.marginEnd = dp(3) else bp.marginStart = dp(3)
+            rowBox!!.addView(b, bp)
+        }
+        p.addView(grid, lp(true, bottom = dp(14)))
+
+        p.addView(sliderRow("ارتفاع الزر", Store.kbKeyHeight, 34, 58) {
+            Store.setKbInt(this, "h", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("المسافة بين الأزرار", Store.kbGap, 2, 10) {
+            Store.setKbInt(this, "gap", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دوران زوايا الأزرار", Store.kbRadius, 2, 18) {
+            Store.setKbInt(this, "rad", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دوران اللوحة", Store.kbPanelRadius, 0, 34) {
+            Store.setKbInt(this, "prad", it)
+        }, lp(true, bottom = dp(14)))
+
+        p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
+            Store.setKbFlag(this, "num", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("شريط الاقتراحات", "يعرض الاختصار قبل التبديل", Store.kbSuggBar) {
+            Store.setKbFlag(this, "sugg", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("يبدي بالعربي", "لغة الكيبورد عند الفتح", Store.kbArabicFirst) {
+            Store.setKbFlag(this, "arfirst", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("صوت الضغط", null, Store.kbSound) {
+            Store.setKbFlag(this, "sound", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("اهتزاز الضغط", null, Store.kbVibrate) {
+            Store.setKbFlag(this, "vib", it)
+        }, lp(true, bottom = dp(14)))
+
+        p.addView(switchRow("الاختصارات داخل الكيبورد", "بدون خدمة إمكانية الوصول", Store.kbExpand) {
+            Store.setKbFlag(this, "expand", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("تبديل فوري", "مطفي = يتبدل بعد المسافة", Store.kbExpandInstant) {
+            Store.setKbFlag(this, "inst", it)
+        }, lp(true, bottom = dp(16)))
+
+        val note = TextView(this)
+        note.text = "لما تستخدم كيبورد HUC، الاختصارات تشتغل من داخله مباشرة — " +
+            "وما تحتاج خدمة إمكانية الوصول أبداً. خدمة إمكانية الوصول تبقى " +
+            "للاختصارات مع الكيبوردات الثانية ولنطق المتصل."
+        note.setTextColor(MUT)
+        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        note.setPadding(dp(4), 0, dp(4), dp(16))
+        p.addView(note, lp(true))
+
+        sv.addView(p)
+        return sv
+    }
+
+    private fun refreshThemeButtons(grid: LinearLayout) {
+        for (i in 0 until grid.childCount) {
+            val row = grid.getChildAt(i) as? LinearLayout ?: continue
+            for (j in 0 until row.childCount) {
+                val b = row.getChildAt(j) as? Button ?: continue
+                val on = b.tag == Store.kbTheme
+                b.setTextColor(if (on) Color.WHITE else TXT)
+                b.background = round(if (on) ACC else CARD)
+            }
+        }
+    }
+
+    private fun refreshKbBanner() {
+        val on = isKbEnabled()
+        val def = isKbDefault()
+        when {
+            def -> { kbBanner.text = "كيبورد HUC فعّال ومختار"; kbBanner.setTextColor(ACC) }
+            on -> { kbBanner.text = "مفعّل بالنظام — اضغط لاختياره كيبورد افتراضي"; kbBanner.setTextColor(WARN) }
+            else -> { kbBanner.text = "غير مفعّل — اضغط هنا لتفعيله من إعدادات النظام"; kbBanner.setTextColor(RED) }
+        }
+    }
+
+    private fun isKbEnabled(): Boolean {
+        val id = "$packageName/.HucKeyboard"
+        val list = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_INPUT_METHODS)
+            ?: return false
+        return list.split(':').any { it.startsWith(packageName) }
+    }
+
+    private fun isKbDefault(): Boolean {
+        val cur = Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?: return false
+        return cur.startsWith(packageName)
+    }
+
+    private fun openKbSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+        } catch (e: Exception) {
+            toast("ما كدرت أفتح الإعدادات")
+        }
+    }
+
+    private fun sliderRow(label: String, value: Int, lo: Int, hi: Int, cb: (Int) -> Unit): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.VERTICAL
+        row.background = round(CARD)
+        row.setPadding(dp(12), dp(10), dp(12), dp(6))
+
+        val head = LinearLayout(this)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+
+        val t = TextView(this)
+        t.text = label
+        t.setTextColor(TXT)
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        head.addView(t, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val vv = TextView(this)
+        vv.text = value.toString()
+        vv.setTextColor(MUT)
+        vv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        head.addView(vv)
+        row.addView(head)
+
+        val bar = SeekBar(this)
+        bar.max = hi - lo
+        bar.progress = (value - lo).coerceIn(0, hi - lo)
+        bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, pr: Int, fromUser: Boolean) {
+                vv.text = (lo + pr).toString()
+            }
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {
+                cb(lo + (sb?.progress ?: 0))
+            }
+        })
+        row.addView(bar, lp(true))
+        return row
     }
 
     // ---------- small builders ----------
