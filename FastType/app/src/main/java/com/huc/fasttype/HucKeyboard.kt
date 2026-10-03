@@ -22,6 +22,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var voice: Voice? = null
     private var voiceBase = ""
     private var voicePartial = 0
+    /** True while dictated text is still marked unfinished in the editor. */
+    private var composing = false
     /** Word the auto-correction just replaced, so one backspace puts it back. */
     private var undoTyped: String? = null
     private var undoFixed: String? = null
@@ -138,6 +140,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onFinishInput() {
+        if (composing) {
+            composing = false
+            try {
+                currentInputConnection?.finishComposingText()
+            } catch (_: Exception) {
+            }
+        }
         super.onFinishInput()
         buffer.setLength(0)
         pendingShortcut = null
@@ -149,6 +158,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val ic = currentInputConnection ?: return
         undoTyped = null
         undoFixed = null
+        releaseComposing(ic)
 
         val isBreak = s.length == 1 && isWordBreak(s[0])
 
@@ -224,6 +234,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onDelete() {
         val ic = currentInputConnection ?: return
+        releaseComposing(ic)
 
         // one backspace right after an auto-correction puts the typed word back
         val t = undoTyped
@@ -399,19 +410,25 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         showStrip("جاري تشغيل المايك…")
         voiceBase = ""
         voicePartial = 0
+        composing = false
         kv?.listening = true
         vo.start(arabic)
     }
 
-    /** Live text while the sentence is still being spoken; it gets replaced. */
+    /**
+     * Live text while the sentence is still being spoken.
+     *
+     * This goes in as *composing* text, which is the editor's own idea of "not
+     * finished yet": replacing it only ever touches that stretch. The earlier version
+     * typed the words for real and then deleted a counted number of characters before
+     * typing the next guess — and the moment that count did not match what was on
+     * screen, it ate the sentence before it.
+     */
     override fun onPartial(text: String) {
         ui.post {
             val ic = currentInputConnection ?: return@post
-            ic.beginBatchEdit()
-            if (voicePartial > 0) ic.deleteSurroundingText(voicePartial, 0)
-            ic.commitText(text, 1)
-            ic.endBatchEdit()
-            voicePartial = text.length
+            ic.setComposingText(text, 1)
+            composing = text.isNotEmpty()
             showStrip(text)
         }
     }
@@ -420,28 +437,41 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onSegment(text: String) {
         ui.post {
             val ic = currentInputConnection ?: return@post
-            ic.beginBatchEdit()
-            if (voicePartial > 0) ic.deleteSurroundingText(voicePartial, 0)
-            if (text.isNotEmpty()) ic.commitText("$text ", 1)
-            ic.endBatchEdit()
-            voicePartial = 0
-            buffer.setLength(0)
+            if (text.isNotEmpty()) ic.setComposingText(text, 1)
+            composing = composing || text.isNotEmpty()
+            settleVoice(ic)
         }
     }
 
     /** Keeps the live text as written, so the next sentence starts after it. */
     override fun onSegmentEnd() {
-        ui.post {
-            if (voicePartial > 0) {
-                currentInputConnection?.commitText(" ", 1)
-                voicePartial = 0
-                buffer.setLength(0)
-            }
+        ui.post { currentInputConnection?.let { settleVoice(it) } }
+    }
+
+    /** Hands dictated text over to the editor before a key touches it. */
+    private fun releaseComposing(ic: android.view.inputmethod.InputConnection) {
+        if (!composing) return
+        composing = false
+        try {
+            ic.finishComposingText()
+        } catch (_: Exception) {
         }
+    }
+
+    /** Turns the live text into ordinary text and leaves a space after it. */
+    private fun settleVoice(ic: android.view.inputmethod.InputConnection) {
+        if (!composing) return
+        composing = false
+        ic.beginBatchEdit()
+        ic.finishComposingText()
+        ic.commitText(" ", 1)
+        ic.endBatchEdit()
+        buffer.setLength(0)
     }
 
     override fun onFinal() {
         ui.post {
+            currentInputConnection?.let { settleVoice(it) }
             voicePartial = 0
             buffer.setLength(0)
             kv?.listening = false

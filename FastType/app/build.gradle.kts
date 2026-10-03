@@ -11,8 +11,8 @@ android {
         applicationId = "com.huc.fasttype"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "5.1"
+        versionCode = 25
+        versionName = "5.2"
     }
 
     signingConfigs {
