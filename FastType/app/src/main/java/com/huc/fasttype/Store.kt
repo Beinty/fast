@@ -94,18 +94,30 @@ object Store {
     var callerPitch: Float = 1.0f
         private set
 
-    @Volatile var kbTheme: String = "black"; private set
-    @Volatile var kbKeyHeight: Int = 44; private set
-    @Volatile var kbGap: Int = 5; private set
-    @Volatile var kbRadius: Int = 9; private set
-    @Volatile var kbPanelRadius: Int = 24; private set
-    @Volatile var kbNumberRow: Boolean = false; private set
-    @Volatile var kbSuggBar: Boolean = true; private set
-    @Volatile var kbSound: Boolean = true; private set
-    @Volatile var kbVibrate: Boolean = true; private set
-    @Volatile var kbArabicFirst: Boolean = true; private set
-    @Volatile var kbExpand: Boolean = true; private set
-    @Volatile var kbExpandInstant: Boolean = false; private set
+    @Volatile var kbTheme: String = "black"
+        private set
+    @Volatile var kbKeyHeight: Int = 44
+        private set
+    @Volatile var kbGap: Int = 5
+        private set
+    @Volatile var kbRadius: Int = 9
+        private set
+    @Volatile var kbPanelRadius: Int = 24
+        private set
+    @Volatile var kbNumberRow: Boolean = false
+        private set
+    @Volatile var kbSuggBar: Boolean = true
+        private set
+    @Volatile var kbSound: Boolean = true
+        private set
+    @Volatile var kbVibrate: Boolean = true
+        private set
+    @Volatile var kbArabicFirst: Boolean = true
+        private set
+    @Volatile var kbExpand: Boolean = true
+        private set
+    @Volatile var kbExpandInstant: Boolean = false
+        private set
 
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)

@@ -151,7 +151,7 @@ object KbLayout {
                 val row1 = ArrayList<Key>(10)
                 for (i in show.indices) row1.add(Key(show[i].toString(), west[i].toString()))
                 r.add(row1)
-                r.add(chars("@#$_&-+()/", false))
+                r.add(chars("@#\$_&-+()/", false))
                 val row3 = ArrayList<Key>()
                 row3.add(Key("=\\<", "", 1.45f, Style.DARK, Code.TO_SYM2, smallText = true))
                 row3.addAll(chars(if (arabic) "*\"':؛!؟" else "*\"':;!?", arabic))
