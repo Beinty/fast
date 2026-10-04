@@ -194,6 +194,18 @@ class KeyboardView(context: Context) : View(context) {
     /** The long-press bubble: its options, where it sits, and which one is picked. */
     private var altKey: Key? = null
     private var altList: List<String> = emptyList()
+
+    /**
+     * What each choice looks like, which is not always what it types.
+     *
+     * A vowel mark on its own has nothing to sit on and renders as a smudge, so
+     * it is drawn on a dotted circle — the same way every Arabic keyboard and
+     * every grammar book shows one.
+     */
+    private var altShow: List<String> = emptyList()
+    private var altCols = 1
+    private var altRows = 1
+    private var altCellH = 0f
     private var altSel = 0
     private var altArmed = false
     private val altRect = RectF()
@@ -418,6 +430,7 @@ class KeyboardView(context: Context) : View(context) {
         blankOnHold = Store.kbBlankHold
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
+        KbLayout.dotInRow = Store.kbDotKey
         requestLayout()
         invalidate()
     }
@@ -1568,7 +1581,7 @@ class KeyboardView(context: Context) : View(context) {
                     }
                     return true
                 }
-                if (altList.isNotEmpty()) { moveAlts(x); return true }
+                if (altList.isNotEmpty()) { moveAlts(x, y); return true }
                 if (altArmed && (Math.abs(x - downX) > dp(12f) ||
                         Math.abs(y - downY) > dp(12f))
                 ) {
@@ -1762,15 +1775,25 @@ class KeyboardView(context: Context) : View(context) {
         altList = list
         altSel = 0
 
+        altShow = list.map { carrier(it) }
+
+        // sixteen marks will not sit in one row, so anything past eight wraps
+        altCols = if (list.size > 8) (list.size + 1) / 2 else list.size
+        altRows = if (list.size > 8) 2 else 1
+
         txtPaint.typeface = if (k.arabic) arFont else enFont
         txtPaint.textSize = keyH * 0.52f
         var cell = keyH * 0.95f
-        for (a in list) cell = max(cell, txtPaint.measureText(a) + dp(20f))
-        altCellW = cell
-
+        for (a in altShow) cell = max(cell, txtPaint.measureText(a) + dp(14f))
         val padding = dp(4f)
-        val w = cell * list.size + padding * 2f
-        val h = keyH * 1.12f + padding * 2f
+        // a wide grid must still fit the panel, so the cell gives way before the row does
+        val room = width - zonePad * 2f - dp(4f) - padding * 2f
+        if (cell * altCols > room) cell = room / altCols
+        altCellW = cell
+        altCellH = keyH * 1.02f
+
+        val w = cell * altCols + padding * 2f
+        val h = altCellH * altRows + padding * 2f
         // centred over the key, pulled inside when it would run past an edge
         val cx = k.x + k.w / 2f
         var left = cx - w / 2f
@@ -1793,12 +1816,24 @@ class KeyboardView(context: Context) : View(context) {
         invalidate()
     }
 
-    private fun moveAlts(x: Float) {
+    private fun moveAlts(x: Float, y: Float) {
         if (altList.isEmpty()) return
         val padding = dp(4f)
-        val i = ((x - altRect.left - padding) / altCellW).toInt()
-            .coerceIn(0, altList.size - 1)
+        val col = ((x - altRect.left - padding) / altCellW).toInt()
+            .coerceIn(0, altCols - 1)
+        val row = ((y - altRect.top - padding) / altCellH).toInt()
+            .coerceIn(0, altRows - 1)
+        val i = (row * altCols + col).coerceIn(0, altList.size - 1)
         if (i != altSel) { altSel = i; invalidate() }
+    }
+
+    /** A combining mark drawn on its own is a smudge; it gets a circle to sit on. */
+    private fun carrier(a: String): String {
+        if (a.length != 1) return a
+        val c = a[0]
+        val mark = (c in '\u064B'..'\u0652') || c == '\u0670' ||
+            c == '\u0653' || c == '\u0654' || c == '\u0655'
+        return if (mark) "\u25CC" + a else a
     }
 
     /** Lifts the bubble. Returns what should be typed, or null. */
@@ -1807,6 +1842,7 @@ class KeyboardView(context: Context) : View(context) {
         val out = if (commit) altList.getOrNull(altSel) else null
         altKey = null
         altList = emptyList()
+        altShow = emptyList()
         altSel = 0
         invalidate()
         return out
@@ -1828,17 +1864,20 @@ class KeyboardView(context: Context) : View(context) {
         txtPaint.typeface = if (altKey?.arabic == true) arFont else enFont
         txtPaint.textSize = keyH * 0.52f
         val fm = txtPaint.fontMetrics
-        val cy = altRect.centerY()
-        for (i in altList.indices) {
-            val l = altRect.left + padding + altCellW * i
+        for (i in altShow.indices) {
+            val col = i % altCols
+            val row = i / altCols
+            val l = altRect.left + padding + altCellW * col
+            val t = altRect.top + padding + altCellH * row
             if (i == altSel) {
-                rf.set(l, altRect.top + padding, l + altCellW, altRect.bottom - padding)
+                rf.set(l + dp(1f), t + dp(1f), l + altCellW - dp(1f), t + altCellH - dp(1f))
                 bgPaint.color = theme.go
                 canvas.drawRoundRect(rf, dp(8f), dp(8f), bgPaint)
             }
             txtPaint.color = if (i == altSel) theme.goIcon else theme.text
             canvas.drawText(
-                altList[i], l + altCellW / 2f, cy - (fm.ascent + fm.descent) / 2f, txtPaint
+                altShow[i], l + altCellW / 2f,
+                t + altCellH / 2f - (fm.ascent + fm.descent) / 2f, txtPaint
             )
         }
     }

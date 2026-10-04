@@ -36,6 +36,7 @@ object Store {
     private const val K_HUSH_N = "hush_saved_notif"
     private const val K_HUSH_S = "hush_saved_system"
     private const val K_CALL_APPS = "caller_apps"
+    private const val K_KB_DOT = "kb_dotkey"
 
     private const val K_KB_THEME = "kb_theme"
     private const val K_KB_H = "kb_h"
@@ -148,6 +149,11 @@ object Store {
     /** What happens to a Latin name that is not in the name table — see Phon.Mode. */
     @Volatile
     var callerLatin: Int = 0
+        private set
+
+    /** The full stop between the space bar and the action key. */
+    @Volatile
+    var kbDotKey: Boolean = true
         private set
 
     /** Silence the notification chime while any app has the microphone open. */
@@ -346,6 +352,7 @@ object Store {
         hushNotif = p.getInt(K_HUSH_N, -1)
         hushSystem = p.getInt(K_HUSH_S, -1)
         callerApps = p.getBoolean(K_CALL_APPS, true)
+        kbDotKey = p.getBoolean(K_KB_DOT, true)
 
         kbTheme = p.getString(K_KB_THEME, "iosCrisp") ?: "iosCrisp"
         kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
@@ -537,6 +544,7 @@ object Store {
             "hair" -> { kbHair = v; e.putBoolean(K_KB_HAIR, v) }
             "micstrip" -> { kbMicStrip = v; e.putBoolean(K_KB_MICSTRIP, v) }
             "globerow" -> { kbGlobeRow = v; e.putBoolean(K_KB_GLOBEROW, v) }
+            "dotkey" -> { kbDotKey = v; e.putBoolean(K_KB_DOT, v) }
             "pressfx" -> { kbPressFx = v; e.putBoolean(K_KB_PRESSFX, v) }
             "predict" -> { kbPredict = v; e.putBoolean(K_KB_PREDICT, v) }
             "correct" -> { kbCorrect = v; e.putBoolean(K_KB_CORRECT, v) }

@@ -148,9 +148,30 @@ object KbLayout {
         "N" to listOf("N", "Ñ")
     )
 
+    /**
+     * What a hold on the full stop offers.
+     *
+     * Arabic vowel marks are nowhere on a phone keyboard and there is no room to
+     * give each of them a key, so they live behind the one key that is always
+     * within reach of the thumb. English gets the punctuation instead — the same
+     * key, the same gesture, whatever he is writing in.
+     */
+    val arMarks: List<String> = listOf(
+        "\u064E", "\u064F", "\u0650", "\u0652",
+        "\u0651", "\u064B", "\u064C", "\u064D",
+        "\u0654", "\u0655", "\u0653", "\u0670",
+        "\u0640", "\u060C", "\u061F", "!"
+    )
+
+    val enMarks: List<String> = listOf(
+        ",", "?", "!", ":", ";", "'", "\"", "-",
+        "_", "(", ")", "/", "@", "#", "&", "\u2026"
+    )
+
     /** The alternates for a key, or null when a long press should do nothing. */
     fun altsFor(k: Key): List<String>? {
         if (k.code != Code.CHAR || k.out.isEmpty()) return null
+        if (k.out == ".") return if (k.arabic) arMarks else enMarks
         return alts[k.out]
     }
 
@@ -179,6 +200,7 @@ object KbLayout {
     const val W_EMOJI = 1.30f
     const val W_GO = 2.85f
     const val W_SPACE = 5.88f
+    const val W_DOT = 1.30f
     const val W_ROW2_PAD = 0.62f
     const val GAP_MOD = 2.05f
 
@@ -186,15 +208,27 @@ object KbLayout {
     @Volatile
     var globeInRow = false
 
+    /** The full stop between the space bar and the action key. */
+    @Volatile
+    var dotInRow = true
+
     private fun del() = Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
     private fun enter() = Key(weight = W_GO, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
     private fun globe() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.LANG, icon = Ico.GLOBE)
     private fun pad() = Key(weight = W_ROW2_PAD, spacer = true)
 
+    private fun dot(ar: Boolean) = Key(label = ".", out = ".", weight = W_DOT, arabic = ar)
+
+    private fun spaceWeight(): Float {
+        var w = W_SPACE
+        if (!globeInRow) w += W_EMOJI
+        if (dotInRow) w -= W_DOT
+        return w
+    }
+
     private fun space(ar: Boolean) =
         Key(label = if (ar) "العربية" else "English", out = " ",
-            weight = if (globeInRow) W_SPACE else W_SPACE + W_EMOJI,
-            code = Code.SPACE, arabic = ar)
+            weight = spaceWeight(), code = Code.SPACE, arabic = ar)
 
     /**
      * The ring the switch key walks: letters, symbols, numbers, faces, back.
@@ -251,6 +285,8 @@ object KbLayout {
         val out = mutableListOf(cycle(ar, page))
         if (globeInRow) out.add(globe())
         out.add(space(ar))
+        // the space bar then sits between two keys of the same width
+        if (dotInRow) out.add(dot(ar))
         out.add(enter())
         return out
     }

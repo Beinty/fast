@@ -882,6 +882,13 @@ class MainActivity : Activity() {
         learnRow.addView(learnArrow)
         learnRow.setOnClickListener { learnBackup() }
         p.addView(learnRow, lp(true, bottom = dp(8)))
+        p.addView(switchRow(
+            "زر النقطة",
+            "بين المسطرة والانتر — وضغطة طويلة عليه تفتح التشكيل وعلامات الترقيم",
+            Store.kbDotKey
+        ) {
+            Store.setKbFlag(this, "dotkey", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون",
             Store.kbHair) {
             Store.setKbFlag(this, "hair", it); syncPreview()

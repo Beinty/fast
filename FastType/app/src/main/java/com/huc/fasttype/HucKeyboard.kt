@@ -415,6 +415,16 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             lastSpaceAt = 0L
         }
 
+        // A vowel mark belongs to the letter in front of it, not to the word the
+        // corrector is watching: leaving it out of the buffer keeps "كَتب" the word
+        // "كتب" as far as spelling is concerned, which is what it is.
+        if (s.length == 1 && isMark(s[0])) {
+            ic.commitText(s, 1)
+            feedback()
+            afterType()
+            return
+        }
+
         val isBreak = s.length == 1 && isWordBreak(s[0])
 
         if (isBreak && Store.kbExpand) {
@@ -1289,6 +1299,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             v.stripChanged()
         }
     }
+
+    /** A combining Arabic vowel mark, which sits on a letter rather than beside it. */
+    private fun isMark(c: Char): Boolean =
+        (c in '\u064B'..'\u0652') || c == '\u0670' || c == '\u0653' ||
+            c == '\u0654' || c == '\u0655'
 
     private fun isWordBreak(c: Char): Boolean =
         c == ' ' || c == '\n' || c == '\t' || c == '.' || c == ',' || c == '!' ||
