@@ -349,6 +349,15 @@ class MainActivity : Activity() {
 
         p.addView(
             switchRow(
+                "نطق مكالمات واتساب والتطبيقات",
+                "واتساب، تلكرام، انستقرام، ماسنجر — يقرا اسم المتصل من الإشعار",
+                Store.callerApps
+            ) { Store.setCallerApps(this, it) },
+            lp(true, bottom = dp(8))
+        )
+
+        p.addView(
+            switchRow(
                 "نطق الرقم إذا مو محفوظ",
                 "يقرا الرقم رقم رقم",
                 Store.callerSayNumber
@@ -483,6 +492,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // whatever happened last time, the sound comes back first
+        Hush.recover(this)
         // he may have just come back from granting it
         refreshHushNote()
         val on = isServiceOn()

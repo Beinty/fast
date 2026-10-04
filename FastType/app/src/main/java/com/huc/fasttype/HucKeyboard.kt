@@ -293,6 +293,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         Store.load(this)
+        // the keyboard opens all day; if a recording left the sound down, this
+        // is the soonest anything of ours can put it back
+        Hush.recover(this)
         resetWord()
         lastWord = ""
         pendingShortcut = null

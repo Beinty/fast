@@ -33,6 +33,9 @@ object Store {
     private const val K_VOICE_AUTO = "caller_voice_auto"
     private const val K_REC_HUSH = "rec_hush"
     private const val K_REC_MIN = "rec_hush_min"
+    private const val K_HUSH_N = "hush_saved_notif"
+    private const val K_HUSH_S = "hush_saved_system"
+    private const val K_CALL_APPS = "caller_apps"
 
     private const val K_KB_THEME = "kb_theme"
     private const val K_KB_H = "kb_h"
@@ -155,6 +158,25 @@ object Store {
     /** How long the silence may last before it is lifted anyway. */
     @Volatile
     var recHushMinutes: Int = 5
+        private set
+
+    /**
+     * The levels to put back after a recording, written down the moment they are
+     * taken. On disk rather than in memory, so a phone whose app was killed
+     * mid-recording still gets its sound back the next time anything of ours runs.
+     * -1 means nothing is owed.
+     */
+    @Volatile
+    var hushNotif: Int = -1
+        private set
+
+    @Volatile
+    var hushSystem: Int = -1
+        private set
+
+    /** Announce calls that come in through WhatsApp and the like. */
+    @Volatile
+    var callerApps: Boolean = true
         private set
 
     /** False until the app has chosen a voice once on his behalf. */
@@ -320,7 +342,10 @@ object Store {
         callerLatin = p.getInt(K_LATIN, 0).coerceIn(0, 2)
         callerVoiceAuto = p.getBoolean(K_VOICE_AUTO, false)
         recHush = p.getBoolean(K_REC_HUSH, false)
-        recHushMinutes = p.getInt(K_REC_MIN, 5).coerceIn(1, 30)
+        recHushMinutes = p.getInt(K_REC_MIN, 2).coerceIn(1, 30)
+        hushNotif = p.getInt(K_HUSH_N, -1)
+        hushSystem = p.getInt(K_HUSH_S, -1)
+        callerApps = p.getBoolean(K_CALL_APPS, true)
 
         kbTheme = p.getString(K_KB_THEME, "iosCrisp") ?: "iosCrisp"
         kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
@@ -426,6 +451,23 @@ object Store {
     fun setCallerLatin(ctx: Context, v: Int) {
         callerLatin = v.coerceIn(0, 2)
         prefs(ctx).edit().putInt(K_LATIN, callerLatin).apply()
+    }
+
+    fun setHushSaved(ctx: Context, notif: Int, system: Int) {
+        hushNotif = notif
+        hushSystem = system
+        prefs(ctx).edit().putInt(K_HUSH_N, notif).putInt(K_HUSH_S, system).apply()
+    }
+
+    fun clearHushSaved(ctx: Context) {
+        hushNotif = -1
+        hushSystem = -1
+        prefs(ctx).edit().putInt(K_HUSH_N, -1).putInt(K_HUSH_S, -1).apply()
+    }
+
+    fun setCallerApps(ctx: Context, v: Boolean) {
+        callerApps = v
+        prefs(ctx).edit().putBoolean(K_CALL_APPS, v).apply()
     }
 
     fun setRecHush(ctx: Context, v: Boolean) {

@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -14,16 +15,15 @@ import android.provider.Settings
  * The chime goes out of the speaker and straight back into the microphone, so
  * the only way to keep it out of the recording is to stop it being played while
  * the microphone is open. Do Not Disturb would do that, but it would also hold
- * back the message itself and silence the phone for calls, which is a heavy
- * price for a few seconds.
+ * back the message and silence the phone for calls — far too much for a few
+ * seconds. So nothing is blocked: two volume levels, notifications and the
+ * system's own sounds, go to zero and come back at the number they were on.
  *
- * So nothing is blocked. Two volume levels — notifications and the system's own
- * sounds — are taken to zero for the length of the recording and put back at the
- * exact number they were on. The notification still arrives and still appears;
- * the ringer and anything playing as media are never touched.
- *
- * Android does not let an app lower those two without Do Not Disturb access, so
- * that is the permission it asks for — and never uses for anything else.
+ * Everything below exists because of one rule: **the sound must come back**.
+ * A missed callback, a killed process, a recording the system forgets to report
+ * the end of — none of them may leave the phone silent. So the levels are
+ * written to disk the moment they are taken, the microphone is polled rather
+ * than trusted, and anything that starts the app puts the sound back first.
  */
 object Hush {
 
@@ -33,13 +33,17 @@ object Hush {
     var quiet = false
         private set
 
-    /** The levels to put back, or -1 when nothing was changed. */
-    private var hadNotif = -1
-    private var hadSystem = -1
-
     /** Set while our own keyboard is listening, so voice typing is left alone. */
     @Volatile
     var ours = false
+
+    /** What to show in the settings screen. */
+    @Volatile
+    var note: String = ""
+        private set
+
+    private const val POLL_MS = 600L
+    private var app: Context? = null
 
     fun allowed(ctx: Context): Boolean = try {
         val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -48,59 +52,107 @@ object Hush {
         false
     }
 
-    /** The system page where the one permission is granted. */
     fun permissionIntent(): Intent =
         Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-    private val release = Runnable { lastCtx?.let { off(it, "انتهت المهلة") } }
-    private var lastCtx: Context? = null
+    // ---- the microphone, asked rather than trusted --------------------------
 
-    /** What to say happened, for the line of status in the settings screen. */
-    @Volatile
-    var note: String = ""
-        private set
+    private val MIC_SOURCES = intArrayOf(0, 1, 5, 6, 7, 9)   // DEFAULT..UNPROCESSED
+
+    private fun micBusy(ctx: Context): Boolean {
+        return try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
+            val list: List<AudioRecordingConfiguration> = am.activeRecordingConfigurations
+            for (c in list) {
+                val s = c.clientAudioSource
+                for (m in MIC_SOURCES) if (m == s) return true
+            }
+            false
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * While the sound is down, the microphone is checked twice a second rather
+     * than waited on. The end of someone else's recording is not always reported,
+     * and a chime that never comes back is worse than one that was never muted.
+     */
+    private val poll = object : Runnable {
+        override fun run() {
+            val ctx = app ?: return
+            if (!quiet) return
+            if (!micBusy(ctx)) { off(ctx, "رجع الصوت"); return }
+            main.postDelayed(this, POLL_MS)
+        }
+    }
+
+    private val giveUp = Runnable {
+        app?.let { off(it, "رجع الصوت — انتهت المهلة") }
+    }
+
+    // ---- taking the sound down and putting it back --------------------------
 
     fun on(ctx: Context) {
-        if (quiet || !Store.recHush) return
+        if (quiet || ours || !Store.recHush) return
         if (!allowed(ctx)) { note = "محتاج الإذن"; return }
         val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        app = ctx.applicationContext
+
+        val n = try { am.getStreamVolume(AudioManager.STREAM_NOTIFICATION) } catch (_: Throwable) { 0 }
+        val s = try { am.getStreamVolume(AudioManager.STREAM_SYSTEM) } catch (_: Throwable) { 0 }
+        // already silent: there is nothing to do, and saving a zero as the level
+        // to come back to is how a phone gets stuck quiet
+        if (n <= 0 && s <= 0) { note = "الجهاز أصلاً ساكت"; return }
+
         try {
-            hadNotif = am.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
-            hadSystem = am.getStreamVolume(AudioManager.STREAM_SYSTEM)
+            Store.setHushSaved(ctx, n, s)
             am.setStreamVolume(AudioManager.STREAM_NOTIFICATION, 0, 0)
             am.setStreamVolume(AudioManager.STREAM_SYSTEM, 0, 0)
-            quiet = true
-            note = "ساكت — التسجيل شغّال"
         } catch (_: SecurityException) {
-            hadNotif = -1
-            hadSystem = -1
+            Store.clearHushSaved(ctx)
             note = "محتاج الإذن"
             return
         } catch (_: Throwable) {
-            hadNotif = -1
-            hadSystem = -1
+            Store.clearHushSaved(ctx)
             return
         }
-        // if the end of the recording is never reported, the phone must not be
-        // left silent without him knowing
-        lastCtx = ctx.applicationContext
-        main.removeCallbacks(release)
-        main.postDelayed(release, Store.recHushMinutes * 60_000L)
+
+        quiet = true
+        note = "ساكت — التسجيل شغّال"
+        main.removeCallbacks(poll)
+        main.removeCallbacks(giveUp)
+        main.postDelayed(poll, POLL_MS)
+        main.postDelayed(giveUp, Store.recHushMinutes * 60_000L)
     }
 
     fun off(ctx: Context, why: String = "رجع الصوت") {
-        main.removeCallbacks(release)
-        if (!quiet) return
-        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        main.removeCallbacks(poll)
+        main.removeCallbacks(giveUp)
+        val n = Store.hushNotif
+        val s = Store.hushSystem
+        quiet = false
+        if (n < 0 && s < 0) return
         try {
-            if (hadNotif >= 0) am?.setStreamVolume(AudioManager.STREAM_NOTIFICATION, hadNotif, 0)
-            if (hadSystem >= 0) am?.setStreamVolume(AudioManager.STREAM_SYSTEM, hadSystem, 0)
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (n >= 0) am?.setStreamVolume(AudioManager.STREAM_NOTIFICATION, n, 0)
+            if (s >= 0) am?.setStreamVolume(AudioManager.STREAM_SYSTEM, s, 0)
         } catch (_: Throwable) {
         }
-        hadNotif = -1
-        hadSystem = -1
-        quiet = false
+        Store.clearHushSaved(ctx)
         note = why
+    }
+
+    /**
+     * Called by everything that starts: the service, the keyboard, the settings
+     * screen. If a level was written down and never put back — the process died
+     * mid-recording, say — this is where the phone gets its sound back.
+     */
+    fun recover(ctx: Context) {
+        if (Store.hushNotif < 0 && Store.hushSystem < 0) return
+        if (quiet && micBusy(ctx)) return
+        off(ctx, "رجع الصوت")
     }
 }

@@ -293,6 +293,77 @@ class ExpanderService : AccessibilityService() {
         return false
     }
 
+    // ================= calls that do not come through the network =============
+
+    /**
+     * A WhatsApp call is not a phone call as far as Android is concerned — no
+     * number, no state change, nothing the telephony side ever hears about. What
+     * it does do is post a notification with a screen attached to it, and that
+     * notification carries the caller's name in its title.
+     *
+     * So the name is read from there. A full-screen notification from a calling
+     * app is an incoming call and almost nothing else is, and the wording is
+     * checked as well for the apps that do not set one.
+     */
+    private val callApps = setOf(
+        "com.whatsapp", "com.whatsapp.w4b",
+        "org.telegram.messenger", "org.telegram.messenger.web", "org.telegram.plus",
+        "com.instagram.android", "com.facebook.orca", "com.facebook.mlite",
+        "com.viber.voip", "com.imo.android.imoim", "com.imo.android.imoimbeta",
+        "com.skype.raider", "com.google.android.apps.tachyon",
+        "com.microsoft.teams", "us.zoom.videomeetings", "com.discord",
+        "com.signal.app", "org.thoughtcrime.securesms", "com.bbm", "jp.naver.line.android"
+    )
+
+    private val callWords = arrayOf(
+        "incoming", "calling", "voice call", "video call", "ringing",
+        "مكالمة", "يتصل", "اتصال", "يرن", "تتصل", "مكالمه"
+    )
+
+    /** Words that mean a missed or ended call, which must not be announced. */
+    private val notCallWords = arrayOf(
+        "missed", "ongoing", "فائتة", "فائته", "لم يرد", "جارية", "منتهية",
+        "declined", "ended"
+    )
+
+    private var lastAppCall = ""
+    private var lastAppCallAt = 0L
+
+    private fun appCall(event: AccessibilityEvent) {
+        if (!Store.callerSpeak || !Store.callerApps) return
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg !in callApps) return
+
+        val n = event.parcelableData as? android.app.Notification ?: return
+        val x = n.extras ?: return
+        val title = x.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString()?.trim()
+            ?: return
+        if (title.isEmpty()) return
+        val body = (x.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: "")
+            .lowercase()
+
+        for (w in notCallWords) if (body.contains(w)) return
+
+        val fullScreen = n.fullScreenIntent != null
+        var worded = false
+        for (w in callWords) if (body.contains(w)) { worded = true; break }
+        if (!fullScreen && !worded) return
+
+        // it reposts the same notification the whole time it rings
+        val now = System.currentTimeMillis()
+        if (title == lastAppCall && now - lastAppCallAt < 25_000L) return
+        lastAppCall = title
+        lastAppCallAt = now
+
+        Speaker.autoPickVoice(this)
+        val prefix = Store.callerPrefix.trim()
+        val parts = ArrayList<Phon.Part>(4)
+        if (prefix.isNotEmpty()) parts.add(Phon.Part(prefix, true))
+        parts.addAll(Phon.parts(title, Store.callerLatin))
+        if (parts.isEmpty()) return
+        speak(parts, "مكالمة تطبيق: $title")
+    }
+
     private fun micChanged(recording: Boolean) {
         if (recording == micOn) return
         micOn = recording
@@ -349,6 +420,8 @@ class ExpanderService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         Store.load(this)
+        // whatever happened last time, the sound comes back first
+        Hush.recover(this)
         startMicWatch()
         Store.prefs(this).registerOnSharedPreferenceChangeListener(prefListener)
 
@@ -402,6 +475,10 @@ class ExpanderService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            try { appCall(event) } catch (_: Throwable) {}
+            return
+        }
         if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
         if (!Store.enabled || Store.ordered.isEmpty()) return
 
