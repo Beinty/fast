@@ -119,6 +119,7 @@ class ExpanderService : AccessibilityService() {
     }
 
     private fun endRing() {
+        endAppCall("انقطع الاتصال")
         ringing = false
         handler.removeCallbacksAndMessages(null)
         Speaker.stop()
@@ -329,6 +330,76 @@ class ExpanderService : AccessibilityService() {
     private var lastAppCall = ""
     private var lastAppCallAt = 0L
 
+    /**
+     * Watching an app call for its end.
+     *
+     * A phone call tells us the moment it stops ringing. A WhatsApp call tells us
+     * nothing — there is no state to listen to and no event when the notification
+     * goes away. What there is, is the audio mode: a calling app puts the device
+     * into a call mode while it rings and takes it out again the moment the call
+     * is answered elsewhere, rejected or hung up. So that is what is watched, and
+     * the announcement is cut the instant it clears.
+     *
+     * The repeats are not queued in advance either, the way they are for a phone
+     * call. Each one is spoken only if the call is still ringing when its turn
+     * comes, and where the phone gives no mode at all the name is simply said
+     * once — better a repeat too few than a name read out to a call that ended.
+     */
+    private var appWatch = false
+    private var appHeardRing = false
+    private var appWatchStart = 0L
+    private var appSaid = 0
+    private var appParts: List<Phon.Part> = emptyList()
+
+    private fun callMode(): Boolean {
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+        return when (am.mode) {
+            AudioManager.MODE_IN_COMMUNICATION,
+            AudioManager.MODE_RINGTONE,
+            AudioManager.MODE_IN_CALL -> true
+            else -> false
+        }
+    }
+
+    private val appPoll = object : Runnable {
+        override fun run() {
+            if (!appWatch) return
+            val now = System.currentTimeMillis()
+            val busy = callMode()
+            if (busy) appHeardRing = true
+
+            if (appHeardRing && !busy) { endAppCall("انقطع الاتصال — وقف النطق"); return }
+            if (now - appWatchStart > 90_000L) { endAppCall("انتهت المراقبة"); return }
+
+            // the next repeat only happens while it is still ringing
+            val due = appWatchStart + appSaid * 2600L
+            if (appSaid < Store.callerRepeat && now >= due) {
+                if (appHeardRing) {
+                    appSaid++
+                    Speaker.announceParts(this@ExpanderService, appParts, 1)
+                } else if (now - appWatchStart > 5000L) {
+                    // this phone never reports a call mode, so there is no way to
+                    // know the call is still there; one announcement it is
+                    appSaid = Store.callerRepeat
+                }
+            }
+            handler.postDelayed(this, 250)
+        }
+    }
+
+    private fun endAppCall(why: String) {
+        if (!appWatch) return
+        appWatch = false
+        appHeardRing = false
+        appParts = emptyList()
+        handler.removeCallbacks(appPoll)
+        Speaker.stop()
+        // a new call from the same person must be free to announce again
+        lastAppCall = ""
+        lastAppCallAt = 0L
+        note(why)
+    }
+
     private fun appCall(event: AccessibilityEvent) {
         if (!Store.callerSpeak || !Store.callerApps) return
         val pkg = event.packageName?.toString() ?: return
@@ -342,7 +413,12 @@ class ExpanderService : AccessibilityService() {
         val body = (x.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() ?: "")
             .lowercase()
 
-        for (w in notCallWords) if (body.contains(w)) return
+        // "missed", "ended", "declined" — the call is over, and if we are still
+        // saying the name that is exactly the moment to stop
+        for (w in notCallWords) if (body.contains(w)) {
+            endAppCall("المكالمة انتهت — وقف النطق")
+            return
+        }
 
         val fullScreen = n.fullScreenIntent != null
         var worded = false
@@ -361,7 +437,23 @@ class ExpanderService : AccessibilityService() {
         if (prefix.isNotEmpty()) parts.add(Phon.Part(prefix, true))
         parts.addAll(Phon.parts(title, Store.callerLatin))
         if (parts.isEmpty()) return
-        speak(parts, "مكالمة تطبيق: $title")
+
+        if (Store.callerRespectSilent && isSilent()) {
+            note("مكالمة تطبيق: $title — لكن الجهاز صامت")
+            return
+        }
+
+        // said once now; any repeat has to earn its turn
+        spokenAt = now
+        note("مكالمة تطبيق: $title")
+        appParts = parts
+        appSaid = 1
+        appHeardRing = false
+        appWatchStart = now
+        appWatch = true
+        handler.removeCallbacks(appPoll)
+        Speaker.announceParts(this, parts, 1)
+        handler.postDelayed(appPoll, 250)
     }
 
     private fun micChanged(recording: Boolean) {
@@ -463,6 +555,7 @@ class ExpanderService : AccessibilityService() {
             }
         }
         telCb = null
+        endAppCall("الخدمة انطفت")
         stopMicWatch()
         handler.removeCallbacksAndMessages(null)
         Speaker.shutdown()
