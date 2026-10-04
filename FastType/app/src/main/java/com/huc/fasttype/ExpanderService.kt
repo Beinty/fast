@@ -108,7 +108,7 @@ class ExpanderService : AccessibilityService() {
                 announceFor(found.number, found.name, "$source+شاشة")
             } else if (delay >= 3600) {
                 note("$source: ما لكيت اسم بالشاشة")
-                speak("مكالمة واردة", "$source: نص عام")
+                speak(listOf(Phon.Part("مكالمة واردة", true)), "$source: نص عام")
             }
         }, delay)
     }
@@ -131,6 +131,9 @@ class ExpanderService : AccessibilityService() {
             return
         }
 
+        // the first announcement is also the first chance to settle on a voice
+        Speaker.autoPickVoice(this)
+
         val prefix = Store.callerPrefix.trim()
         val saved = Speaker.contactName(this, number)
 
@@ -141,20 +144,31 @@ class ExpanderService : AccessibilityService() {
             else -> null
         }
 
-        val text = if (who.isNullOrBlank()) "مكالمة واردة"
-        else if (prefix.isEmpty()) who else "$prefix $who"
+        if (who.isNullOrBlank()) {
+            speak(listOf(Phon.Part("مكالمة واردة", true)), "$source: بدون اسم")
+            return
+        }
 
-        speak(text, "$source: ${if (who.isNullOrBlank()) "بدون اسم" else who}")
+        // A number is already digits with spaces between them; only a name needs
+        // working out how it should sound.
+        val isNumber = saved.isNullOrBlank() && screenName.isNullOrBlank()
+        val parts = ArrayList<Phon.Part>(4)
+        if (prefix.isNotEmpty()) parts.add(Phon.Part(prefix, true))
+        if (isNumber) parts.add(Phon.Part(who, true))
+        else parts.addAll(Phon.parts(who, Store.callerLatin))
+
+        if (parts.isEmpty()) parts.add(Phon.Part("مكالمة واردة", true))
+        speak(parts, "$source: $who → " + parts.joinToString(" ") { it.text })
     }
 
-    private fun speak(text: String, logMsg: String) {
+    private fun speak(parts: List<Phon.Part>, logMsg: String) {
         if (Store.callerRespectSilent && isSilent()) {
             note("$logMsg — لكن الجهاز صامت")
             return
         }
         spokenAt = System.currentTimeMillis()
         note(logMsg)
-        Speaker.announce(this, text, Store.callerRepeat)
+        Speaker.announceParts(this, parts, Store.callerRepeat)
     }
 
     // --------- read the incoming-call screen ---------

@@ -28,6 +28,9 @@ object Store {
     private const val K_VOICE = "caller_voice"
     private const val K_RATE = "caller_rate"
     private const val K_PITCH = "caller_pitch"
+    private const val K_VOICE_EN = "caller_voice_en"
+    private const val K_LATIN = "caller_latin"
+    private const val K_VOICE_AUTO = "caller_voice_auto"
 
     private const val K_KB_THEME = "kb_theme"
     private const val K_KB_H = "kb_h"
@@ -130,6 +133,21 @@ object Store {
 
     @Volatile
     var callerPitch: Float = 1.0f
+        private set
+
+    /** The voice that reads Latin-letter names, when the engine has one. */
+    @Volatile
+    var callerVoiceEn: String = ""
+        private set
+
+    /** What happens to a Latin name that is not in the name table — see Phon.Mode. */
+    @Volatile
+    var callerLatin: Int = 0
+        private set
+
+    /** False until the app has chosen a voice once on his behalf. */
+    @Volatile
+    var callerVoiceAuto: Boolean = false
         private set
 
     @Volatile var kbTheme: String = "iosCrisp"
@@ -286,6 +304,9 @@ object Store {
         callerVoice = p.getString(K_VOICE, "") ?: ""
         callerRate = p.getFloat(K_RATE, 1.0f)
         callerPitch = p.getFloat(K_PITCH, 1.0f)
+        callerVoiceEn = p.getString(K_VOICE_EN, "") ?: ""
+        callerLatin = p.getInt(K_LATIN, 0).coerceIn(0, 2)
+        callerVoiceAuto = p.getBoolean(K_VOICE_AUTO, false)
 
         kbTheme = p.getString(K_KB_THEME, "iosCrisp") ?: "iosCrisp"
         kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
@@ -381,6 +402,21 @@ object Store {
     fun setCallerVoice(ctx: Context, v: String) {
         callerVoice = v
         prefs(ctx).edit().putString(K_VOICE, v).apply()
+    }
+
+    fun setCallerVoiceEn(ctx: Context, v: String) {
+        callerVoiceEn = v
+        prefs(ctx).edit().putString(K_VOICE_EN, v).apply()
+    }
+
+    fun setCallerLatin(ctx: Context, v: Int) {
+        callerLatin = v.coerceIn(0, 2)
+        prefs(ctx).edit().putInt(K_LATIN, callerLatin).apply()
+    }
+
+    fun setCallerVoiceAuto(ctx: Context, v: Boolean) {
+        callerVoiceAuto = v
+        prefs(ctx).edit().putBoolean(K_VOICE_AUTO, v).apply()
     }
 
     fun setCallerRate(ctx: Context, v: Float) {

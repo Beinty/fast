@@ -84,6 +84,7 @@ class MainActivity : Activity() {
         Store.load(this)
         UserDict.load(this)
         data = Store.items.toMutableList()
+        if (Store.callerSpeak) Speaker.autoPickVoice(this)
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
@@ -325,6 +326,27 @@ class MainActivity : Activity() {
             lp(true, bottom = dp(8))
         )
 
+        val latinRow = LinearLayout(this)
+        latinRow.orientation = LinearLayout.HORIZONTAL
+        latinRow.gravity = Gravity.CENTER_VERTICAL
+        latinRow.background = round(CARD)
+        latinRow.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val latinLabel = TextView(this)
+        latinLabel.text = "لفظ الأسماء الأجنبية"
+        latinLabel.setTextColor(TXT)
+        latinLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        latinRow.addView(
+            latinLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val latinValue = TextView(this)
+        latinValue.setTextColor(ACC)
+        latinValue.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        latinValue.text = latinModeName()
+        latinRow.addView(latinValue)
+        latinRow.setOnClickListener { pickLatinMode(latinValue) }
+        p.addView(latinRow, lp(true, bottom = dp(8)))
+
         p.addView(
             switchRow(
                 "نطق الرقم إذا مو محفوظ",
@@ -348,9 +370,7 @@ class MainActivity : Activity() {
         test.setTextColor(Color.WHITE)
         test.background = round(ACC)
         test.setOnClickListener {
-            val prefix = Store.callerPrefix.trim()
-            val sample = if (prefix.isEmpty()) "أحمد" else "$prefix أحمد"
-            Speaker.test(this, sample) { msg ->
+            Speaker.test(this, sampleParts()) { msg ->
                 runOnUiThread {
                     Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                 }
@@ -1070,10 +1090,45 @@ class MainActivity : Activity() {
 
     // ---------- small builders ----------
 
-    private fun previewVoice() {
+    /** A sample with both an Arabic name and a Latin one, so he hears both voices. */
+    private fun sampleParts(): List<Phon.Part> {
         val prefix = Store.callerPrefix.trim()
-        val sample = if (prefix.isEmpty()) "أحمد" else "$prefix أحمد"
-        Speaker.preview(this, sample)
+        val out = ArrayList<Phon.Part>(4)
+        if (prefix.isNotEmpty()) out.add(Phon.Part(prefix, true))
+        out.addAll(Phon.parts("hamza", Store.callerLatin))
+        return out
+    }
+
+    private fun previewVoice() {
+        Speaker.preview(this, sampleParts())
+    }
+
+    private fun latinModeName(): String = when (Store.callerLatin) {
+        Phon.Mode.ARABIC -> "عربي دائماً ›"
+        Phon.Mode.ENGLISH -> "إنجليزي ›"
+        else -> "تلقائي ›"
+    }
+
+    /**
+     * A name saved in Latin letters is usually an Arabic name — the table catches
+     * those and they are read in Arabic. This decides what happens to the rest.
+     */
+    private fun pickLatinMode(value: TextView) {
+        val labels = arrayOf(
+            "تلقائي — الاسم العربي يُقرأ عربي، والأجنبي بصوت إنجليزي",
+            "عربي دائماً — كل اسم يتحوّل لحروف عربية",
+            "إنجليزي — كل اسم بحروف لاتينية يروح للصوت الإنجليزي"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("لفظ الأسماء الأجنبية")
+            .setSingleChoiceItems(labels, Store.callerLatin) { d, which ->
+                Store.setCallerLatin(this, which)
+                value.text = latinModeName()
+                previewVoice()
+                d.dismiss()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
     }
 
     private fun pickVoice() {
@@ -1084,9 +1139,11 @@ class MainActivity : Activity() {
                     toast("ما لكيت أصوات عربية — تأكد إن محرك Google هو المحرك المفضل")
                     return@runOnUiThread
                 }
+                val best = Speaker.bestVoice("ar")?.name
                 val labels = names.mapIndexed { i, n ->
                     val kind = if (n.contains("network", true)) "إنترنت" else "محلي"
-                    "صوت ${i + 1}  ($kind)"
+                    val mark = if (n == best) "  ★ المقترح" else ""
+                    "صوت ${i + 1}  ($kind)$mark"
                 }.toTypedArray()
                 val current = names.indexOf(Store.callerVoice)
                 AlertDialog.Builder(this)

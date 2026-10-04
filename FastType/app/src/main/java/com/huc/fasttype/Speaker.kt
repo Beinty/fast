@@ -122,10 +122,32 @@ object Speaker {
         if (ready) run() else ensure(ctx) { ok -> if (ok) run() }
     }
 
-    /** Test path: reports what happened so the UI can show it. */
-    fun test(ctx: Context, text: String, report: (String) -> Unit) {
+    /**
+     * The same announcement, but each piece read by the voice that can read it.
+     *
+     * A name saved in Latin letters is not Arabic text, and handing it to an
+     * Arabic voice is what made the announcement unintelligible. The pieces that
+     * are Arabic go to the Arabic voice; the ones that are not go to an English
+     * one, and if the engine has no English voice they are spelled into Arabic
+     * rather than dropped.
+     */
+    fun announceParts(ctx: Context, parts: List<Phon.Part>, times: Int) {
+        if (parts.isEmpty()) return
+        val mine = ++gen
         val run = {
-            speakNow(text, 1, AudioManager.STREAM_MUSIC)
+            if (mine == gen) {
+                takeDuck(ctx)
+                speakParts(parts, times, AudioManager.STREAM_MUSIC, mine)
+            }
+        }
+        if (ready) run() else ensure(ctx) { ok -> if (ok) run() }
+    }
+
+    /** Test path: reports what happened so the UI can show it. */
+    fun test(ctx: Context, parts: List<Phon.Part>, report: (String) -> Unit) {
+        val run = {
+            autoPickVoice(ctx)
+            speakParts(parts, 1, AudioManager.STREAM_MUSIC, gen)
             if (arabicOk) report("جاري النطق — إذا ما سمعت شي، ارفع صوت الوسائط")
             else report("محرك النطق ما يدعم العربية — نزّل العربية من: الإعدادات ← إمكانية الوصول ← تحويل النص إلى كلام")
         }
@@ -136,6 +158,23 @@ object Speaker {
         }
     }
 
+    /**
+     * Picks a voice the first time, so a woman's voice is what he hears without
+     * having to go and find it. Only ever runs once; after that his own choice —
+     * or the engine's default — stands.
+     */
+    fun autoPickVoice(ctx: Context) {
+        if (Store.callerVoiceAuto) return
+        val run = {
+            if (!Store.callerVoiceAuto) {
+                bestVoice("ar")?.let { Store.setCallerVoice(ctx, it.name) }
+                bestVoice("en")?.let { Store.setCallerVoiceEn(ctx, it.name) }
+                Store.setCallerVoiceAuto(ctx, true)
+            }
+        }
+        if (ready) run() else ensure(ctx) { ok -> if (ok) run() }
+    }
+
     fun applyProfile() {
         val e = tts ?: return
         try {
@@ -143,14 +182,75 @@ object Speaker {
             e.setPitch(Store.callerPitch)
         } catch (_: Exception) {
         }
-        val vn = Store.callerVoice
-        if (vn.isNotBlank()) {
-            try {
-                e.voices?.firstOrNull { it.name == vn }?.let { e.voice = it }
-            } catch (_: Exception) {
-            }
+        useVoice(true)
+    }
+
+    /**
+     * Which voice reads the next utterance.
+     *
+     * Android does not say whether a voice is a woman's — there is no such field
+     * on Voice — so the name is all there is to go on. Engines that label it are
+     * taken at their word; for the ones that do not, the identifiers known to be
+     * women's voices are tried in order, and whatever he picks himself in the
+     * settings always wins over both.
+     */
+    private val FEMALE_HINTS = arrayOf("female", "-f-", "#female", "woman", "fem")
+    private val AR_FEMALE = arrayOf(
+        "ar-xa-x-arz-local", "ar-xa-x-arz-network",
+        "ar-xa-x-arb-local", "ar-xa-x-arb-network"
+    )
+    private val EN_FEMALE = arrayOf(
+        "en-us-x-tpf-local", "en-us-x-tpf-network",
+        "en-us-x-sfg-local", "en-us-x-sfg-network",
+        "en-gb-x-gba-local", "en-gb-x-gba-network"
+    )
+
+    private fun named(name: String?): android.speech.tts.Voice? {
+        if (name.isNullOrBlank()) return null
+        return try {
+            tts?.voices?.firstOrNull { it.name.equals(name, true) }
+        } catch (_: Exception) {
+            null
         }
     }
+
+    private fun looksFemale(n: String): Boolean {
+        val low = n.lowercase()
+        for (h in FEMALE_HINTS) if (low.contains(h)) return true
+        return false
+    }
+
+    /** Best guess at a woman's voice for a language, or the best voice there is. */
+    fun bestVoice(lang: String): android.speech.tts.Voice? {
+        val all = try {
+            (tts?.voices ?: emptySet()).filter {
+                it.locale?.language.equals(lang, true) && !it.isNetworkConnectionRequired
+            }.ifEmpty {
+                (tts?.voices ?: emptySet()).filter { it.locale?.language.equals(lang, true) }
+            }
+        } catch (_: Exception) {
+            return null
+        }
+        if (all.isEmpty()) return null
+        all.firstOrNull { looksFemale(it.name) }?.let { return it }
+        val known = if (lang == "ar") AR_FEMALE else EN_FEMALE
+        for (k in known) all.firstOrNull { it.name.equals(k, true) }?.let { return it }
+        return all.maxByOrNull { it.quality }
+    }
+
+    private fun useVoice(arabic: Boolean) {
+        val e = tts ?: return
+        val chosen = if (arabic) named(Store.callerVoice) ?: bestVoice("ar")
+        else named(Store.callerVoiceEn) ?: bestVoice("en")
+        try {
+            if (chosen != null) e.voice = chosen
+            else e.language = if (arabic) Locale("ar") else Locale.US
+        } catch (_: Exception) {
+        }
+    }
+
+    /** True when the engine has anything at all that can read Latin letters. */
+    fun hasEnglish(): Boolean = bestVoice("en") != null
 
     /** Arabic voices offered by the current engine, best-effort. */
     fun arabicVoices(ctx: Context, cb: (List<String>) -> Unit) {
@@ -168,9 +268,9 @@ object Speaker {
     }
 
     /** Short sample on the media stream, for previewing a voice choice. */
-    fun preview(ctx: Context, text: String) {
-        if (ready) speakNow(text, 1, AudioManager.STREAM_MUSIC)
-        else ensure(ctx) { ok -> if (ok) speakNow(text, 1, AudioManager.STREAM_MUSIC) }
+    fun preview(ctx: Context, parts: List<Phon.Part>) {
+        if (ready) speakParts(parts, 1, AudioManager.STREAM_MUSIC, gen)
+        else ensure(ctx) { ok -> if (ok) speakParts(parts, 1, AudioManager.STREAM_MUSIC, gen) }
     }
 
     private fun speakNow(text: String, times: Int, stream: Int, mine: Int = gen) {
@@ -190,6 +290,46 @@ object Speaker {
                 val id = if (i == n - 1) "last_$i" else "huc_$i"
                 engine.speak(text, mode, params, id)
                 if (i < n - 1) engine.playSilentUtterance(500, TextToSpeech.QUEUE_ADD, "gap_$i")
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun speakParts(list: List<Phon.Part>, times: Int, stream: Int, mine: Int) {
+        val engine = tts ?: return
+        if (mine != gen) return
+        // no English voice on this engine means the Latin pieces have to be
+        // spelled into Arabic, which is still better than letters read aloud
+        val useEn = hasEnglish()
+        val say = if (useEn) list else listOf(Phon.Part(Phon.flatten(list), true))
+
+        try {
+            engine.setSpeechRate(Store.callerRate)
+            engine.setPitch(Store.callerPitch)
+        } catch (_: Exception) {
+        }
+
+        val params = Bundle()
+        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, stream)
+        val n = times.coerceIn(1, 5)
+        try {
+            engine.stop()
+            var first = true
+            for (r in 0 until n) {
+                if (mine != gen) { engine.stop(); return }
+                for ((i, p) in say.withIndex()) {
+                    if (mine != gen) { engine.stop(); return }
+                    if (p.text.isBlank()) continue
+                    useVoice(p.arabic)
+                    val mode = if (first) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                    first = false
+                    val isLast = r == n - 1 && i == say.size - 1
+                    engine.speak(
+                        p.text, mode, params,
+                        if (isLast) "last_$r$i" else "huc_$r$i"
+                    )
+                }
+                if (r < n - 1) engine.playSilentUtterance(600, TextToSpeech.QUEUE_ADD, "gap_$r")
             }
         } catch (_: Exception) {
         }
@@ -289,21 +429,28 @@ object Speaker {
         return number.filter { it.isDigit() }.toCharArray().joinToString(" ")
     }
 
-    fun buildAnnouncement(ctx: Context, number: String?): String {
+    /** The announcement for a number, already split for the right voices. */
+    fun buildParts(ctx: Context, number: String?): List<Phon.Part> {
         val prefix = Store.callerPrefix.trim()
+        val out = ArrayList<Phon.Part>(4)
         val name = contactName(ctx, number)
 
         if (name != null) {
-            return if (prefix.isEmpty()) name else "$prefix $name"
+            if (prefix.isNotEmpty()) out.add(Phon.Part(prefix, true))
+            out.addAll(Phon.parts(name, Store.callerLatin))
+            if (out.isNotEmpty()) return out
         }
 
         if (Store.callerSayNumber) {
             val digits = spellNumber(number)
             if (digits.isNotEmpty()) {
-                return if (prefix.isEmpty()) digits else "$prefix $digits"
+                out.clear()
+                if (prefix.isNotEmpty()) out.add(Phon.Part(prefix, true))
+                out.add(Phon.Part(digits, true))
+                return out
             }
         }
 
-        return "مكالمة واردة"
+        return listOf(Phon.Part("مكالمة واردة", true))
     }
 }
