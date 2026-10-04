@@ -318,15 +318,33 @@ class ExpanderService : AccessibilityService() {
         "com.signal.app", "org.thoughtcrime.securesms", "com.bbm", "jp.naver.line.android"
     )
 
-    private val callWords = arrayOf(
-        "incoming", "calling", "voice call", "video call", "ringing",
-        "مكالمة", "يتصل", "اتصال", "يرن", "تتصل", "مكالمه"
+    /**
+     * Telling an incoming call from one he is placing himself.
+     *
+     * Android 12 gave calling apps a proper way to say which is which, and
+     * WhatsApp uses it: the notification carries a call type, and only type 1 is
+     * a call coming in. Where that is missing, a full-screen intent means the
+     * same thing — no app throws a call screen at you for a number you dialled.
+     * The words below are the last resort, and when none of them matches the
+     * answer is no: a name read out over his own outgoing call is worse than a
+     * name not read out at all.
+     */
+    private val CALL_TYPE = "android.callType"
+    private val TYPE_INCOMING = 1
+
+    private val inWords = arrayOf(
+        "incoming", "واردة", "وارده", "يتصل بك", "تتصل بك", "is calling you"
     )
 
-    /** Words that mean a missed or ended call, which must not be announced. */
+    private val outWords = arrayOf(
+        "calling", "outgoing", "dialing", "dialling", "جاري الاتصال",
+        "جارٍ الاتصال", "يتصل بـ", "صادرة", "صادره"
+    )
+
+    /** Words that mean a call that is over, or already answered. */
     private val notCallWords = arrayOf(
         "missed", "ongoing", "فائتة", "فائته", "لم يرد", "جارية", "منتهية",
-        "declined", "ended"
+        "declined", "ended", "call ended", "انتهت"
     )
 
     private var lastAppCall = ""
@@ -420,10 +438,22 @@ class ExpanderService : AccessibilityService() {
             return
         }
 
-        val fullScreen = n.fullScreenIntent != null
-        var worded = false
-        for (w in callWords) if (body.contains(w)) { worded = true; break }
-        if (!fullScreen && !worded) return
+        // an answered or screening call is not a ring, and if we are still saying
+        // the name over it, that is the moment to stop
+        val type = try { x.getInt(CALL_TYPE, 0) } catch (_: Throwable) { 0 }
+        if (type != 0 && type != TYPE_INCOMING) {
+            endAppCall("المكالمة مو واردة — وقف النطق")
+            return
+        }
+
+        val incoming = when {
+            type == TYPE_INCOMING -> true
+            n.fullScreenIntent != null -> true
+            outWords.any { body.contains(it) } -> false
+            inWords.any { body.contains(it) } -> true
+            else -> false
+        }
+        if (!incoming) return
 
         // it reposts the same notification the whole time it rings
         val now = System.currentTimeMillis()
