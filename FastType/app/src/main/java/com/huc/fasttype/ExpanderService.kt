@@ -174,7 +174,9 @@ class ExpanderService : AccessibilityService() {
         }
         spokenAt = System.currentTimeMillis()
         note(logMsg)
-        Speaker.announceParts(this, parts, Store.callerRepeat)
+        // a phone call tells us when it stops ringing, so that is what decides
+        // whether the name is said again
+        Speaker.announceParts(this, parts, Store.callerRepeat, 700L) { ringing }
     }
 
     // --------- read the incoming-call screen ---------
@@ -348,8 +350,6 @@ class ExpanderService : AccessibilityService() {
     private var appWatch = false
     private var appHeardRing = false
     private var appWatchStart = 0L
-    private var appSaid = 0
-    private var appParts: List<Phon.Part> = emptyList()
 
     private fun callMode(): Boolean {
         val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
@@ -361,28 +361,29 @@ class ExpanderService : AccessibilityService() {
         }
     }
 
+    /**
+     * True while the call still looks alive.
+     *
+     * Asked before every repeat rather than on a clock, so a repeat never lands
+     * on a call that has ended — and never cuts the first announcement short
+     * either, however long the name he saved turns out to be.
+     */
+    private fun appStillRinging(): Boolean {
+        if (!appWatch) return false
+        val busy = callMode()
+        if (busy) { appHeardRing = true; return true }
+        // this phone reports no call mode at all: say it once and leave it
+        if (!appHeardRing) return System.currentTimeMillis() - appWatchStart < 1200L
+        return false
+    }
+
     private val appPoll = object : Runnable {
         override fun run() {
             if (!appWatch) return
             val now = System.currentTimeMillis()
-            val busy = callMode()
-            if (busy) appHeardRing = true
-
-            if (appHeardRing && !busy) { endAppCall("انقطع الاتصال — وقف النطق"); return }
-            if (now - appWatchStart > 90_000L) { endAppCall("انتهت المراقبة"); return }
-
-            // the next repeat only happens while it is still ringing
-            val due = appWatchStart + appSaid * 2600L
-            if (appSaid < Store.callerRepeat && now >= due) {
-                if (appHeardRing) {
-                    appSaid++
-                    Speaker.announceParts(this@ExpanderService, appParts, 1)
-                } else if (now - appWatchStart > 5000L) {
-                    // this phone never reports a call mode, so there is no way to
-                    // know the call is still there; one announcement it is
-                    appSaid = Store.callerRepeat
-                }
-            }
+            if (callMode()) appHeardRing = true
+            else if (appHeardRing) { endAppCall("انقطع الاتصال — وقف النطق"); return }
+            if (now - appWatchStart > 120_000L) { endAppCall("انتهت المراقبة"); return }
             handler.postDelayed(this, 250)
         }
     }
@@ -391,7 +392,6 @@ class ExpanderService : AccessibilityService() {
         if (!appWatch) return
         appWatch = false
         appHeardRing = false
-        appParts = emptyList()
         handler.removeCallbacks(appPoll)
         Speaker.stop()
         // a new call from the same person must be free to announce again
@@ -443,16 +443,15 @@ class ExpanderService : AccessibilityService() {
             return
         }
 
-        // said once now; any repeat has to earn its turn
         spokenAt = now
         note("مكالمة تطبيق: $title")
-        appParts = parts
-        appSaid = 1
         appHeardRing = false
         appWatchStart = now
         appWatch = true
         handler.removeCallbacks(appPoll)
-        Speaker.announceParts(this, parts, 1)
+        // the repeats are not on a timer — each one asks first whether the call
+        // is still there, and waits for the one before it to actually finish
+        Speaker.announceParts(this, parts, Store.callerRepeat, 700L) { appStillRinging() }
         handler.postDelayed(appPoll, 250)
     }
 

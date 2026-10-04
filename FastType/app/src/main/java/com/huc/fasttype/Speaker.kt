@@ -7,6 +7,8 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.ContactsContract
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -75,13 +77,8 @@ object Speaker {
                 try {
                     tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                         override fun onStart(id: String?) {}
-                        override fun onError(id: String?) {
-                            if (id != null && id.startsWith("last")) releaseDuck()
-                        }
-
-                        override fun onDone(id: String?) {
-                            if (id != null && id.startsWith("last")) releaseDuck()
-                        }
+                        override fun onError(id: String?) { main.post { finished(id) } }
+                        override fun onDone(id: String?) { main.post { finished(id) } }
                     })
                 } catch (_: Exception) {
                 }
@@ -109,17 +106,55 @@ object Speaker {
      */
     @Volatile private var gen = 0
 
+    private val main = Handler(Looper.getMainLooper())
+
+    /**
+     * One announcement, from the first word to the last repeat.
+     *
+     * Nothing is queued ahead. Each piece is spoken, and only when the engine
+     * reports it finished does the next one start — because a repeat put on a
+     * timer will cut the first one off the moment a name runs longer than the
+     * guess, which is exactly what a full name does.
+     */
+    private class Run(
+        val parts: List<Phon.Part>,
+        val times: Int,
+        val stream: Int,
+        val mine: Int,
+        val gapMs: Long,
+        val wanted: (() -> Boolean)?
+    ) {
+        var round = 0
+        var at = 0
+    }
+
+    @Volatile private var run: Run? = null
+
+    /**
+     * Pieces that share a voice are said as one sentence.
+     *
+     * Changing the voice between two queued utterances is what broke the
+     * announcement in half; joining them means there is usually only one
+     * utterance and no voice change at all.
+     */
+    private fun joined(parts: List<Phon.Part>): List<Phon.Part> {
+        val out = ArrayList<Phon.Part>(parts.size)
+        for (p in parts) {
+            if (p.text.isBlank()) continue
+            val last = out.lastOrNull()
+            if (last != null && last.arabic == p.arabic) {
+                out[out.size - 1] = Phon.Part(last.text + " " + p.text, p.arabic)
+            } else {
+                out.add(p)
+            }
+        }
+        return out
+    }
+
     /** Call announcement: ducks the ringtone, speaks, then restores it. */
     fun announce(ctx: Context, text: String, times: Int) {
         if (text.isBlank()) return
-        val mine = ++gen
-        val run = {
-            if (mine == gen) {
-                takeDuck(ctx)
-                speakNow(text, times, AudioManager.STREAM_MUSIC, mine)
-            }
-        }
-        if (ready) run() else ensure(ctx) { ok -> if (ok) run() }
+        announceParts(ctx, listOf(Phon.Part(text, true)), times)
     }
 
     /**
@@ -130,24 +165,98 @@ object Speaker {
      * are Arabic go to the Arabic voice; the ones that are not go to an English
      * one, and if the engine has no English voice they are spelled into Arabic
      * rather than dropped.
+     *
+     * [wanted] is asked before every repeat: a call that has ended does not get
+     * its name read out again.
      */
-    fun announceParts(ctx: Context, parts: List<Phon.Part>, times: Int) {
+    fun announceParts(
+        ctx: Context,
+        parts: List<Phon.Part>,
+        times: Int,
+        gapMs: Long = 700L,
+        wanted: (() -> Boolean)? = null
+    ) {
         if (parts.isEmpty()) return
         val mine = ++gen
-        val run = {
+        val go = {
             if (mine == gen) {
                 takeDuck(ctx)
-                speakParts(parts, times, AudioManager.STREAM_MUSIC, mine)
+                begin(parts, times, AudioManager.STREAM_MUSIC, mine, gapMs, wanted)
             }
         }
-        if (ready) run() else ensure(ctx) { ok -> if (ok) run() }
+        if (ready) go() else ensure(ctx) { ok -> if (ok) go() }
+    }
+
+    private fun begin(
+        parts: List<Phon.Part>, times: Int, stream: Int,
+        mine: Int, gapMs: Long, wanted: (() -> Boolean)?
+    ) {
+        val engine = tts ?: return
+        if (mine != gen) return
+        val say = if (hasEnglish()) joined(parts)
+        else listOf(Phon.Part(Phon.flatten(parts), true))
+        if (say.isEmpty()) return
+
+        try {
+            engine.setSpeechRate(Store.callerRate)
+            engine.setPitch(Store.callerPitch)
+            engine.stop()
+        } catch (_: Exception) {
+        }
+        run = Run(say, times.coerceIn(1, 5), stream, mine, gapMs, wanted)
+        step(true)
+    }
+
+    private fun step(first: Boolean) {
+        val r = run ?: return
+        val engine = tts
+        if (engine == null || r.mine != gen) { run = null; releaseDuck(); return }
+
+        if (r.at >= r.parts.size) {
+            r.round++
+            r.at = 0
+            if (r.round >= r.times || r.wanted?.invoke() == false) {
+                run = null
+                releaseDuck()
+                return
+            }
+            main.postDelayed({ if (r.mine == gen && run === r) step(false) }, r.gapMs)
+            return
+        }
+
+        val p = r.parts[r.at]
+        r.at++
+        useVoice(p.arabic)
+        val id = "huc|" + r.mine + "|" + r.round + "|" + r.at
+        val params = Bundle()
+        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, r.stream)
+        try {
+            engine.speak(
+                p.text,
+                if (first) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
+                params, id
+            )
+        } catch (_: Exception) {
+            run = null
+            releaseDuck()
+        }
+    }
+
+    /** The engine says a piece is done; the next one may start. */
+    private fun finished(id: String?) {
+        val r = run ?: return
+        if (id == null || !id.startsWith("huc|")) return
+        val bits = id.split("|")
+        if (bits.size < 2 || bits[1].toIntOrNull() != r.mine) return
+        if (r.mine != gen) { run = null; releaseDuck(); return }
+        step(false)
     }
 
     /** Test path: reports what happened so the UI can show it. */
     fun test(ctx: Context, parts: List<Phon.Part>, report: (String) -> Unit) {
         val run = {
             autoPickVoice(ctx)
-            speakParts(parts, 1, AudioManager.STREAM_MUSIC, gen)
+            announceParts(ctx, parts, 1)
             if (arabicOk) report("جاري النطق — إذا ما سمعت شي، ارفع صوت الوسائط")
             else report("محرك النطق ما يدعم العربية — نزّل العربية من: الإعدادات ← إمكانية الوصول ← تحويل النص إلى كلام")
         }
@@ -269,70 +378,7 @@ object Speaker {
 
     /** Short sample on the media stream, for previewing a voice choice. */
     fun preview(ctx: Context, parts: List<Phon.Part>) {
-        if (ready) speakParts(parts, 1, AudioManager.STREAM_MUSIC, gen)
-        else ensure(ctx) { ok -> if (ok) speakParts(parts, 1, AudioManager.STREAM_MUSIC, gen) }
-    }
-
-    private fun speakNow(text: String, times: Int, stream: Int, mine: Int = gen) {
-        val engine = tts ?: return
-        if (mine != gen) return
-        applyProfile()
-        val params = Bundle()
-        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, stream)
-        val n = times.coerceIn(1, 5)
-        try {
-            engine.stop()
-            for (i in 0 until n) {
-                // the repeats are queued, so a call that ends mid-sentence must take
-                // the rest of the queue with it
-                if (mine != gen) { engine.stop(); return }
-                val mode = if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-                val id = if (i == n - 1) "last_$i" else "huc_$i"
-                engine.speak(text, mode, params, id)
-                if (i < n - 1) engine.playSilentUtterance(500, TextToSpeech.QUEUE_ADD, "gap_$i")
-            }
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun speakParts(list: List<Phon.Part>, times: Int, stream: Int, mine: Int) {
-        val engine = tts ?: return
-        if (mine != gen) return
-        // no English voice on this engine means the Latin pieces have to be
-        // spelled into Arabic, which is still better than letters read aloud
-        val useEn = hasEnglish()
-        val say = if (useEn) list else listOf(Phon.Part(Phon.flatten(list), true))
-
-        try {
-            engine.setSpeechRate(Store.callerRate)
-            engine.setPitch(Store.callerPitch)
-        } catch (_: Exception) {
-        }
-
-        val params = Bundle()
-        params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, stream)
-        val n = times.coerceIn(1, 5)
-        try {
-            engine.stop()
-            var first = true
-            for (r in 0 until n) {
-                if (mine != gen) { engine.stop(); return }
-                for ((i, p) in say.withIndex()) {
-                    if (mine != gen) { engine.stop(); return }
-                    if (p.text.isBlank()) continue
-                    useVoice(p.arabic)
-                    val mode = if (first) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
-                    first = false
-                    val isLast = r == n - 1 && i == say.size - 1
-                    engine.speak(
-                        p.text, mode, params,
-                        if (isLast) "last_$r$i" else "huc_$r$i"
-                    )
-                }
-                if (r < n - 1) engine.playSilentUtterance(600, TextToSpeech.QUEUE_ADD, "gap_$r")
-            }
-        } catch (_: Exception) {
-        }
+        announceParts(ctx, parts, 1)
     }
 
     // ---------- ducking ----------
@@ -383,6 +429,8 @@ object Speaker {
     fun stop() {
         // anything waiting on the engine is now stale
         gen++
+        run = null
+        main.removeCallbacksAndMessages(null)
         try {
             tts?.stop()
         } catch (_: Exception) {
