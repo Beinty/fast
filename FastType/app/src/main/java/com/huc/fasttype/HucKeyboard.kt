@@ -29,6 +29,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var transOut = ""
     private var transLastSent = ""
 
+    /** Recent pictures shown on the clipboard page, newest first. */
+    private var picList: List<Pics.Shot> = emptyList()
+    private var picWatcher: android.database.ContentObserver? = null
+
     /** The last finished word, and how much of it has been rubbed out since. */
     private var lastDone = ""
     private var eraseCount = 0
@@ -190,6 +194,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onWindowShown() {
         super.onWindowShown()
+        watchGallery()
+        syncPics()
         clearWindowBackground()
         Dict.warm(this)
         commitDictated()
@@ -231,6 +237,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         } catch (_: Exception) {
         }
         clipWatcher = null
+        picWatcher?.let {
+            try { contentResolver.unregisterContentObserver(it) } catch (_: Throwable) {}
+        }
+        picWatcher = null
+        Pics.clear()
         voice?.stop()
         voice = null
         Tr.release()
@@ -528,6 +539,21 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /** Deletes back to the start of the previous word, for a long backspace hold. */
     /** A tap pastes the last thing copied, with no panel in the way. */
     override fun onClipTap() {
+        val pic = Pics.ready
+        if (pic != null) {
+            feedback()
+            val ok = Pics.send(this, currentInputConnection, currentInputEditorInfo, pic)
+            if (!ok) {
+                kv?.statusOnly = true
+                kv?.suggText = "هذا التطبيق ما يستقبل صور من الكيبورد"
+                kv?.suggs = listOf("هذا التطبيق ما يستقبل صور من الكيبورد")
+                kv?.stripChanged()
+                ui.postDelayed({ refreshSugg() }, 1600)
+            } else {
+                kv?.stripChanged()
+            }
+            return
+        }
         val ic = currentInputConnection ?: return
         Clip.capture(this)
         val t = Clip.latest()
@@ -569,6 +595,55 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         lastWord = ""
         feedback()
         refreshSugg()
+    }
+
+    override fun onPicPick(index: Int) {
+        val shot = picList.getOrNull(index) ?: return
+        feedback()
+        val ok = Pics.send(this, currentInputConnection, currentInputEditorInfo, shot.uri)
+        page = Pages.LETTERS
+        kv?.page = Pages.LETTERS
+        kv?.rebuild()
+        if (!ok) {
+            kv?.statusOnly = true
+            kv?.suggText = "هذا التطبيق ما يستقبل صور من الكيبورد"
+            kv?.suggs = listOf("هذا التطبيق ما يستقبل صور من الكيبورد")
+            kv?.stripChanged()
+            ui.postDelayed({ refreshSugg() }, 1600)
+        }
+    }
+
+    private fun watchGallery() {
+        if (picWatcher != null || !Store.kbPics || !Pics.allowed(this)) return
+        try {
+            val obs = object : android.database.ContentObserver(ui) {
+                override fun onChange(selfChange: Boolean) {
+                    // a screenshot taken while the keyboard is up should appear on the
+                    // key without him having to close and open it again
+                    ui.postDelayed({ syncPics() }, 350)
+                }
+            }
+            contentResolver.registerContentObserver(
+                android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, true, obs
+            )
+            picWatcher = obs
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Re-reads what the gallery has, and what is waiting to be sent. */
+    private fun syncPics() {
+        if (!Store.kbPics || !Pics.allowed(this)) {
+            if (Pics.ready != null) { Pics.clear(); kv?.stripChanged() }
+            picList = emptyList()
+            kv?.picShelf = emptyList()
+            return
+        }
+        val px = (resources.displayMetrics.density * 96f).toInt()
+        val changed = Pics.refresh(this, px) || Pics.fromClipboard(this, px)
+        picList = Pics.recent(this, 8)
+        kv?.picShelf = picList.mapNotNull { Pics.thumb(this, it.uri, px) }
+        if (changed) kv?.stripChanged()
     }
 
     override fun onClipClose() {

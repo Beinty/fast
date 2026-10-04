@@ -8,6 +8,12 @@
     <!-- only ever used to fetch a translation language pack the first time -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- a screenshot lands in the gallery, not on the clipboard; this is the only
+         way the keyboard can see it, and it is asked for once and off by default -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <queries>
         <intent>
@@ -50,6 +56,13 @@
             android:taskAffinity=""
             android:launchMode="singleTask"
             android:theme="@style/Invisible" />
+
+        <!-- serves one copied picture to the app being written in, nothing else -->
+        <provider
+            android:name=".ImgProvider"
+            android:authorities="com.huc.fasttype.img"
+            android:exported="false"
+            android:grantUriPermissions="true" />
 
         <service
             android:name=".HucKeyboard"

@@ -66,6 +66,7 @@ object Store {
     private const val K_KB_DOTS = "kb_double_space"
     private const val K_TR_SRC = "kb_tr_src"
     private const val K_TR_DST = "kb_tr_dst"
+    private const val K_KB_PICS = "kb_pics"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -236,6 +237,10 @@ object Store {
     @Volatile var kbDoubleSpace: Boolean = true
         private set
 
+    /** The clipboard key also holds the last screenshot or copied picture. */
+    @Volatile var kbPics: Boolean = false
+        private set
+
     /** The language the translate panel reads from; "auto" lets it work that out. */
     @Volatile var kbTrSrc: String = "auto"
         private set
@@ -304,6 +309,7 @@ object Store {
         kbClip = p.getBoolean(K_KB_CLIP, true)
         kbAlts = p.getBoolean(K_KB_ALTS, true)
         kbDoubleSpace = p.getBoolean(K_KB_DOTS, true)
+        kbPics = p.getBoolean(K_KB_PICS, false)
         kbTrSrc = p.getString(K_TR_SRC, "auto") ?: "auto"
         kbTrDst = p.getString(K_TR_DST, "en") ?: "en"
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
@@ -422,6 +428,7 @@ object Store {
             "clip" -> { kbClip = v; e.putBoolean(K_KB_CLIP, v) }
             "alts" -> { kbAlts = v; e.putBoolean(K_KB_ALTS, v) }
             "dots" -> { kbDoubleSpace = v; e.putBoolean(K_KB_DOTS, v) }
+            "pics" -> { kbPics = v; e.putBoolean(K_KB_PICS, v) }
         }
         e.apply()
     }

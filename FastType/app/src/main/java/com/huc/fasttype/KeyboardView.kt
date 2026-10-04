@@ -2,6 +2,7 @@ package com.huc.fasttype
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -45,6 +46,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onTransSwap()
         fun onTransLang(dst: Boolean)
         fun onLangPick(code: String)
+        /** One of the recent pictures was chosen from the clipboard page. */
+        fun onPicPick(index: Int)
     }
 
     var listener: Listener? = null
@@ -343,6 +346,11 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     private val rf = RectF()
+    private val picPath = Path()
+    private val icoBmp = Paint(Paint.ANTI_ALIAS_FLAG).also { it.isFilterBitmap = true }
+    /** Thumbnails for the clipboard page, and where each one was drawn. */
+    var picShelf: List<Bitmap> = emptyList()
+    private val shelfRects = ArrayList<RectF>(8)
     /** Reused for the dirty rectangle, so onDraw allocates nothing. */
     private val clipR = Rect()
     private val path = Path()
@@ -677,9 +685,27 @@ class KeyboardView(context: Context) : View(context) {
                 bgPaint.color = theme.keyDown
                 canvas.drawCircle(clipC, cy, micW * 0.46f, bgPaint)
             }
-            icoPaint.color = if (Clip.fresh) theme.go else theme.outer
-            icoPaint.strokeWidth = dp(1.7f)
-            drawIcon(canvas, Ico.CLIP, clipC, cy, suggH * 0.46f)
+            val pic = Pics.readyThumb
+            if (pic != null && !pic.isRecycled) {
+                // a picture waiting to be sent shows itself, so there is nothing to
+                // read and nothing to remember — he just sees it is there
+                val r = suggH * 0.36f
+                rf.set(clipC - r, cy - r, clipC + r, cy + r)
+                picPath.reset()
+                picPath.addRoundRect(rf, r * 0.32f, r * 0.32f, Path.Direction.CW)
+                canvas.save()
+                canvas.clipPath(picPath)
+                canvas.drawBitmap(pic, null, rf, icoBmp)
+                canvas.restore()
+                edgePaint.style = Paint.Style.STROKE
+                edgePaint.color = theme.go
+                edgePaint.strokeWidth = dp(1.6f)
+                canvas.drawRoundRect(rf, r * 0.32f, r * 0.32f, edgePaint)
+            } else {
+                icoPaint.color = if (Clip.fresh) theme.go else theme.outer
+                icoPaint.strokeWidth = dp(1.7f)
+                drawIcon(canvas, Ico.CLIP, clipC, cy, suggH * 0.46f)
+            }
         }
 
         // ---- the icon bar, sliding in over the suggestions ----
@@ -894,8 +920,39 @@ class KeyboardView(context: Context) : View(context) {
         canvas.drawText("تم", right - dp(22f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint)
         clipDoneRect.set(right - dp(56f), top, right, top + clipHeadH)
 
-        val listTop = top + clipHeadH
+        var listTop = top + clipHeadH
         val listBottom = h - bottomPad - zonePad - panelPadBottom
+
+        // the pictures ride above the copied text, as one scrolling row
+        shelfRects.clear()
+        val shelf = picShelf
+        if (shelf.isNotEmpty()) {
+            val thH = clipRowH * 1.5f
+            val thW = thH * 0.62f
+            var x = left
+            canvas.save()
+            canvas.clipRect(left, listTop, right, listTop + thH)
+            for (bm in shelf) {
+                if (bm.isRecycled) continue
+                rf.set(x, listTop + dp(2f), x + thW, listTop + thH - dp(6f))
+                shelfRects.add(RectF(rf))
+                picPath.reset()
+                picPath.addRoundRect(rf, dp(8f), dp(8f), Path.Direction.CW)
+                canvas.save()
+                canvas.clipPath(picPath)
+                canvas.drawBitmap(bm, null, rf, icoBmp)
+                canvas.restore()
+                edgePaint.style = Paint.Style.STROKE
+                edgePaint.color = Themes.hairline(theme)
+                edgePaint.strokeWidth = dp(1f)
+                canvas.drawRoundRect(rf, dp(8f), dp(8f), edgePaint)
+                x += thW + dp(6f)
+                if (x > right) break
+            }
+            canvas.restore()
+            listTop += thH
+        }
+
         clipListTop = listTop
         clipListBottom = listBottom
 
@@ -905,9 +962,11 @@ class KeyboardView(context: Context) : View(context) {
         clipScroll = clipScroll.coerceIn(0f, clipMaxScroll)
 
         if (items.isEmpty()) {
-            txtPaint.color = theme.dim
-            canvas.drawText("ماكو شي منسوخ بعد",
-                (left + right) / 2f, (listTop + listBottom) / 2f, txtPaint)
+            if (shelf.isEmpty()) {
+                txtPaint.color = theme.dim
+                canvas.drawText("ماكو شي منسوخ بعد",
+                    (left + right) / 2f, (listTop + listBottom) / 2f, txtPaint)
+            }
             return
         }
 
@@ -1491,6 +1550,9 @@ class KeyboardView(context: Context) : View(context) {
                     invalidate()
                     if (dragged) return true
                     if (clipDoneRect.contains(x, y)) { listener?.onClipClose(); return true }
+                    for (si in shelfRects.indices) {
+                        if (shelfRects[si].contains(x, y)) { listener?.onPicPick(si); return true }
+                    }
                     if (i >= 0) listener?.onClipPick(i)
                     return true
                 }

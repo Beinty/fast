@@ -45,6 +45,9 @@ class MainActivity : Activity() {
     private val REQ_EXPORT = 11
     private val REQ_IMPORT = 12
     private val REQ_PERMS = 21
+    private val REQ_PICS = 22
+
+    private fun picsOk(): Boolean = Pics.allowed(this)
 
     private val PERMS = arrayOf(
         Manifest.permission.READ_PHONE_STATE,
@@ -419,6 +422,11 @@ class MainActivity : Activity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQ_PERMS) refreshPermBanner()
+        if (requestCode == REQ_PICS && !picsOk()) {
+            // he said no; the switch must not sit there claiming it is on
+            Store.setKbFlag(this, "pics", false)
+            recreate()
+        }
     }
 
     private fun openAppDetails() {
@@ -812,6 +820,13 @@ class MainActivity : Activity() {
             Store.kbClip) {
             Store.setKbFlag(this, "clip", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("الصور بالحافظة",
+            "آخر لقطة شاشة أو صورة نسختها تقعد بزر الحافظة — ضغطة وحدة تدزّها. يحتاج إذن قراءة الصور مرّة وحدة",
+            Store.kbPics) {
+            Store.setKbFlag(this, "pics", it)
+            if (it && !picsOk()) requestPermissions(arrayOf(Pics.permission()), REQ_PICS)
+            syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("مسح الحافظة بعد (دقيقة، صفر = تبقى)",
             Store.kbClipExpire, 0, 720) {
             Store.setKbInt(this, "clipexp", it)
@@ -902,6 +917,7 @@ class MainActivity : Activity() {
             override fun onTransSwap() {}
             override fun onTransLang(dst: Boolean) {}
             override fun onLangPick(code: String) {}
+            override fun onPicPick(index: Int) {}
         }
         pv.arabic = Store.kbArabicFirst
         pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"
