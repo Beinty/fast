@@ -364,11 +364,13 @@ sheikh|shiekh|shaikh=شَيْخ
                 else -> if (depth == 0) s.append(if (keep(c)) c else ' ')
             }
         }
-        val words = s.toString().split(' ')
+        // Every word he saved gets read. Only the filing comes off: the brackets,
+        // the emoji, the digits, the carrier's name. What is left is his name for
+        // that person, however many words it runs to.
+        return s.toString().split(' ')
             .map { it.trim() }
             .filter { it.isNotEmpty() && it.lowercase() !in JUNK }
-        // two words is a name; the rest is filing
-        return words.take(2).joinToString(" ")
+            .joinToString(" ")
     }
 
     private fun isLatin(w: String): Boolean {
