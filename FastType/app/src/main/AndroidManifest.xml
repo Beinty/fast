@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- used only to take the notification volume to zero while the mic is open,
+         and put it back; Do Not Disturb itself is never switched on -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <!-- only ever used to fetch a translation language pack the first time -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />

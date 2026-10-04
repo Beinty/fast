@@ -358,6 +358,27 @@ class MainActivity : Activity() {
 
         p.addView(
             switchRow(
+                "اسكت صوت الإشعار وقت التسجيل",
+                "أي تطبيق يفتح المايك — صوت الإشعارات ينزل صفر ويرجع لحاله أول ما يخلص",
+                Store.recHush
+            ) { on ->
+                Store.setRecHush(this, on)
+                if (on && !Hush.allowed(this)) askHushPermission()
+            },
+            lp(true, bottom = dp(8))
+        )
+
+        val hn = TextView(this)
+        hn.setTextColor(MUT)
+        hn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        hn.setPadding(dp(12), 0, dp(12), dp(10))
+        hn.setOnClickListener { askHushPermission() }
+        hushNote = hn
+        p.addView(hn, lp(true, bottom = dp(8)))
+        refreshHushNote()
+
+        p.addView(
+            switchRow(
                 "اسكت بالوضع الصامت",
                 "ما ينطق إذا الجهاز صامت أو اهتزاز",
                 Store.callerRespectSilent
@@ -462,6 +483,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // he may have just come back from granting it
+        refreshHushNote()
         val on = isServiceOn()
         status.text = if (on)
             "الخدمة شغالة — الاستبدال فعّال"
@@ -1101,6 +1124,43 @@ class MainActivity : Activity() {
 
     private fun previewVoice() {
         Speaker.preview(this, sampleParts())
+    }
+
+    private var hushNote: TextView? = null
+
+    /**
+     * Android files the one permission this needs under Do Not Disturb, so the
+     * line says plainly what it is for — nothing is ever blocked.
+     */
+    private fun refreshHushNote() {
+        val t = hushNote ?: return
+        t.text = when {
+            !Store.recHush -> ""
+            Hush.allowed(this) ->
+                "جاهز — الإشعار يوصلك عادي، بس بدون صوت للحظات التسجيل"
+            else ->
+                "محتاج إذن — اضغط هنا، وبصفحة «الوصول إلى عدم الإزعاج» شغّل «كتابة سريعة». " +
+                    "التطبيق يستخدمه لتنزيل مستوى الصوت بس، وما يشغّل عدم الإزعاج أبداً"
+        }
+    }
+
+    private fun askHushPermission() {
+        if (Hush.allowed(this)) { refreshHushNote(); return }
+        AlertDialog.Builder(this)
+            .setTitle("إذن مطلوب مرة وحدة")
+            .setMessage(
+                "أندرويد ما يخلي أي تطبيق ينزّل صوت الإشعارات بدون هذا الإذن، وحطّه تحت " +
+                    "اسم «الوصول إلى عدم الإزعاج».\n\n" +
+                    "«كتابة سريعة» تستخدمه لشي واحد: تنزّل مستوى صوت الإشعارات صفر وقت " +
+                    "التسجيل وترجّعه. ما تشغّل عدم الإزعاج، وما تحجب إشعار، وما تمنع مكالمة."
+            )
+            .setPositiveButton("افتح الإعدادات") { _, _ ->
+                try { startActivity(Hush.permissionIntent()) } catch (_: Exception) {
+                    toast("ما كدرت أفتح الصفحة — دوّرها بالإعدادات: الوصول إلى عدم الإزعاج")
+                }
+            }
+            .setNegativeButton("بعدين", null)
+            .show()
     }
 
     private fun latinModeName(): String = when (Store.callerLatin) {

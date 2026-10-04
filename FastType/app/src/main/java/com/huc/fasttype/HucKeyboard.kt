@@ -1158,6 +1158,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onState(listening: Boolean, message: String) {
+        // our own voice typing is a recording too, and silencing the phone for it
+        // would be silencing it for nothing
+        Hush.ours = listening
         ui.post {
             kv?.listening = listening
             if (message.isNotEmpty()) showStrip(message)

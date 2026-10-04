@@ -7,6 +7,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.media.AudioManager
+import android.media.AudioRecordingConfiguration
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -37,7 +39,10 @@ class ExpanderService : AccessibilityService() {
 
     private val prefListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (key != "last_event") Store.load(this)
+            if (key == "last_event") return@OnSharedPreferenceChangeListener
+            Store.load(this)
+            // the switch in settings takes effect without him restarting anything
+            if (Store.recHush) startMicWatch() else stopMicWatch()
         }
 
     // ================= call announcement =================
@@ -261,11 +266,90 @@ class ExpanderService : AccessibilityService() {
         }
     }
 
+    // ================= the microphone =================
+
+    /**
+     * Watches for any app opening the microphone.
+     *
+     * The system reports that a recording is running and what it is recording
+     * for — never who is recording, and never a single sample of it. That is
+     * exactly enough: the moment something starts, the chime is taken out of the
+     * way, and the moment it stops, it is put back.
+     */
+    private var micOn = false
+    private var recCb: Any? = null
+
+    private val micSources = intArrayOf(
+        MediaRecorder.AudioSource.MIC,
+        MediaRecorder.AudioSource.DEFAULT,
+        MediaRecorder.AudioSource.CAMCORDER,
+        MediaRecorder.AudioSource.VOICE_RECOGNITION,
+        MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+        MediaRecorder.AudioSource.UNPROCESSED
+    )
+
+    private fun isMic(src: Int): Boolean {
+        for (s in micSources) if (s == src) return true
+        return false
+    }
+
+    private fun micChanged(recording: Boolean) {
+        if (recording == micOn) return
+        micOn = recording
+        if (recording) {
+            if (!Hush.ours) Hush.on(this)
+        } else {
+            Hush.off(this)
+        }
+    }
+
+    private fun startMicWatch() {
+        if (recCb != null) return
+        if (!Store.recHush) return
+        val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        try {
+            val cb = object : AudioManager.AudioRecordingCallback() {
+                override fun onRecordingConfigChanged(
+                    configs: MutableList<AudioRecordingConfiguration>?
+                ) {
+                    var live = false
+                    if (configs != null) {
+                        for (c in configs) if (isMic(c.clientAudioSource)) { live = true; break }
+                    }
+                    handler.post { micChanged(live) }
+                }
+            }
+            am.registerAudioRecordingCallback(cb, handler)
+            recCb = cb
+            // something may already be recording when the service starts
+            var live = false
+            for (c in am.activeRecordingConfigurations) {
+                if (isMic(c.clientAudioSource)) { live = true; break }
+            }
+            micChanged(live)
+        } catch (e: Exception) {
+            note("ما كدرت أراقب المايك: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun stopMicWatch() {
+        val cb = recCb as? AudioManager.AudioRecordingCallback ?: return
+        try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            am?.unregisterAudioRecordingCallback(cb)
+        } catch (_: Exception) {
+        }
+        recCb = null
+        micOn = false
+        Hush.off(this)
+    }
+
     // ================= lifecycle =================
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         Store.load(this)
+        startMicWatch()
         Store.prefs(this).registerOnSharedPreferenceChangeListener(prefListener)
 
         if (!receiverOn) {
@@ -306,6 +390,7 @@ class ExpanderService : AccessibilityService() {
             }
         }
         telCb = null
+        stopMicWatch()
         handler.removeCallbacksAndMessages(null)
         Speaker.shutdown()
         super.onDestroy()

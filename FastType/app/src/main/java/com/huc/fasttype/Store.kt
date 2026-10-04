@@ -31,6 +31,8 @@ object Store {
     private const val K_VOICE_EN = "caller_voice_en"
     private const val K_LATIN = "caller_latin"
     private const val K_VOICE_AUTO = "caller_voice_auto"
+    private const val K_REC_HUSH = "rec_hush"
+    private const val K_REC_MIN = "rec_hush_min"
 
     private const val K_KB_THEME = "kb_theme"
     private const val K_KB_H = "kb_h"
@@ -143,6 +145,16 @@ object Store {
     /** What happens to a Latin name that is not in the name table — see Phon.Mode. */
     @Volatile
     var callerLatin: Int = 0
+        private set
+
+    /** Silence the notification chime while any app has the microphone open. */
+    @Volatile
+    var recHush: Boolean = false
+        private set
+
+    /** How long the silence may last before it is lifted anyway. */
+    @Volatile
+    var recHushMinutes: Int = 5
         private set
 
     /** False until the app has chosen a voice once on his behalf. */
@@ -307,6 +319,8 @@ object Store {
         callerVoiceEn = p.getString(K_VOICE_EN, "") ?: ""
         callerLatin = p.getInt(K_LATIN, 0).coerceIn(0, 2)
         callerVoiceAuto = p.getBoolean(K_VOICE_AUTO, false)
+        recHush = p.getBoolean(K_REC_HUSH, false)
+        recHushMinutes = p.getInt(K_REC_MIN, 5).coerceIn(1, 30)
 
         kbTheme = p.getString(K_KB_THEME, "iosCrisp") ?: "iosCrisp"
         kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
@@ -412,6 +426,16 @@ object Store {
     fun setCallerLatin(ctx: Context, v: Int) {
         callerLatin = v.coerceIn(0, 2)
         prefs(ctx).edit().putInt(K_LATIN, callerLatin).apply()
+    }
+
+    fun setRecHush(ctx: Context, v: Boolean) {
+        recHush = v
+        prefs(ctx).edit().putBoolean(K_REC_HUSH, v).apply()
+    }
+
+    fun setRecHushMinutes(ctx: Context, v: Int) {
+        recHushMinutes = v.coerceIn(1, 30)
+        prefs(ctx).edit().putInt(K_REC_MIN, recHushMinutes).apply()
     }
 
     fun setCallerVoiceAuto(ctx: Context, v: Boolean) {
