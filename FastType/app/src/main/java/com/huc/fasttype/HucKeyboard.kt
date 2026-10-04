@@ -74,15 +74,56 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      */
     private val suggJob = Runnable { refreshSugg() }
 
+    /**
+     * The correction for the word being typed, worked out before it is asked for.
+     *
+     * Looking for a repair means a few hundred searches of a two-hundred-thousand
+     * word list. Doing that when space is pressed puts all of it between his finger
+     * and the screen. Doing it while his hand is still on the way to the space bar
+     * puts it nowhere: by the time the key goes down the answer is already sitting
+     * there, and all that is left is one delete and one commit.
+     */
+    private var specWord = ""
+    private var specFix: String? = null
+    private var specDone = false
+
+    private val specJob = Runnable { speculate() }
+
+    private fun speculate() {
+        val w = buffer.toString()
+        if (specDone && w == specWord) return
+        specWord = w
+        specDone = true
+        specFix = null
+        if (!Store.kbCorrect || w.length < 4) return
+        specFix = findFix(w)
+    }
+
+    /** The one place that decides what a mistyped word should have been. */
+    private fun findFix(typed: String): String? {
+        val own = UserDict.fixFor(typed, arabic)
+        if (own != null) return own
+        if (Store.kbLearn && UserDict.isOwn(typed, arabic)) return null
+        return UserDict.correct(typed, arabic)
+            ?: Dict.correctNear(typed, nearBuf, arabic)
+    }
+
     private fun scheduleSugg() {
         ui.removeCallbacks(suggJob)
         ui.postDelayed(suggJob, 24)
+        ui.removeCallbacks(specJob)
+        // later than the strip: while he is still typing there is nothing to guess at,
+        // and the moment he pauses is the moment before he reaches for space
+        ui.postDelayed(specJob, 110)
     }
 
     /** Forgets the word being typed, and the touch trail that goes with it. */
     private fun resetWord() {
         buffer.setLength(0)
         nearBuf.clear()
+        specDone = false
+        specWord = ""
+        specFix = null
     }
     private var voice: Voice? = null
     private var voiceBase = ""
@@ -374,14 +415,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
             var fixed: String? = null
             if (Store.kbCorrect) {
-                // a slip he has made before is repaired from memory, no guessing at all
-                fixed = UserDict.fixFor(typed, arabic)
-                if (fixed == null && !(Store.kbLearn && UserDict.isOwn(typed, arabic))) {
-                    // his own words first, then the dictionary — weighted by what
-                    // the finger was actually near, not by which word is commoner
-                    fixed = UserDict.correct(typed, arabic)
-                        ?: Dict.correctNear(typed, nearBuf, arabic)
-                }
+                // nearly always already known, so this costs nothing at all here
+                fixed = if (specDone && specWord == typed) specFix else findFix(typed)
             }
 
             // The word that joins his vocabulary is the right one, never the slip.
@@ -1102,9 +1137,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     // ---------------- shortcuts ----------------
 
     private fun matchShortcut(): Shortcut? {
-        if (buffer.isEmpty()) return null
+        val n = buffer.length
+        if (n == 0) return null
+        // only triggers ending in the letter just typed can possibly have completed
+        val cands = Store.byLast[buffer[n - 1]] ?: return null
         val body = buffer.toString()
-        for (s in Store.ordered) {
+        for (s in cands) {
             if (!body.endsWith(s.trigger)) continue
             val start = body.length - s.trigger.length
             if (start > 0 && !isBoundary(body[start - 1])) continue

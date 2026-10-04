@@ -76,6 +76,18 @@ object Store {
     var ordered: List<Shortcut> = emptyList()
         private set
 
+    /**
+     * Shortcuts grouped by the last letter of their trigger.
+     *
+     * Every single keypress asks whether a shortcut just completed. Walking the whole
+     * list to ask that is work repeated hundreds of times a minute for an answer that
+     * is almost always no. A trigger can only have completed if its final letter is
+     * the one just typed, so that letter picks the handful worth checking.
+     */
+    @Volatile
+    var byLast: Map<Char, List<Shortcut>> = emptyMap()
+        private set
+
     @Volatile
     var instant: Boolean = true
         private set
@@ -319,6 +331,11 @@ object Store {
         items = list
         ordered = list.filter { it.on && it.trigger.isNotEmpty() }
             .sortedByDescending { it.trigger.length }
+        val m = HashMap<Char, MutableList<Shortcut>>(64)
+        for (s in ordered) {
+            m.getOrPut(s.trigger[s.trigger.length - 1]) { ArrayList(4) }.add(s)
+        }
+        byLast = m
     }
 
     fun saveItems(ctx: Context, list: List<Shortcut>) {
