@@ -918,6 +918,7 @@ class MainActivity : Activity() {
             override fun onTransLang(dst: Boolean) {}
             override fun onLangPick(code: String) {}
             override fun onPicPick(index: Int) {}
+            override fun onReplaceChar(s: String) {}
         }
         pv.arabic = Store.kbArabicFirst
         pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"

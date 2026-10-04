@@ -470,6 +470,36 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
     }
 
+    /**
+     * The finger landed on one letter and lifted on another, so swap them.
+     *
+     * Everything the word carries — its letters and the record of which keys the
+     * finger was between — has to be swapped with it, or the corrector would be
+     * reasoning about a word that is no longer there.
+     */
+    override fun onReplaceChar(s: String) {
+        if (transOn) {
+            if (transBuf.isNotEmpty()) transBuf.setLength(transBuf.length - 1)
+            transBuf.append(s)
+            afterTransEdit(false)
+            return
+        }
+        val ic = currentInputConnection ?: return
+        undoTyped = null
+        undoFixed = null
+        ic.beginBatchEdit()
+        ic.deleteSurroundingText(1, 0)
+        ic.commitText(s, 1)
+        ic.endBatchEdit()
+        if (buffer.isNotEmpty()) {
+            buffer.setLength(buffer.length - 1)
+            if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
+            buffer.append(s)
+            nearBuf.add(kv?.lastNear ?: "")
+        }
+        scheduleSugg()
+    }
+
     override fun onDelete() {
         if (transOn) {
             if (transBuf.isNotEmpty()) transBuf.setLength(transBuf.length - 1)

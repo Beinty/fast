@@ -48,6 +48,8 @@ class KeyboardView(context: Context) : View(context) {
         fun onLangPick(code: String)
         /** One of the recent pictures was chosen from the clipboard page. */
         fun onPicPick(index: Int)
+        /** The finger settled on a different key than the one it landed on. */
+        fun onReplaceChar(s: String)
     }
 
     var listener: Listener? = null
@@ -258,6 +260,8 @@ class KeyboardView(context: Context) : View(context) {
     private var rows: List<List<Key>> = emptyList()
     private var emojiKeys: List<Key> = emptyList()
     private var pressed: Key? = null
+    /** The key that fired the instant the finger touched down. */
+    private var firedKey: Key? = null
 
     private var emojiTab = 0
     private var emojiScroll = 0f
@@ -1443,7 +1447,14 @@ class KeyboardView(context: Context) : View(context) {
                     handler.postDelayed(altRunnable, 300)
                 }
                 if (!pressFx) pressed = null
-                if (fastKeys) { firedOnDown = true; fire(k) } else firedOnDown = false
+                if (fastKeys) {
+                    firedOnDown = true
+                    firedKey = k
+                    fire(k)
+                } else {
+                    firedOnDown = false
+                    firedKey = null
+                }
                 if (pressFx) invalidateKey(k)
                 if (k.code == Code.DEL) {
                     repeating = true
@@ -1644,12 +1655,34 @@ class KeyboardView(context: Context) : View(context) {
                 val k = pressed
                 pressed = null
                 invalidateKey(k)
-                if (!firedOnDown && k != null && k.hitT(x, y)) fire(k)
+                if (!firedOnDown && k != null && k.hitT(x, y)) {
+                    fire(k)
+                } else if (firedOnDown) {
+                    // Typing on down is what makes the letter appear under the finger
+                    // instead of after it. The cost is that a finger landing a little
+                    // off has already committed, where a keyboard that waits for the
+                    // lift quietly forgives it. So the lift is checked too: settle on
+                    // a different letter and that is the one that stays.
+                    val fk = firedKey
+                    if (fk != null && fk.code == Code.CHAR && fk.out.isNotEmpty() &&
+                        (Math.abs(x - downX) > dp(5f) || Math.abs(y - downY) > dp(5f))
+                    ) {
+                        val now = find(x, y)
+                        if (now != null && now !== fk &&
+                            now.code == Code.CHAR && now.out.isNotEmpty()
+                        ) {
+                            lastNear = neighbours(now)
+                            listener?.onReplaceChar(now.out)
+                        }
+                    }
+                }
+                firedKey = null
                 firedOnDown = false
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                firedKey = null
                 altArmed = false
                 handler.removeCallbacks(altRunnable)
                 if (altList.isNotEmpty()) closeAlts(false)
