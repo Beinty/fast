@@ -117,6 +117,10 @@ class ExpanderService : AccessibilityService() {
         ringing = false
         handler.removeCallbacksAndMessages(null)
         Speaker.stop()
+        // An utterance handed over a moment ago may only reach the speaker now, and
+        // stop() cannot cancel what has not started. Two more sweeps catch it.
+        handler.postDelayed({ if (!ringing) Speaker.stop() }, 260)
+        handler.postDelayed({ if (!ringing) Speaker.stop() }, 900)
     }
 
     private class Found(val name: String?, val number: String?)

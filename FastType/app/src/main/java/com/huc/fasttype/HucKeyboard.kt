@@ -643,6 +643,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         page = Pages.CLIP
         kv?.page = page
         kv?.rebuild()
+        buildShelf()
     }
 
     override fun onClipPick(index: Int) {
@@ -696,7 +697,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
     }
 
-    /** Re-reads what the gallery has, and what is waiting to be sent. */
+    /**
+     * Re-reads what the gallery has, off the main thread.
+     *
+     * This used to run where it was called from — which is the moment the keyboard is
+     * asked to appear. Asking MediaStore what it holds and then decoding eight
+     * screenshots is a third of a second of work, and all of it landed between his
+     * tap on the message box and the keyboard showing up. Nothing here is urgent
+     * enough to be in front of that.
+     */
     private fun syncPics() {
         if (!Store.kbPics || !Pics.allowed(this)) {
             if (Pics.ready != null) { Pics.clear(); kv?.stripChanged() }
@@ -705,10 +714,30 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             return
         }
         val px = (resources.displayMetrics.density * 96f).toInt()
-        val changed = Pics.refresh(this, px) || Pics.fromClipboard(this, px)
-        picList = Pics.recent(this, 8)
-        kv?.picShelf = picList.mapNotNull { Pics.thumb(this, it.uri, px) }
-        if (changed) kv?.stripChanged()
+        val app = applicationContext
+        Thread {
+            val changed = Pics.refresh(app, px) || Pics.fromClipboard(app, px)
+            val list = Pics.recent(app, 8)
+            ui.post {
+                picList = list
+                if (changed) kv?.stripChanged()
+            }
+        }.apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
+    }
+
+    /** Thumbnails cost real time to decode, so they wait until the page is opened. */
+    private fun buildShelf() {
+        val list = picList
+        if (list.isEmpty()) { kv?.picShelf = emptyList(); return }
+        val px = (resources.displayMetrics.density * 96f).toInt()
+        val app = applicationContext
+        Thread {
+            val thumbs = list.mapNotNull { Pics.thumb(app, it.uri, px) }
+            ui.post {
+                kv?.picShelf = thumbs
+                if (page == Pages.CLIP) kv?.invalidate()
+            }
+        }.apply { isDaemon = true; priority = Thread.MIN_PRIORITY }.start()
     }
 
     override fun onClipClose() {

@@ -98,12 +98,26 @@ object Speaker {
 
     // ---------- public speak paths ----------
 
+    /**
+     * Counts every request to speak, so one that has been called off cannot start.
+     *
+     * The engine may still be waking up when the phone rings. The announcement was
+     * handed to a callback that ran whenever the engine was finally ready — and if
+     * the caller had hung up by then, it read the number out to an ended call.
+     * Stopping now moves this on, and a start whose number no longer matches is
+     * dropped where it stands.
+     */
+    @Volatile private var gen = 0
+
     /** Call announcement: ducks the ringtone, speaks, then restores it. */
     fun announce(ctx: Context, text: String, times: Int) {
         if (text.isBlank()) return
+        val mine = ++gen
         val run = {
-            takeDuck(ctx)
-            speakNow(text, times, AudioManager.STREAM_MUSIC)
+            if (mine == gen) {
+                takeDuck(ctx)
+                speakNow(text, times, AudioManager.STREAM_MUSIC, mine)
+            }
         }
         if (ready) run() else ensure(ctx) { ok -> if (ok) run() }
     }
@@ -159,8 +173,9 @@ object Speaker {
         else ensure(ctx) { ok -> if (ok) speakNow(text, 1, AudioManager.STREAM_MUSIC) }
     }
 
-    private fun speakNow(text: String, times: Int, stream: Int) {
+    private fun speakNow(text: String, times: Int, stream: Int, mine: Int = gen) {
         val engine = tts ?: return
+        if (mine != gen) return
         applyProfile()
         val params = Bundle()
         params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, stream)
@@ -168,6 +183,9 @@ object Speaker {
         try {
             engine.stop()
             for (i in 0 until n) {
+                // the repeats are queued, so a call that ends mid-sentence must take
+                // the rest of the queue with it
+                if (mine != gen) { engine.stop(); return }
                 val mode = if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
                 val id = if (i == n - 1) "last_$i" else "huc_$i"
                 engine.speak(text, mode, params, id)
@@ -223,6 +241,8 @@ object Speaker {
     }
 
     fun stop() {
+        // anything waiting on the engine is now stale
+        gen++
         try {
             tts?.stop()
         } catch (_: Exception) {
