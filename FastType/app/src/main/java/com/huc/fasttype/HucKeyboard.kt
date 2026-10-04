@@ -360,7 +360,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     // ---------------- listener ----------------
 
-    override fun onChar(s: String) {
+    override fun onChar(raw: String) {
+        // A field that only takes numbers — a phone box, a code, an amount — will not
+        // understand ٠١٢. The keys keep showing Arabic digits; only what reaches the
+        // field changes, and only there.
+        val s = if (arabic) westernIfNumberField(raw) else raw
+
         if (transOn) {
             transBuf.append(s)
             // a space ends a word, and that is the moment a translation is worth having
@@ -533,6 +538,17 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             nearBuf.add(kv?.lastNear ?: "")
         }
         scheduleSugg()
+    }
+
+    private fun westernIfNumberField(s: String): String {
+        if (s.length != 1) return s
+        val c = s[0]
+        if (c < '\u0660' || c > '\u0669') return s
+        val cls = currentInputEditorInfo?.inputType?.and(android.text.InputType.TYPE_MASK_CLASS)
+        if (cls != android.text.InputType.TYPE_CLASS_NUMBER &&
+            cls != android.text.InputType.TYPE_CLASS_PHONE
+        ) return s
+        return ('0' + (c.code - 0x0660)).toString()
     }
 
     override fun onDelete() {

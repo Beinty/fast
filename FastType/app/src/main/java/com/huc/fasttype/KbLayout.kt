@@ -224,11 +224,18 @@ object KbLayout {
         weight = W_SYM, style = Style.DARK, code = Code.TO_ABC, arabic = ar, smallText = true
     )
 
+    /** ٠١٢٣ on the Arabic layout, 0123 on the English one. */
+    fun digits(ar: Boolean): String = if (ar) "٠١٢٣٤٥٦٧٨٩" else "0123456789"
+
     private fun numberRow(ar: Boolean): MutableList<Key> {
-        val show = if (ar) "١٢٣٤٥٦٧٨٩٠" else "1234567890"
-        val west = "1234567890"
+        // The key used to show ١ and type 1. What a key shows is what it should type.
+        val d = digits(ar)
+        val order = "1234567890"
         val out = ArrayList<Key>(10)
-        for (i in show.indices) out.add(Key(label = show[i].toString(), out = west[i].toString()))
+        for (c in order) {
+            val t = d[c - '0'].toString()
+            out.add(Key(label = t, out = t))
+        }
         return out
     }
 
@@ -271,10 +278,12 @@ object KbLayout {
             }
 
             Pages.SYM1 -> {
-                val show = if (arabic) "١٢٣٤٥٦٧٨٩٠" else "1234567890"
-                val west = "1234567890"
+                val d = digits(arabic)
                 val row1 = ArrayList<Key>(10)
-                for (i in show.indices) row1.add(Key(show[i].toString(), west[i].toString()))
+                for (c in "1234567890") {
+                    val t = d[c - '0'].toString()
+                    row1.add(Key(t, t))
+                }
                 r.add(row1)
                 r.add(chars("@#\$_&-+()/", false))
                 val row3 = ArrayList<Key>()
@@ -302,30 +311,39 @@ object KbLayout {
             }
 
             Pages.NPAD -> {
+                // Five columns, every key one wide, so the zero sits directly under
+                // the eight. The bottom row used to carry six keys against the other
+                // rows' five, which put every digit in it out of line with the column
+                // above. The operators own the first column; the keys that are not
+                // numbers at all own the last.
+                val d = digits(arabic)
+                fun dig(n: Int) = Key(d[n].toString(), d[n].toString())
+                val back = Key(
+                    label = if (arabic) "أبج" else "ABC",
+                    weight = 1f, style = Style.DARK, code = Code.TO_ABC,
+                    arabic = arabic, smallText = true
+                )
                 r.add(
                     mutableListOf(
-                        Key("+", "+", 1f, Style.DARK), Key("1", "1"), Key("2", "2"),
-                        Key("3", "3"), Key("%", "%", 1f, Style.DARK)
+                        Key("+", "+", 1f, Style.DARK), dig(1), dig(2), dig(3), back
                     )
                 )
                 r.add(
                     mutableListOf(
-                        Key("−", "-", 1f, Style.DARK), Key("4", "4"), Key("5", "5"),
-                        Key("6", "6"),
+                        Key("−", "-", 1f, Style.DARK), dig(4), dig(5), dig(6),
                         Key("", " ", 1f, Style.DARK, Code.SPACE, Ico.SPACE)
                     )
                 )
                 r.add(
                     mutableListOf(
-                        Key("×", "*", 1f, Style.DARK), Key("7", "7"), Key("8", "8"),
-                        Key("9", "9"),
+                        Key("×", "*", 1f, Style.DARK), dig(7), dig(8), dig(9),
                         Key("", "", 1f, Style.DARK, Code.DEL, Ico.DEL)
                     )
                 )
                 r.add(
                     mutableListOf(
-                        abcKey(arabic), Key("÷", "/", 1f, Style.DARK), Key("0", "0"),
-                        Key("=", "=", 1f, Style.DARK), Key(".", "."), enter()
+                        Key("÷", "/", 1f, Style.DARK), Key(".", "."), dig(0),
+                        Key(weight = 2f, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
                     )
                 )
             }
