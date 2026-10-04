@@ -858,9 +858,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onPage(p: Int) {
         feedback()
+        val v = kv
         page = p
-        kv?.page = p
-        kv?.rebuild()
+        v?.page = p
+        // the faces page shows the tools instead of suggestions, and holds them
+        // open, because tapping the same icon again is the way back
+        if (p == Pages.EMOJI) v?.setToolsOpen(true)
+        else if (v?.toolsAreOpen() == true) v.setToolsOpen(false)
+        v?.rebuild()
     }
 
     override fun onSuggestionTap() {
@@ -909,10 +914,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onTool(which: Int) {
         feedback()
         when (which) {
-            0 -> onMic()
-            1 -> openTranslate()
-            2 -> onClipTap()
-            3 -> {
+            // the faces page is a toggle: the same icon takes him there and back
+            0 -> onPage(if (page == Pages.EMOJI) Pages.LETTERS else Pages.EMOJI)
+            1 -> onMic()
+            2 -> openTranslate()
+            3 -> onClipTap()
+            4 -> {
                 try {
                     val i = Intent(this, MainActivity::class.java)
                     i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

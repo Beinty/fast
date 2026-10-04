@@ -238,7 +238,8 @@ object KbLayout {
     fun nextPage(page: Int): Int = when (page) {
         Pages.LETTERS -> Pages.SYM1
         Pages.SYM1, Pages.SYM2 -> Pages.NPAD
-        Pages.NPAD -> Pages.EMOJI
+        // the faces live in the tool strip now, so the ring is one step shorter
+        // and getting home from the number pad costs one tap instead of two
         else -> Pages.LETTERS
     }
 

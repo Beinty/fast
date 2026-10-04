@@ -138,7 +138,9 @@ class KeyboardView(context: Context) : View(context) {
     private val panelPadBottom get() = keyH * 0.164f
     private var suggH = dp(30f)
     /** The strip is also the language bar, so translate mode keeps it even if off. */
-    private val stripVisible get() = (showSugg || transOn) && page != Pages.EMOJI
+    // The faces page keeps the strip: it is the one place that has nothing to
+    // suggest, and the one place he most needs a way back out.
+    private val stripVisible get() = showSugg || transOn || page == Pages.EMOJI
     /** Height of the translate box row. */
     private val transH get() = suggH * 1.18f
     private var suggRad = dp(12f)
@@ -301,7 +303,7 @@ class KeyboardView(context: Context) : View(context) {
     private val REC = 0xFFD93025.toInt()
 
     /** Voice, translate, clipboard, settings — the order they sit in the bar. */
-    private val TOOL_ICONS = intArrayOf(Ico.MIC, Ico.TRANS, Ico.CLIP, Ico.COG)
+    private val TOOL_ICONS = intArrayOf(Ico.SMILE, Ico.MIC, Ico.TRANS, Ico.CLIP, Ico.COG)
 
     private val toolsRunnable = object : Runnable {
         override fun run() {
@@ -318,6 +320,8 @@ class KeyboardView(context: Context) : View(context) {
 
     /** Opens or shuts the icon bar that rides over the suggestions. */
     fun setToolsOpen(open: Boolean) {
+        // on the faces page the tools are the only way back, so they stay
+        if (!open && page == Pages.EMOJI) return
         if (toolsOpen == open) return
         toolsOpen = open
         handler.removeCallbacks(toolsRunnable)
@@ -746,12 +750,23 @@ class KeyboardView(context: Context) : View(context) {
                     bgPaint.color = theme.keyDown
                     canvas.drawCircle(tcx, cy, micW * 0.46f, bgPaint)
                 }
-                val rec = i == 0 && listening
+                val rec = TOOL_ICONS[i] == Ico.MIC && listening
                 if (rec) {
                     bgPaint.color = REC
                     canvas.drawCircle(tcx, cy, micW * 0.46f, bgPaint)
                 }
-                icoPaint.color = if (rec) 0xFFFFFFFF.toInt() else theme.outer
+                // the faces icon is lit while he is on that page, so the strip says
+                // where he is and the same tap takes him back
+                val here = TOOL_ICONS[i] == Ico.SMILE && page == Pages.EMOJI
+                if (here) {
+                    bgPaint.color = theme.go
+                    canvas.drawCircle(tcx, cy, micW * 0.46f, bgPaint)
+                }
+                icoPaint.color = when {
+                    rec -> 0xFFFFFFFF.toInt()
+                    here -> theme.goIcon
+                    else -> theme.outer
+                }
                 icoPaint.alpha = (255 * toolsT).toInt()
                 icoPaint.strokeWidth = dp(1.7f)
                 drawIcon(canvas, TOOL_ICONS[i], tcx, cy, suggH * 0.44f)
@@ -785,11 +800,11 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
-    /** Four evenly spaced circles at the end of the strip nearest the gear. */
+    /** Evenly spaced circles at the end of the strip nearest the gear. */
     private fun layoutTools(zoneLeft: Float, zoneRight: Float, top: Float, bottom: Float) {
         toolRects.clear()
         val step = micW + dp(3f)
-        for (i in 0 until 4) {
+        for (i in TOOL_ICONS.indices) {
             val cx = zoneRight - micW / 2f - i * step
             toolRects.add(RectF(cx - micW / 2f, top, cx + micW / 2f, bottom))
         }
