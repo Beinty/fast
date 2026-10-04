@@ -110,6 +110,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val own = UserDict.fixFor(typed, arabic)
         if (own != null) return own
         if (Store.kbLearn && UserDict.isOwn(typed, arabic)) return null
+        // A real word is never a mistake. His own words are allowed to pull a
+        // misspelling towards them, but not a word that already stands on its own:
+        // he writes "بينتي" every day, and that must not turn "بيتي" into it.
+        if (Dict.known(typed, arabic)) return null
         UserDict.correct(typed, arabic)?.let { return it }
         val prev = lastWord
         val rate: ((String) -> Float)? =
