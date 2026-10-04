@@ -425,12 +425,16 @@ class KeyboardView(context: Context) : View(context) {
     fun rebuild() {
         if (page == Pages.CLIP) clipScroll = 0f
         if (page == Pages.LANGS) langScroll = 0f
+        val was = if (width > 0) contentHeight() else -1f
         val forRows = if (page == Pages.LANGS) Pages.CLIP else page
         rows = if (page == Pages.EMOJI) listOf(KbLayout.emojiBottom(arabic))
         else KbLayout.rows(forRows, arabic, shift, numRow)
         if (page == Pages.EMOJI) buildEmoji()
         if (width > 0) measureKeys(width.toFloat())
-        requestLayout()
+        // Letters and symbols are the same height, and that is the switch he taps
+        // most. Asking the window to measure itself again for a board that has not
+        // changed size costs a frame for nothing, so only ask when it has.
+        if (was < 0f || Math.abs(contentHeight() - was) > 0.5f) requestLayout()
         invalidate()
     }
 
@@ -1352,6 +1356,38 @@ class KeyboardView(context: Context) : View(context) {
     private val globeRect = RectF()
     private val micRect = RectF()
 
+    /**
+     * Holding the switch key.
+     *
+     * The tap already changed the page the instant his finger landed — that is the
+     * whole point of the key — so the hold cannot work out where to go from where it
+     * finds itself. It remembers the page the finger came down on and decides from
+     * that, which makes a hold land in the same place every time.
+     */
+    private var cycleArmed = false
+    private var cycleFrom = Pages.LETTERS
+    private val cycleHoldRunnable = Runnable {
+        if (!cycleArmed) return@Runnable
+        cycleArmed = false
+        pressed = null
+        val to = KbLayout.holdPage(cycleFrom)
+        if (to != page) {
+            try {
+                performHapticFeedback(
+                    android.view.HapticFeedbackConstants.LONG_PRESS,
+                    android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+                )
+            } catch (_: Throwable) {}
+            listener?.onPage(to)
+        }
+    }
+
+    private fun cancelCycleHold() {
+        if (!cycleArmed) return
+        cycleArmed = false
+        handler.removeCallbacks(cycleHoldRunnable)
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val x = e.x
@@ -1440,6 +1476,11 @@ class KeyboardView(context: Context) : View(context) {
                 }
 
                 pressed = k
+                if (k.code == Code.CYCLE) {
+                    cycleArmed = true
+                    cycleFrom = page
+                    handler.postDelayed(cycleHoldRunnable, 320)
+                }
                 // a key with alternates waits before typing: the character is only
                 // committed once it is clear this is a tap and not a hold
                 if (altsOn && KbLayout.altsFor(k) != null) {
@@ -1478,7 +1519,9 @@ class KeyboardView(context: Context) : View(context) {
                 if (outerH > 0f && py >= globeRect.top) return true
                 val k2 = find(px, py) ?: return true
                 // a held delete or a modifier is a gesture, not a tap to repeat
-                if (k2.code == Code.DEL || k2.code == Code.SHIFT) return true
+                if (k2.code == Code.DEL || k2.code == Code.SHIFT ||
+                    k2.code == Code.CYCLE
+                ) return true
                 fire(k2)
                 return true
             }
@@ -1538,6 +1581,9 @@ class KeyboardView(context: Context) : View(context) {
                     blankArmed = false
                     handler.removeCallbacks(blankRunnable)
                 }
+                if (cycleArmed && (Math.abs(x - downX) > dp(12f) ||
+                        Math.abs(y - downY) > dp(12f))
+                ) cancelCycleHold()
                 if (page == Pages.EMOJI && !scrolling &&
                     Math.abs(y - downY) > dp(6f) && downY >= emojiTop && downY <= emojiBottom
                 ) scrolling = true
@@ -1552,6 +1598,7 @@ class KeyboardView(context: Context) : View(context) {
                 stopRepeat()
                 blankArmed = false
                 handler.removeCallbacks(blankRunnable)
+                cancelCycleHold()
 
                 if (page == Pages.CLIP) {
                     val i = clipPressed
@@ -1683,6 +1730,7 @@ class KeyboardView(context: Context) : View(context) {
 
             MotionEvent.ACTION_CANCEL -> {
                 firedKey = null
+                cancelCycleHold()
                 altArmed = false
                 handler.removeCallbacks(altRunnable)
                 if (altList.isNotEmpty()) closeAlts(false)
@@ -1895,6 +1943,7 @@ class KeyboardView(context: Context) : View(context) {
             Code.TO_ABC -> listener?.onPage(Pages.LETTERS)
             Code.TO_EMOJI -> listener?.onPage(Pages.EMOJI)
             Code.TO_NPAD -> listener?.onPage(Pages.NPAD)
+            Code.CYCLE -> listener?.onPage(KbLayout.nextPage(page))
             else -> if (k.out.isNotEmpty()) listener?.onChar(k.out)
         }
     }

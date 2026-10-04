@@ -13,6 +13,13 @@ object Code {
     const val TO_EMOJI = 8
     const val TO_NPAD = 9
     const val TO_SYM2 = 10
+
+    /**
+     * One key, every page. A tap moves to the next page in a fixed ring; a hold
+     * jumps straight home (or, from the symbols, to the second symbol page, which
+     * is the only place that key used to live).
+     */
+    const val CYCLE = 11
 }
 
 /** Key visual style. */
@@ -172,7 +179,6 @@ object KbLayout {
     const val W_EMOJI = 1.30f
     const val W_GO = 2.85f
     const val W_SPACE = 5.88f
-    const val W_SPACE_GLOBE = 4.40f
     const val W_ROW2_PAD = 0.62f
     const val GAP_MOD = 2.05f
 
@@ -182,17 +188,67 @@ object KbLayout {
 
     private fun del() = Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
     private fun enter() = Key(weight = W_GO, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
-    private fun emoji() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.TO_EMOJI, icon = Ico.SMILE)
     private fun globe() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.LANG, icon = Ico.GLOBE)
     private fun pad() = Key(weight = W_ROW2_PAD, spacer = true)
 
     private fun space(ar: Boolean) =
         Key(label = if (ar) "العربية" else "English", out = " ",
-            weight = if (globeInRow) W_SPACE_GLOBE else W_SPACE,
+            weight = if (globeInRow) W_SPACE else W_SPACE + W_EMOJI,
             code = Code.SPACE, arabic = ar)
 
-    private fun lastRow(ar: Boolean, first: Key): MutableList<Key> {
-        val out = mutableListOf(first, emoji())
+    /**
+     * The ring the switch key walks: letters, symbols, numbers, faces, back.
+     * The second symbol page counts as symbols, so a tap there still reaches the
+     * number pad rather than stranding him.
+     */
+    fun nextPage(page: Int): Int = when (page) {
+        Pages.LETTERS -> Pages.SYM1
+        Pages.SYM1, Pages.SYM2 -> Pages.NPAD
+        Pages.NPAD -> Pages.EMOJI
+        else -> Pages.LETTERS
+    }
+
+    /** Where a hold on the switch key lands. */
+    fun holdPage(page: Int): Int =
+        if (page == Pages.SYM1) Pages.SYM2 else Pages.LETTERS
+
+    /**
+     * The switch key. Its face says where the next tap goes, so he never has to
+     * remember the order — and it keeps the same cell on every page, bottom left of
+     * the last row, because a key that moves is a key the thumb has to look for.
+     */
+    private fun cycle(ar: Boolean, page: Int, w: Float = W_SYM): Key {
+        val to = nextPage(page)
+        return when (to) {
+            Pages.NPAD -> Key(
+                label = if (ar) "١٢٣٤" else "1234",
+                weight = w, style = Style.DARK, code = Code.CYCLE,
+                arabic = ar, smallText = true
+            )
+            Pages.EMOJI -> Key(
+                weight = w, style = Style.DARK, code = Code.CYCLE, icon = Ico.SMILE
+            )
+            Pages.LETTERS -> Key(
+                label = if (ar) "أبج" else "ABC",
+                weight = w, style = Style.DARK, code = Code.CYCLE,
+                arabic = ar, smallText = true
+            )
+            else -> Key(
+                label = if (ar) "؟١٢٣" else "?123",
+                weight = w, style = Style.DARK, code = Code.CYCLE,
+                arabic = ar, smallText = true
+            )
+        }
+    }
+
+    /**
+     * Switch, language, space, action — the same four on letters and on symbols.
+     * The face key is gone; the globe stands exactly where it stood, and the
+     * remaining width goes back to the space bar, which puts it in the middle of
+     * the screen with equal room on both sides.
+     */
+    private fun lastRow(ar: Boolean, page: Int): MutableList<Key> {
+        val out = mutableListOf(cycle(ar, page))
         if (globeInRow) out.add(globe())
         out.add(space(ar))
         out.add(enter())
@@ -205,24 +261,6 @@ object KbLayout {
         keys.add(pad())
         return keys
     }
-
-    private fun lastRowWithNpad(ar: Boolean, first: Key): MutableList<Key> =
-        mutableListOf(
-            first, emoji(), space(ar),
-            Key(if (ar) "١٢٣٤" else "1234", "", 1f, Style.DARK, Code.TO_NPAD,
-                arabic = ar, smallText = true),
-            enter()
-        )
-
-    private fun symKey(ar: Boolean) = Key(
-        label = if (ar) "؟١٢٣" else "?123",
-        weight = W_SYM, style = Style.DARK, code = Code.TO_SYM, arabic = ar, smallText = true
-    )
-
-    private fun abcKey(ar: Boolean) = Key(
-        label = if (ar) "أبج" else "ABC",
-        weight = W_SYM, style = Style.DARK, code = Code.TO_ABC, arabic = ar, smallText = true
-    )
 
     /** ٠١٢٣ on the Arabic layout, 0123 on the English one. */
     fun digits(ar: Boolean): String = if (ar) "٠١٢٣٤٥٦٧٨٩" else "0123456789"
@@ -274,7 +312,7 @@ object KbLayout {
                     third.add(del())
                     r.add(third)
                 }
-                r.add(lastRow(arabic, symKey(arabic)))
+                r.add(lastRow(arabic, Pages.LETTERS))
             }
 
             Pages.SYM1 -> {
@@ -287,11 +325,19 @@ object KbLayout {
                 r.add(row1)
                 r.add(chars("@#\$_&-+()/", false))
                 val row3 = ArrayList<Key>()
-                row3.add(Key("=\\<", "", W_MOD, Style.DARK, Code.TO_SYM2, smallText = true))
+                // The =\< key is gone. One tap home is worth more than a page he
+                // opened by accident; its characters are a hold on the switch key.
+                row3.add(
+                    Key(
+                        label = if (arabic) "أبج" else "ABC",
+                        weight = W_MOD, style = Style.DARK, code = Code.TO_ABC,
+                        arabic = arabic, smallText = true
+                    )
+                )
                 row3.addAll(chars(if (arabic) "*\"':؛!؟" else "*\"':;!?", arabic))
                 row3.add(del())
                 r.add(row3)
-                r.add(lastRowWithNpad(arabic, abcKey(arabic)))
+                r.add(lastRow(arabic, Pages.SYM1))
             }
 
             Pages.SYM2 -> {
@@ -307,7 +353,7 @@ object KbLayout {
                 row3.addAll(chars("%©®™✓[]", false))
                 row3.add(del())
                 r.add(row3)
-                r.add(lastRow(arabic, abcKey(arabic)))
+                r.add(lastRow(arabic, Pages.SYM2))
             }
 
             Pages.NPAD -> {
@@ -316,16 +362,15 @@ object KbLayout {
                 // rows' five, which put every digit in it out of line with the column
                 // above. The operators own the first column; the keys that are not
                 // numbers at all own the last.
+                // The switch key belongs in the same corner it holds everywhere else —
+                // bottom left — so the thumb learns one place. Division moves up beside
+                // multiplication to free that cell; no key is lost and no digit moves.
                 val d = digits(arabic)
                 fun dig(n: Int) = Key(d[n].toString(), d[n].toString())
-                val back = Key(
-                    label = if (arabic) "أبج" else "ABC",
-                    weight = 1f, style = Style.DARK, code = Code.TO_ABC,
-                    arabic = arabic, smallText = true
-                )
                 r.add(
                     mutableListOf(
-                        Key("+", "+", 1f, Style.DARK), dig(1), dig(2), dig(3), back
+                        Key("+", "+", 1f, Style.DARK), dig(1), dig(2), dig(3),
+                        Key("", "", 1f, Style.DARK, Code.DEL, Ico.DEL)
                     )
                 )
                 r.add(
@@ -337,12 +382,12 @@ object KbLayout {
                 r.add(
                     mutableListOf(
                         Key("×", "*", 1f, Style.DARK), dig(7), dig(8), dig(9),
-                        Key("", "", 1f, Style.DARK, Code.DEL, Ico.DEL)
+                        Key("÷", "/", 1f, Style.DARK)
                     )
                 )
                 r.add(
                     mutableListOf(
-                        Key("÷", "/", 1f, Style.DARK), Key(".", "."), dig(0),
+                        cycle(arabic, Pages.NPAD, 1f), Key(".", "."), dig(0),
                         Key(weight = 2f, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
                     )
                 )
@@ -353,8 +398,9 @@ object KbLayout {
 
     /** Bottom row for the emoji page. */
     fun emojiBottom(arabic: Boolean): List<Key> = mutableListOf(
-        abcKey(arabic),
-        space(arabic),
+        cycle(arabic, Pages.EMOJI),
+        Key(label = if (arabic) "العربية" else "English", out = " ",
+            weight = W_SPACE + W_EMOJI + (W_GO - W_MOD), code = Code.SPACE, arabic = arabic),
         Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
     )
 }
