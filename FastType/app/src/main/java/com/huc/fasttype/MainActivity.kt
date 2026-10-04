@@ -616,6 +616,21 @@ class MainActivity : Activity() {
                     out.write(Store.serialize(data).toByteArray(Charsets.UTF_8))
                 }
                 toast("تم التصدير")
+            } else if (requestCode == REQ_SAVE_LEARN) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    out.write(UserDict.exportText().toByteArray(Charsets.UTF_8))
+                }
+                toast("انحفظ — ${UserDict.learned()} كلمة")
+            } else if (requestCode == REQ_LOAD_LEARN) {
+                val text = contentResolver.openInputStream(uri)?.use { inp ->
+                    inp.readBytes().toString(Charsets.UTF_8)
+                } ?: return
+                if (text.isBlank() || !UserDict.importText(text)) {
+                    toast("الملف مو صحيح")
+                } else {
+                    toast("انسترجع — صار ${UserDict.learned()} كلمة")
+                    recreate()
+                }
             } else if (requestCode == REQ_IMPORT) {
                 val raw = contentResolver.openInputStream(uri)?.use { inp ->
                     inp.readBytes().toString(Charsets.UTF_8)
@@ -1241,36 +1256,6 @@ class MainActivity : Activity() {
             startActivityForResult(i, REQ_LOAD_LEARN)
         } catch (_: Exception) {
             toast("ما كدرت أفتح نافذة الاختيار")
-        }
-    }
-
-    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
-        super.onActivityResult(req, res, data)
-        if (res != RESULT_OK) return
-        val uri = data?.data ?: return
-        if (req == REQ_SAVE_LEARN) {
-            try {
-                contentResolver.openOutputStream(uri)?.use { o ->
-                    o.write(UserDict.exportText().toByteArray(Charsets.UTF_8))
-                }
-                toast("انحفظ — ${UserDict.learned()} كلمة")
-            } catch (_: Exception) {
-                toast("ما كدرت أكتب الملف")
-            }
-        } else if (req == REQ_LOAD_LEARN) {
-            try {
-                val text = contentResolver.openInputStream(uri)?.use { i ->
-                    i.readBytes().toString(Charsets.UTF_8)
-                } ?: ""
-                if (text.isBlank() || !UserDict.importText(text)) {
-                    toast("الملف مو صحيح")
-                } else {
-                    toast("انسترجع — صار ${UserDict.learned()} كلمة")
-                    recreate()
-                }
-            } catch (_: Exception) {
-                toast("ما كدرت أقرا الملف")
-            }
         }
     }
 
