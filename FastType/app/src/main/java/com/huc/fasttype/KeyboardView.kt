@@ -1797,20 +1797,23 @@ class KeyboardView(context: Context) : View(context) {
         altRows = if (list.size > 8) 2 else 1
 
         txtPaint.typeface = if (k.arabic) arFont else enFont
-        txtPaint.textSize = keyH * 0.52f
-        var cell = keyH * 0.95f
-        for (a in altShow) cell = max(cell, txtPaint.measureText(a) + dp(14f))
+        txtPaint.textSize = keyH * (if (altRows > 1) 0.46f else 0.52f)
+        val grid = altRows > 1
+        var cell = keyH * (if (grid) 0.74f else 0.95f)
+        for (a in altShow) cell = max(cell, txtPaint.measureText(a) + dp(if (grid) 8f else 14f))
         val padding = dp(4f)
-        // a wide grid must still fit the panel, so the cell gives way before the row does
-        val room = width - zonePad * 2f - dp(4f) - padding * 2f
+        // A bubble that reaches both edges of the keyboard reads as another row of
+        // keys rather than something floating over them. It is held well inside,
+        // and the cell gives way before the row does.
+        val room = (width - zonePad * 2f) * 0.84f - padding * 2f
         if (cell * altCols > room) cell = room / altCols
         altCellW = cell
-        altCellH = keyH * 1.02f
+        altCellH = keyH * (if (grid) 0.88f else 1.02f)
 
         val w = cell * altCols + padding * 2f
         val h = altCellH * altRows + padding * 2f
-        // centred over the key, pulled inside when it would run past an edge
-        val cx = k.x + k.w / 2f
+        // one row sits over its key; a grid is too wide for that and is centred
+        val cx = if (grid) width / 2f else k.x + k.w / 2f
         var left = cx - w / 2f
         left = left.coerceIn(zonePad + dp(2f), width - zonePad - w - dp(2f))
         var top = k.y - h - dp(6f)
