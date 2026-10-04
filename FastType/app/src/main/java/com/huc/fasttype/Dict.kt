@@ -299,7 +299,16 @@ object Dict {
      * keeps dialect and names safe. Words shorter than four letters are left alone
      * too, since Iraqi is full of short words no corpus carries.
      */
-    fun correctNear(word: String, nears: List<String>, arabic: Boolean): String? {
+    /**
+     * [rate] lets the caller judge a candidate by more than its spelling: given the
+     * word, it returns a multiplier on the score, below one for a word he is more
+     * likely to have meant here. Only the few best spellings are ever handed to it,
+     * so the scan itself stays free of allocation.
+     */
+    fun correctNear(
+        word: String, nears: List<String>, arabic: Boolean,
+        rate: ((String) -> Float)? = null
+    ): String? {
         val l = lang(arabic) ?: return null
         if (word.length < 4 || word.length > 18) return null
         val f = fold(word, arabic)
@@ -321,8 +330,11 @@ object Dict {
         if (look(n) >= 0) return null
 
         val letters = if (arabic) AR_LETTERS else EN_LETTERS
-        var bestIdx = -1
-        var bestScore = CUT
+
+        // the best few spellings, worst of them last, so the caller can weigh them
+        val topN = if (rate == null) 1 else 6
+        val topIdx = IntArray(topN) { -1 }
+        val topScore = FloatArray(topN) { CUT }
 
         fun offer(len: Int, weight: Float) {
             val i = look(len)
@@ -330,7 +342,21 @@ object Dict {
             // the handful of commonest words are not immune; the offset stops their
             // score collapsing to nothing and winning under any weight
             val score = (l.rank(i) + 40) * weight
-            if (score < bestScore) { bestScore = score; bestIdx = i }
+            if (score >= topScore[topN - 1]) return
+            for (t in 0 until topN) {
+                if (topIdx[t] == i) {
+                    if (score < topScore[t]) topScore[t] = score
+                    return
+                }
+            }
+            var at = topN - 1
+            while (at > 0 && topScore[at - 1] > score) {
+                topScore[at] = topScore[at - 1]
+                topIdx[at] = topIdx[at - 1]
+                at--
+            }
+            topScore[at] = score
+            topIdx[at] = i
         }
 
         // one letter replaced by another
@@ -371,7 +397,19 @@ object Dict {
             }
         }
 
-        if (bestIdx < 0) return null
+        if (topIdx[0] < 0) return null
+
+        var bestIdx = topIdx[0]
+        if (rate != null) {
+            var bestScore = Float.MAX_VALUE
+            for (t in 0 until topN) {
+                val i = topIdx[t]
+                if (i < 0) continue
+                val cand = shownAt(l, i)
+                val s = topScore[t] * rate(cand)
+                if (s < bestScore) { bestScore = s; bestIdx = i }
+            }
+        }
         val b = shownAt(l, bestIdx)
         return if (b == word) null else b
     }

@@ -33,6 +33,11 @@ import java.util.Locale
 
 class MainActivity : Activity() {
 
+    private companion object {
+        const val REQ_SAVE_LEARN = 4101
+        const val REQ_LOAD_LEARN = 4102
+    }
+
     private val BG = Color.parseColor("#0E0F11")
     private val CARD = Color.parseColor("#17191C")
     private val TXT = Color.parseColor("#FFFFFF")
@@ -835,11 +840,33 @@ class MainActivity : Activity() {
         }, lp(true, bottom = dp(8)))
         p.addView(switchRow(
             "يتعلّم من كتابتك",
-            "يحفظ الكلمات اللي تكتبها ويقدّمها، وما يصحّح كلمة ترفض تصحيحها — تعلّم ${UserDict.learned()} كلمة",
+            "يحفظ كلماتك ويقدّمها، ويصحّح حسب اللي تكتبه عادةً بهذا المكان — " +
+                "تعلّم ${UserDict.learned()} كلمة و${UserDict.fixCount()} تصحيح",
             Store.kbLearn
         ) {
             Store.setKbFlag(this, "learn", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+
+        val learnRow = LinearLayout(this)
+        learnRow.orientation = LinearLayout.HORIZONTAL
+        learnRow.gravity = Gravity.CENTER_VERTICAL
+        learnRow.background = round(CARD)
+        learnRow.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val learnLabel = TextView(this)
+        learnLabel.text = "نسخة احتياطية لتعلّمك"
+        learnLabel.setTextColor(TXT)
+        learnLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        learnRow.addView(
+            learnLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val learnArrow = TextView(this)
+        learnArrow.text = "حفظ / استرجاع ›"
+        learnArrow.setTextColor(ACC)
+        learnArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        learnRow.addView(learnArrow)
+        learnRow.setOnClickListener { learnBackup() }
+        p.addView(learnRow, lp(true, bottom = dp(8)))
         p.addView(switchRow("الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون",
             Store.kbHair) {
             Store.setKbFlag(this, "hair", it); syncPreview()
@@ -1172,6 +1199,79 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("بعدين", null)
             .show()
+    }
+
+    /**
+     * His learning, as a file he keeps.
+     *
+     * A keyboard that has learnt someone for a year is worth something, and losing
+     * it to a new phone is the kind of loss that is nobody's fault and still hurts.
+     * Restoring adds to what is already here rather than replacing it.
+     */
+    private fun learnBackup() {
+        AlertDialog.Builder(this)
+            .setTitle("نسخة احتياطية لتعلّمك")
+            .setMessage(
+                "محفوظ حالياً: ${UserDict.learned()} كلمة و${UserDict.fixCount()} تصحيح.\n\n" +
+                    "الملف يحتوي كلماتك فقط — ولا جملة ولا رسالة ولا شي كتبته."
+            )
+            .setPositiveButton("حفظ ملف") { _, _ -> saveLearn() }
+            .setNeutralButton("استرجاع") { _, _ -> pickLearn() }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
+    private fun saveLearn() {
+        try {
+            val i = Intent(Intent.ACTION_CREATE_DOCUMENT)
+            i.addCategory(Intent.CATEGORY_OPENABLE)
+            i.type = "application/json"
+            i.putExtra(Intent.EXTRA_TITLE, "fasttype-learning.json")
+            startActivityForResult(i, REQ_SAVE_LEARN)
+        } catch (_: Exception) {
+            toast("ما كدرت أفتح نافذة الحفظ")
+        }
+    }
+
+    private fun pickLearn() {
+        try {
+            val i = Intent(Intent.ACTION_OPEN_DOCUMENT)
+            i.addCategory(Intent.CATEGORY_OPENABLE)
+            i.type = "*/*"
+            startActivityForResult(i, REQ_LOAD_LEARN)
+        } catch (_: Exception) {
+            toast("ما كدرت أفتح نافذة الاختيار")
+        }
+    }
+
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (res != RESULT_OK) return
+        val uri = data?.data ?: return
+        if (req == REQ_SAVE_LEARN) {
+            try {
+                contentResolver.openOutputStream(uri)?.use { o ->
+                    o.write(UserDict.exportText().toByteArray(Charsets.UTF_8))
+                }
+                toast("انحفظ — ${UserDict.learned()} كلمة")
+            } catch (_: Exception) {
+                toast("ما كدرت أكتب الملف")
+            }
+        } else if (req == REQ_LOAD_LEARN) {
+            try {
+                val text = contentResolver.openInputStream(uri)?.use { i ->
+                    i.readBytes().toString(Charsets.UTF_8)
+                } ?: ""
+                if (text.isBlank() || !UserDict.importText(text)) {
+                    toast("الملف مو صحيح")
+                } else {
+                    toast("انسترجع — صار ${UserDict.learned()} كلمة")
+                    recreate()
+                }
+            } catch (_: Exception) {
+                toast("ما كدرت أقرا الملف")
+            }
+        }
     }
 
     private fun latinModeName(): String = when (Store.callerLatin) {

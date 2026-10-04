@@ -99,13 +99,23 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         specFix = findFix(w)
     }
 
-    /** The one place that decides what a mistyped word should have been. */
+    /**
+     * The one place that decides what a mistyped word should have been.
+     *
+     * The word before it is part of the question. Two candidates can sit the same
+     * distance from what he typed and only one of them is a word he ever writes
+     * there, and that is the one he meant.
+     */
     private fun findFix(typed: String): String? {
         val own = UserDict.fixFor(typed, arabic)
         if (own != null) return own
         if (Store.kbLearn && UserDict.isOwn(typed, arabic)) return null
-        return UserDict.correct(typed, arabic)
-            ?: Dict.correctNear(typed, nearBuf, arabic)
+        UserDict.correct(typed, arabic)?.let { return it }
+        val prev = lastWord
+        val rate: ((String) -> Float)? =
+            if (Store.kbLearn) { cand -> UserDict.contextWeight(prev, cand, arabic) }
+            else null
+        return Dict.correctNear(typed, nearBuf, arabic, rate)
     }
 
     private fun scheduleSugg() {
@@ -869,7 +879,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             val prev = if (whole && buffer.isNotEmpty()) buffer.toString() else lastWord
             if (prev.isNotEmpty()) UserDict.seenPair(prev, word, arabic)
         }
-        lastWord = word
+        // a whole line leaves its last word behind as the context for the next one
+        lastWord = if (word.indexOf(' ') >= 0) word.substringAfterLast(' ') else word
         resetWord()
         undoTyped = null
         undoFixed = null
@@ -1251,6 +1262,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
             // then every completion of the word being typed
             if (word.isNotEmpty()) {
+                // a line he writes often, offered whole rather than a word at a time
+                if (Store.kbLearn && zones.size < MAX_SUGG) {
+                    UserDict.phrase(word, arabic)?.let {
+                        if (!zones.contains(it)) { zones.add(it); kinds.add(false) }
+                    }
+                }
                 val mine =
                     if (Store.kbLearn) UserDict.predict(word, arabic, 4) else emptyList()
                 for (w in mine + Dict.predict(word, arabic, MAX_SUGG)) {
