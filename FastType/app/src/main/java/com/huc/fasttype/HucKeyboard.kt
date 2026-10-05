@@ -85,18 +85,53 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      */
     private var specWord = ""
     private var specFix: String? = null
+    private var specConf = 0f
     private var specDone = false
+
+    /**
+     * Where the searching happens.
+     *
+     * One background thread, not a pool: the work is a queue of guesses about one
+     * word, and the only one worth having is the newest. Everything heavy — the
+     * repair search and the dictionary scan behind the strip — runs here, and the
+     * drawing thread is left to draw.
+     */
+    private val worker by lazy {
+        android.os.HandlerThread("huc-think", android.os.Process.THREAD_PRIORITY_BACKGROUND)
+            .also { it.start() }
+    }
+    private val bg by lazy { Handler(worker.looper) }
+
+    /** Bumped on every keystroke; an answer about an older word is dropped. */
+    private var think = 0
 
     private val specJob = Runnable { speculate() }
 
     private fun speculate() {
         val w = buffer.toString()
         if (specDone && w == specWord) return
-        specWord = w
-        specDone = true
-        specFix = null
-        if (!Store.kbCorrect || w.length < 4) return
-        specFix = findFix(w)
+        if (!Store.kbCorrect || w.length < 4) {
+            specWord = w; specDone = true; specFix = null; specConf = 0f
+            return
+        }
+        // the touch trail and the words before are read here, on the thread that
+        // owns them, and handed over as a snapshot
+        val near = ArrayList(nearBuf)
+        val p1 = lastWord
+        val p2 = prevWord
+        val ar = arabic
+        val mine = ++think
+        bg.post {
+            val fix = findFix(w, near, p1, p2, ar)
+            val conf = if (fix == null) 0f else lastFixConf
+            ui.post {
+                if (mine != think) return@post
+                specWord = w
+                specDone = true
+                specFix = fix
+                specConf = conf
+            }
+        }
     }
 
     /**
@@ -106,21 +141,32 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      * distance from what he typed and only one of them is a word he ever writes
      * there, and that is the one he meant.
      */
-    private fun findFix(typed: String): String? {
-        val own = UserDict.fixFor(typed, arabic)
-        if (own != null) return own
-        if (Store.kbLearn && UserDict.isOwn(typed, arabic)) return null
+    /** How sure the last call to [findFix] was, from 0 to 1. */
+    @Volatile private var lastFixConf = 0f
+
+    private fun findFix(
+        typed: String, near: List<String>, prev: String, prev2: String, ar: Boolean
+    ): String? {
+        // a repair he taught us himself is not a guess
+        val own = UserDict.fixFor(typed, ar)
+        if (own != null) { lastFixConf = 1f; return own }
+        if (Store.kbLearn && UserDict.isOwn(typed, ar)) { lastFixConf = 0f; return null }
         // A real word is never a mistake. His own words are allowed to pull a
         // misspelling towards them, but not a word that already stands on its own:
         // he writes "بينتي" every day, and that must not turn "بيتي" into it.
-        if (Dict.known(typed, arabic)) return null
-        UserDict.correct(typed, arabic)?.let { return it }
-        val prev = lastWord
+        if (Dict.known(typed, ar)) { lastFixConf = 0f; return null }
+        UserDict.correct(typed, ar)?.let { lastFixConf = 0.95f; return it }
         val rate: ((String) -> Float)? =
-            if (Store.kbLearn) { cand -> UserDict.contextWeight(prev, cand, arabic) }
+            if (Store.kbLearn) { cand -> UserDict.contextWeight(prev2, prev, cand, ar) }
             else null
-        return Dict.correctNear(typed, nearBuf, arabic, rate)
+        val out = Dict.correctNear(typed, near, ar, rate)
+        lastFixConf = if (out == null) 0f else Dict.lastConfidence
+        return out
     }
+
+    /** The straight path, for the moment space is pressed and nothing is ready. */
+    private fun findFixNow(typed: String): String? =
+        findFix(typed, nearBuf, lastWord, prevWord, arabic)
 
     private fun scheduleSugg() {
         ui.removeCallbacks(suggJob)
@@ -152,6 +198,20 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var repeatingDel = false
     /** The last finished word, so the strip can offer what usually follows it. */
     private var lastWord = ""
+
+    /** The word before [lastWord] — two of history is what sharpens a guess. */
+    private var prevWord = ""
+
+    /**
+     * A repair the engine believes in but not enough to make on its own. It goes
+     * to the front of the strip instead of into his sentence.
+     */
+    private var offered: String? = null
+    private var offeredFor = ""
+    private var offeredEnd = ""
+
+    /** Below this a correction is offered rather than applied. */
+    private val SURE = 0.58f
     private var lastSpaceAt = 0L
     /** For each strip zone: true when it is a new word, false when it completes one. */
     private var suggKinds: List<Boolean> = emptyList()
@@ -283,6 +343,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onDestroy() {
+        try { worker.quitSafely() } catch (_: Throwable) {}
         try {
             clipWatcher?.let {
                 (getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -312,6 +373,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         Hush.recover(this)
         resetWord()
         lastWord = ""
+        prevWord = ""
+        offered = null
         pendingShortcut = null
         shift = 0
         page = Pages.LETTERS
@@ -355,6 +418,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (newSelStart == 0 && newSelEnd == 0) {
             resetWord()
             lastWord = ""
+            prevWord = ""
+            offered = null
             lastDone = ""
             undoTyped = null
             undoFixed = null
@@ -406,6 +471,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 ic.endBatchEdit()
                 lastSpaceAt = 0L
                 lastWord = ""
+                prevWord = ""
+                offered = null
                 feedback()
                 scheduleSugg()
                 afterType()
@@ -448,7 +515,18 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             var fixed: String? = null
             if (Store.kbCorrect) {
                 // nearly always already known, so this costs nothing at all here
-                fixed = if (specDone && specWord == typed) specFix else findFix(typed)
+                val ready = specDone && specWord == typed
+                val cand = if (ready) specFix else findFixNow(typed)
+                val conf = if (ready) specConf else lastFixConf
+                // Sure enough to spend his words on, or only sure enough to offer.
+                // Below the line the word he typed stands and the guess goes to the
+                // strip, where one tap takes it and ignoring it costs nothing.
+                if (cand != null && conf >= SURE) fixed = cand
+                else if (cand != null) {
+                    offered = cand
+                    offeredFor = typed
+                    offeredEnd = s
+                } else offered = null
             }
 
             // The word that joins his vocabulary is the right one, never the slip.
@@ -458,6 +536,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             if (Store.kbLearn) {
                 UserDict.seen(learnt, arabic)
                 if (lastWord.isNotEmpty()) UserDict.seenPair(lastWord, learnt, arabic)
+                if (prevWord.isNotEmpty() && lastWord.isNotEmpty()) {
+                    UserDict.seenTri(prevWord, lastWord, learnt, arabic)
+                }
 
                 // he rubbed out a word a moment ago and has just retyped it — that
                 // second attempt is him telling us what the first one should have been
@@ -471,11 +552,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                     }
                 }
             }
+            prevWord = lastWord
             lastWord = learnt
             lastDone = learnt
             eraseCount = 0
 
             if (fixed != null) {
+                offered = null
                 ic.beginBatchEdit()
                 ic.deleteSurroundingText(typed.length, 0)
                 ic.commitText(fixed + s, 1)
@@ -496,6 +579,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         if (isBreak) resetWord()
         else {
+            offered = null
             buffer.append(s)
             nearBuf.add(kv?.lastNear ?: "")
             eraseCount = 0
@@ -614,6 +698,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             val sel = ic.getSelectedText(0)
             if (sel != null && sel.isNotEmpty()) {
                 lastWord = ""
+                prevWord = ""
+                offered = null
                 ic.commitText("", 1)
                 resetWord()
                 feedback()
@@ -626,6 +712,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // Deleting throws away the word the next-word guesses were based on. Leaving
         // them up meant the strip still offered words over an empty message box.
         lastWord = ""
+        prevWord = ""
+        offered = null
         if (buffer.isNotEmpty()) {
             buffer.setLength(buffer.length - 1)
             if (nearBuf.isNotEmpty()) nearBuf.removeAt(nearBuf.size - 1)
@@ -675,6 +763,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         Clip.used()
         resetWord()
         lastWord = ""
+        prevWord = ""
+        offered = null
         feedback()
         refreshSugg()
     }
@@ -702,6 +792,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         Clip.used()
         resetWord()
         lastWord = ""
+        prevWord = ""
+        offered = null
         feedback()
         refreshSugg()
     }
@@ -803,6 +895,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ic.deleteSurroundingText(n, 0)
         resetWord()
         lastWord = ""
+        prevWord = ""
+        offered = null
         refreshSugg()
     }
 
@@ -830,6 +924,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
         resetWord()
         lastWord = ""
+        prevWord = ""
+        offered = null
         lastDone = ""
         refreshSugg()
     }
@@ -885,8 +981,32 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (pendingShortcut != null) { onSuggestionTap(); return }
         val word = v.suggs.getOrNull(index) ?: return
         if (word.isEmpty()) return
-        val whole = suggKinds.getOrNull(index) ?: false
         val ic = currentInputConnection ?: return
+
+        // the offered repair sits at the front and replaces a word already written,
+        // along with whatever ended it
+        val off = offered
+        if (off != null && index == 0 && word == off && buffer.isEmpty()) {
+            ic.beginBatchEdit()
+            ic.deleteSurroundingText(offeredFor.length + offeredEnd.length, 0)
+            ic.commitText(off + offeredEnd, 1)
+            ic.endBatchEdit()
+            if (Store.kbLearn) {
+                UserDict.learnFix(offeredFor, off, arabic)
+                UserDict.seen(off, arabic)
+            }
+            lastWord = off
+            lastDone = off
+            offered = null
+            resetWord()
+            undoTyped = null
+            undoFixed = null
+            feedback()
+            refreshSugg()
+            return
+        }
+
+        val whole = suggKinds.getOrNull(index) ?: false
         ic.beginBatchEdit()
         // a completion replaces what is half-typed; a next word just goes after it
         if (!whole && buffer.isNotEmpty()) ic.deleteSurroundingText(buffer.length, 0)
@@ -1260,22 +1380,34 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         // the strip is asked to refresh far more often than its answer changes,
         // so an identical question is answered from the last result
-        val key = word + "\u0001" + lastWord + if (arabic) "|ar" else "|en"
+        val key = word + "\u0001" + lastWord + "\u0001" + prevWord +
+            "\u0001" + (offered ?: "") + if (arabic) "|ar" else "|en"
         if (key == suggKey) return
         suggKey = key
 
         val zones = ArrayList<String>(MAX_SUGG)
         val kinds = ArrayList<Boolean>(MAX_SUGG)  // true = a whole new word
 
+        // a repair the engine was not sure enough to make goes first, where one
+        // tap takes it and ignoring it costs nothing
+        val off = offered
+        if (off != null && word.isEmpty()) {
+            zones.add(off)
+            kinds.add(true)
+        }
+
         if (Store.kbPredict) {
             // what usually follows the finished word comes first — it is the stronger
             // guess once a word is done
             val prev = if (word.isEmpty()) lastWord else word
+            val back = if (word.isEmpty()) prevWord else lastWord
             if (prev.isNotEmpty() &&
                 (word.isEmpty() || Dict.known(word, arabic) || UserDict.isOwn(word, arabic))
             ) {
-                val mine =
-                    if (Store.kbLearn) UserDict.next(prev, arabic, 4) else emptyList()
+                // two words of history first, one word of history behind it
+                val mine = if (Store.kbLearn)
+                    UserDict.nextTri(back, prev, arabic, 3) + UserDict.next(prev, arabic, 4)
+                else emptyList()
                 for (w in mine + Dict.nextWords(prev, arabic, 6)) {
                     if (zones.size >= MAX_SUGG) break
                     if (!zones.contains(w)) { zones.add(w); kinds.add(true) }

@@ -400,17 +400,45 @@ object Dict {
         if (topIdx[0] < 0) return null
 
         var bestIdx = topIdx[0]
+        var best = topScore[0]
+        var second = Float.MAX_VALUE
         if (rate != null) {
-            var bestScore = Float.MAX_VALUE
+            best = Float.MAX_VALUE
             for (t in 0 until topN) {
                 val i = topIdx[t]
                 if (i < 0) continue
-                val cand = shownAt(l, i)
-                val s = topScore[t] * rate(cand)
-                if (s < bestScore) { bestScore = s; bestIdx = i }
+                val s = topScore[t] * rate(shownAt(l, i))
+                if (s < best) { second = best; best = s; bestIdx = i }
+                else if (s < second) second = s
             }
+        } else {
+            second = topScore.getOrElse(1) { Float.MAX_VALUE }
         }
+
         val b = shownAt(l, bestIdx)
-        return if (b == word) null else b
+        if (b == word) return null
+        lastConfidence = confidenceOf(best, second)
+        return b
+    }
+
+    /**
+     * How sure the last correction was, from 0 to 1.
+     *
+     * Two things decide it. How good the winner is on its own — a common word
+     * reached by a likely slip scores far below one reached by inventing a
+     * letter. And how far ahead of the runner-up it is: when two words are
+     * equally plausible, picking either one is a coin toss, and a keyboard
+     * should not spend the person's words on a coin toss.
+     */
+    @Volatile
+    var lastConfidence: Float = 0f
+        private set
+
+    private fun confidenceOf(best: Float, second: Float): Float {
+        // 0 at the cut-off, 1 for a perfect hit
+        val quality = (1f - best / CUT).coerceIn(0f, 1f)
+        val margin = if (second >= Float.MAX_VALUE / 2f) 1f
+        else ((second - best) / (second + 1f)).coerceIn(0f, 1f)
+        return (quality * 0.62f + margin * 0.38f).coerceIn(0f, 1f)
     }
 }

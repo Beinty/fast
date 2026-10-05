@@ -2,6 +2,7 @@ package com.huc.fasttype
 
 import android.content.Context
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The words this person actually writes.
@@ -22,6 +23,7 @@ object UserDict {
     private const val K_FIXES = "fixes"
     private const val K_RECENT = "recent"
     private const val K_TICK = "tick"
+    private const val K_TRI = "tri"
 
     /** Beyond this the rarest entries are dropped, so the file cannot grow forever. */
     private const val MAX = 4000
@@ -41,19 +43,32 @@ object UserDict {
      */
     private const val SHOW = 2
 
-    private val counts = HashMap<String, Int>(512)
+    // Read from the worker thread while the keyboard writes from the main one, so
+    // every store here has to be safe to walk while it is being changed.
+    private val counts = ConcurrentHashMap<String, Int>(512)
 
     /** When each word was last written, on the counter below. */
-    private val recent = HashMap<String, Int>(512)
+    private val recent = ConcurrentHashMap<String, Int>(512)
 
     /** Goes up by one on every word learnt; the clock the ranking runs on. */
     private var tick = 0
 
     /** "prev\u0000next" -> how often this person put those two words together. */
-    private val pairs = HashMap<String, Int>(512)
+    private val pairs = ConcurrentHashMap<String, Int>(512)
+
+    /**
+     * "a\u0000b\u0000c" -> how often he wrote those three in a row.
+     *
+     * Two words of history say far more than one. "شاء" is followed by plenty of
+     * things; "ان شاء" is followed by one. The pairs carry the weight when there
+     * is no third word to go on, and this sharpens it when there is.
+     */
+    private val tri = ConcurrentHashMap<String, Int>(256)
+
     private const val MAX_PAIRS = 6000
+    private const val MAX_TRI = 4000
     private const val MAX_FIX = 1500
-    private val keep = HashSet<String>(128)
+    private val keep: MutableSet<String> = ConcurrentHashMap.newKeySet(128)
 
     @Volatile private var loaded = false
     @Volatile private var dirty = false
@@ -67,6 +82,7 @@ object UserDict {
             readInto(p.getString(K_COUNTS, "{}"), counts)
             readInto(p.getString(K_PAIRS, "{}"), pairs)
             readInto(p.getString(K_RECENT, "{}"), recent)
+            readInto(p.getString(K_TRI, "{}"), tri)
             tick = p.getInt(K_TICK, 0)
             (p.getString(K_KEEP, "") ?: "").split('\n').forEach {
                 if (it.isNotBlank()) keep.add(it)
@@ -84,7 +100,7 @@ object UserDict {
         loaded = true
     }
 
-    private fun readInto(json: String?, into: HashMap<String, Int>) {
+    private fun readInto(json: String?, into: MutableMap<String, Int>) {
         try {
             val o = JSONObject(json ?: "{}")
             val it = o.keys()
@@ -137,6 +153,43 @@ object UserDict {
         if (pairs.size > MAX_PAIRS) trimPairs()
     }
 
+    /** Records that [c] followed [a] then [b]. */
+    fun seenTri(a: String, b: String, c: String, arabic: Boolean) {
+        if (a.length < 2 || b.length < 2 || c.length < 2) return
+        if (!isWordy(a, arabic) || !isWordy(b, arabic) || !isWordy(c, arabic)) return
+        val k = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic) +
+            "\u0000" + Dict.fold(c, arabic)
+        tri[k] = (tri[k] ?: 0) + 1
+        dirty = true
+        if (tri.size > MAX_TRI) trimTri()
+    }
+
+    fun triCount(a: String, b: String, c: String, arabic: Boolean): Int {
+        if (a.isEmpty() || b.isEmpty() || c.isEmpty() || tri.isEmpty()) return 0
+        val k = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic) +
+            "\u0000" + Dict.fold(c, arabic)
+        return tri[k] ?: 0
+    }
+
+    /** The words he writes after these two, strongest first. */
+    fun nextTri(a: String, b: String, arabic: Boolean, n: Int): List<String> {
+        if (a.isEmpty() || b.isEmpty() || tri.isEmpty()) return emptyList()
+        val head = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic) + "\u0000"
+        val hits = ArrayList<Pair<String, Int>>(6)
+        for ((k, c) in tri) {
+            if (k.startsWith(head)) hits.add(k.substring(head.length) to c)
+        }
+        if (hits.isEmpty()) return emptyList()
+        hits.sortByDescending { it.second }
+        return hits.take(n).map { it.first }
+    }
+
+    private fun trimTri() {
+        val keepers = tri.entries.sortedByDescending { it.value }.take(MAX_TRI * 3 / 4)
+        tri.clear()
+        for (e in keepers) tri[e.key] = e.value
+    }
+
     /** How often he has put these two words together, in this order. */
     fun pairCount(prev: String, next: String, arabic: Boolean): Int {
         if (prev.isEmpty() || next.isEmpty() || pairs.isEmpty()) return 0
@@ -153,12 +206,19 @@ object UserDict {
      * is the whole difference between a corrector that guesses and one that knows
      * him. "صباح الخيز" becomes "صباح الخير", not "صباح الخيط".
      */
-    fun contextWeight(prev: String, cand: String, arabic: Boolean): Float {
+    fun contextWeight(prev2: String, prev: String, cand: String, arabic: Boolean): Float {
         var w = 1f
-        val pc = pairCount(prev, cand, arabic)
-        if (pc >= 6) w *= 0.30f
-        else if (pc >= 3) w *= 0.45f
-        else if (pc >= 1) w *= 0.65f
+
+        // two words of history beat one, so it is asked first and counts for more
+        val tc = if (prev2.isEmpty()) 0 else triCount(prev2, prev, cand, arabic)
+        if (tc >= 3) w *= 0.22f
+        else if (tc >= 1) w *= 0.38f
+        else {
+            val pc = pairCount(prev, cand, arabic)
+            if (pc >= 6) w *= 0.30f
+            else if (pc >= 3) w *= 0.45f
+            else if (pc >= 1) w *= 0.65f
+        }
 
         val k = Dict.fold(cand, arabic)
         val c = counts[k] ?: 0
@@ -220,7 +280,7 @@ object UserDict {
      * is in here it is applied straight away, every time, with no guessing at all —
      * which is what makes a keyboard feel like it has learnt someone's hands.
      */
-    private val fixes = HashMap<String, String>()
+    private val fixes = ConcurrentHashMap<String, String>()
 
     /** Remembers that [bad] should have been [good]. */
     fun learnFix(bad: String, good: String, arabic: Boolean) {
@@ -362,6 +422,7 @@ object UserDict {
                 .putString(K_COUNTS, mapJson(counts))
                 .putString(K_PAIRS, mapJson(pairs))
                 .putString(K_RECENT, mapJson(recent))
+                .putString(K_TRI, mapJson(tri))
                 .putInt(K_TICK, tick)
                 .putString(K_KEEP, keep.joinToString("\n"))
                 .putString(K_FIXES, JSONObject().also { fj ->
@@ -393,6 +454,7 @@ object UserDict {
         o.put("tick", tick)
         o.put(K_COUNTS, JSONObject(mapJson(counts)))
         o.put(K_PAIRS, JSONObject(mapJson(pairs)))
+        o.put(K_TRI, JSONObject(mapJson(tri)))
         o.put(K_RECENT, JSONObject(mapJson(recent)))
         o.put(K_KEEP, keep.joinToString("\n"))
         o.put(K_FIXES, JSONObject().also { fj -> for ((k, v) in fixes) fj.put(k, v) })
@@ -409,6 +471,7 @@ object UserDict {
             val o = JSONObject(text)
             mergeCounts(o.optJSONObject(K_COUNTS), counts)
             mergeCounts(o.optJSONObject(K_PAIRS), pairs)
+            mergeCounts(o.optJSONObject(K_TRI), tri)
             val r = o.optJSONObject(K_RECENT)
             if (r != null) {
                 val it = r.keys()
@@ -433,6 +496,7 @@ object UserDict {
             }
             if (counts.size > MAX) trim()
             if (pairs.size > MAX_PAIRS) trimPairs()
+            if (tri.size > MAX_TRI) trimTri()
             dirty = true
             save()
             true
@@ -441,7 +505,7 @@ object UserDict {
         }
     }
 
-    private fun mergeCounts(from: JSONObject?, into: HashMap<String, Int>) {
+    private fun mergeCounts(from: JSONObject?, into: MutableMap<String, Int>) {
         if (from == null) return
         val it = from.keys()
         while (it.hasNext()) {
@@ -459,6 +523,7 @@ object UserDict {
     fun forgetAll() {
         counts.clear()
         pairs.clear()
+        tri.clear()
         recent.clear()
         keep.clear()
         fixes.clear()
