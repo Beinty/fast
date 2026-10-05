@@ -1408,7 +1408,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 val mine = if (Store.kbLearn)
                     UserDict.nextTri(back, prev, arabic, 3) + UserDict.next(prev, arabic, 4)
                 else emptyList()
-                for (w in mine + Dict.nextWords(prev, arabic, 6)) {
+                for (w in mine + Dict.nextAfter(back, prev, arabic, 6)) {
                     if (zones.size >= MAX_SUGG) break
                     if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
                 }

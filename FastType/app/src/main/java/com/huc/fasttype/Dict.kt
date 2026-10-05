@@ -55,6 +55,10 @@ object Dict {
     @Volatile private var nextEn: HashMap<String, List<String>> = HashMap()
     @Volatile private var nextAr: HashMap<String, List<String>> = HashMap()
 
+    /** "a\u0000b" -> what usually follows those two. */
+    @Volatile private var triEn: HashMap<String, List<String>> = HashMap()
+    @Volatile private var triAr: HashMap<String, List<String>> = HashMap()
+
     /** Kicks off loading and returns at once. Safe to call repeatedly. */
     fun warm(ctx: Context) {
         if (loading || (en != null && ar != null)) return
@@ -66,6 +70,8 @@ object Dict {
                 if (ar == null) ar = read(app, "dict_ar")
                 if (nextEn.isEmpty()) nextEn = readNext(app, "bigrams_en.txt", false)
                 if (nextAr.isEmpty()) nextAr = readNext(app, "bigrams_ar.txt", true)
+                if (triEn.isEmpty()) triEn = readNext(app, "trigrams_en.txt", false, 2)
+                if (triAr.isEmpty()) triAr = readNext(app, "trigrams_ar.txt", true, 2)
             } catch (_: Throwable) {
             } finally {
                 loading = false
@@ -96,18 +102,27 @@ object Dict {
     }
 
     /** One line per entry: the word, then the words that usually follow it. */
+    /**
+     * Reads a table of "what follows what".
+     *
+     * [headWords] is how many words on the left make up the key: one for the
+     * pairs, two for the triples. The rest of the line is what tends to come
+     * after them, best first.
+     */
     private fun readNext(
-        ctx: Context, name: String, arabic: Boolean
+        ctx: Context, name: String, arabic: Boolean, headWords: Int = 1
     ): HashMap<String, List<String>> {
-        val map = HashMap<String, List<String>>(512)
+        val map = HashMap<String, List<String>>(4096)
         try {
             ctx.assets.open(name).use { input ->
-                BufferedReader(input.reader(Charsets.UTF_8), 1 shl 14).use { r ->
+                BufferedReader(input.reader(Charsets.UTF_8), 1 shl 16).use { r ->
                     var line = r.readLine()
                     while (line != null) {
                         val parts = line.trim().split(' ').filter { it.isNotEmpty() }
-                        if (parts.size >= 2) {
-                            map[fold(parts[0], arabic)] = parts.drop(1)
+                        if (parts.size > headWords) {
+                            val key = if (headWords == 1) fold(parts[0], arabic)
+                            else fold(parts[0], arabic) + "\u0000" + fold(parts[1], arabic)
+                            map[key] = parts.drop(headWords)
                         }
                         line = r.readLine()
                     }
@@ -123,6 +138,35 @@ object Dict {
         if (prev.isEmpty()) return emptyList()
         val m = if (arabic) nextAr else nextEn
         return m[fold(prev, arabic)]?.take(n) ?: emptyList()
+    }
+
+    /**
+     * What follows two words, then what follows the last one.
+     *
+     * Plenty of words follow "are"; far fewer follow "what are". The pair table
+     * is still asked, because two words of history are often two words nobody
+     * has written together before, and one word of history is better than none.
+     */
+    fun nextAfter(prev2: String, prev: String, arabic: Boolean, n: Int): List<String> {
+        if (prev.isEmpty()) return emptyList()
+        val out = ArrayList<String>(n)
+        if (prev2.isNotEmpty()) {
+            val t = if (arabic) triAr else triEn
+            t[fold(prev2, arabic) + "\u0000" + fold(prev, arabic)]?.let { hits ->
+                for (w in hits) {
+                    if (out.size >= n) break
+                    if (!out.contains(w)) out.add(w)
+                }
+            }
+        }
+        val m = if (arabic) nextAr else nextEn
+        m[fold(prev, arabic)]?.let { hits ->
+            for (w in hits) {
+                if (out.size >= n) break
+                if (!out.contains(w)) out.add(w)
+            }
+        }
+        return out
     }
 
     private fun lang(arabic: Boolean): Lang? = if (arabic) ar else en
