@@ -534,7 +534,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             // "his own spelling" and the keyboard stopped fixing it for good.
             val learnt = fixed ?: typed
             if (Store.kbLearn) {
-                UserDict.seen(learnt, arabic)
+                // A word we were about to correct and only held back on is not a
+                // word of his. Counting it here is how a slip the engine already
+                // had an answer for climbed into his vocabulary and put itself
+                // beyond correction.
+                if (offered == null || fixed != null) UserDict.seen(learnt, arabic)
                 if (lastWord.isNotEmpty()) UserDict.seenPair(lastWord, learnt, arabic)
                 if (prevWord.isNotEmpty() && lastWord.isNotEmpty()) {
                     UserDict.seenTri(prevWord, lastWord, learnt, arabic)
@@ -671,7 +675,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val ic = currentInputConnection ?: return
         releaseComposing(ic)
 
-        // one backspace right after an auto-correction puts the typed word back
+        // One backspace right after an auto-correction puts the typed word back.
+        // It does not end the matter: a backspace lands for all sorts of reasons,
+        // so the repair is only dropped. Putting the same word back a second time
+        // is what tells us the spelling was meant.
         val t = undoTyped
         val f = undoFixed
         if (t != null && f != null) {

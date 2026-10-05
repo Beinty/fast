@@ -24,6 +24,8 @@ object UserDict {
     private const val K_RECENT = "recent"
     private const val K_TICK = "tick"
     private const val K_TRI = "tri"
+    private const val K_FIXUSE = "fixuse"
+    private const val K_REJECT = "reject"
 
     /** Beyond this the rarest entries are dropped, so the file cannot grow forever. */
     private const val MAX = 4000
@@ -83,6 +85,8 @@ object UserDict {
             readInto(p.getString(K_PAIRS, "{}"), pairs)
             readInto(p.getString(K_RECENT, "{}"), recent)
             readInto(p.getString(K_TRI, "{}"), tri)
+            readInto(p.getString(K_FIXUSE, "{}"), fixUsed)
+            readInto(p.getString(K_REJECT, "{}"), rejects)
             tick = p.getInt(K_TICK, 0)
             (p.getString(K_KEEP, "") ?: "").split('\n').forEach {
                 if (it.isNotBlank()) keep.add(it)
@@ -117,6 +121,10 @@ object UserDict {
         if (word.length < 2 || word.length > 24) return
         if (!isWordy(word, arabic)) return
         val k = Dict.fold(word, arabic)
+        // A spelling we have a repair for is a mistake, however often he makes it.
+        // Counting it was what let a known slip quietly become "his own word" and
+        // put itself beyond correction.
+        if (fixes.containsKey(k)) return
         counts[k] = (counts[k] ?: 0) + 1
         tick++
         recent[k] = tick
@@ -282,6 +290,15 @@ object UserDict {
      */
     private val fixes = ConcurrentHashMap<String, String>()
 
+    /** When each repair was last wanted, so a busy one is never the one dropped. */
+    private val fixUsed = ConcurrentHashMap<String, Int>()
+
+    /** How many times he has put a word back after it was corrected. */
+    private val rejects = ConcurrentHashMap<String, Int>()
+
+    /** Rejections before a spelling is taken as deliberate and left alone for good. */
+    private const val REJECTS_TO_KEEP = 2
+
     /** Remembers that [bad] should have been [good]. */
     fun learnFix(bad: String, good: String, arabic: Boolean) {
         if (bad.length < 2 || good.length < 2) return
@@ -290,12 +307,18 @@ object UserDict {
         val k = Dict.fold(bad, arabic)
         if (k == Dict.fold(good, arabic)) return
         if (keep.contains(k)) return          // he insisted on this spelling before
-        if (fixes[k] == good) return
+        tick++
+        fixUsed[k] = tick
+        // the slip itself is no longer vocabulary; it is a mistake with an answer
+        counts.remove(k)
+        if (fixes[k] == good) { dirty = true; return }
         fixes[k] = good
         if (fixes.size > MAX_FIX) {
-            val it = fixes.keys.iterator()
-            var drop = fixes.size - MAX_FIX
-            while (it.hasNext() && drop > 0) { it.next(); it.remove(); drop-- }
+            // the ones he has not needed in longest go, never whichever the
+            // iterator happened to reach first
+            val cold = fixes.keys.sortedBy { fixUsed[it] ?: 0 }
+                .take(fixes.size - MAX_FIX * 3 / 4)
+            for (c in cold) { fixes.remove(c); fixUsed.remove(c) }
         }
         dirty = true
         save()
@@ -307,7 +330,9 @@ object UserDict {
         val k = Dict.fold(word, arabic)
         if (keep.contains(k)) return null
         val out = fixes[k] ?: return null
-        return if (out == word) null else out
+        if (out == word) return null
+        fixUsed[k] = tick
+        return out
     }
 
     /** He put the typed word back, so it was never a mistake. */
@@ -316,15 +341,30 @@ object UserDict {
         if (fixes.remove(k) != null) { dirty = true; save() }
     }
 
-    fun keepAsIs(word: String, arabic: Boolean) {
-        forgetFix(word, arabic)
+    /**
+     * He put a corrected word back.
+     *
+     * Once is not a verdict. A backspace lands for all sorts of reasons, and
+     * treating the first one as "never correct this again" is how a repair that
+     * worked on Monday stops working for good on Tuesday. So the first time only
+     * drops the stored repair; the second time the spelling is taken as
+     * deliberate and left alone from then on.
+     *
+     * Returns true when the word has now been accepted as his own.
+     */
+    fun keepAsIs(word: String, arabic: Boolean): Boolean {
         val k = Dict.fold(word, arabic)
+        forgetFix(word, arabic)
+        val n = (rejects[k] ?: 0) + 1
+        rejects[k] = n
+        dirty = true
+        if (n < REJECTS_TO_KEEP) { save(); return false }
         keep.add(k)
         counts[k] = (counts[k] ?: 0) + OWN
         tick++
         recent[k] = tick
-        dirty = true
         save()
+        return true
     }
 
     /** True when this spelling must be left alone by auto-correction. */
@@ -423,6 +463,8 @@ object UserDict {
                 .putString(K_PAIRS, mapJson(pairs))
                 .putString(K_RECENT, mapJson(recent))
                 .putString(K_TRI, mapJson(tri))
+                .putString(K_FIXUSE, mapJson(fixUsed))
+                .putString(K_REJECT, mapJson(rejects))
                 .putInt(K_TICK, tick)
                 .putString(K_KEEP, keep.joinToString("\n"))
                 .putString(K_FIXES, JSONObject().also { fj ->
@@ -521,6 +563,8 @@ object UserDict {
     fun fixCount(): Int = fixes.size
 
     fun forgetAll() {
+        fixUsed.clear()
+        rejects.clear()
         counts.clear()
         pairs.clear()
         tri.clear()
