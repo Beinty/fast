@@ -492,6 +492,17 @@ object Dict {
     }
 
     /**
+     * True when this is plainly a slip: no dictionary has it, and a repair for it
+     * comes back strong. Used to keep a repeated mistake out of his vocabulary.
+     */
+    fun hasStrongFix(word: String, arabic: Boolean): Boolean {
+        if (word.length < 4) return false
+        if (known(word, arabic)) return false
+        val fix = correctNear(word, emptyList(), arabic) ?: return false
+        return fix != word && lastConfidence >= 0.70f
+    }
+
+    /**
      * How sure the last correction was, from 0 to 1.
      *
      * Two things decide it. How good the winner is on its own — a common word

@@ -869,6 +869,48 @@ class MainActivity : Activity() {
             Store.setKbFlag(this, "learn", it); syncPreview()
         }, lp(true, bottom = dp(8)))
 
+        val fixRow = LinearLayout(this)
+        fixRow.orientation = LinearLayout.HORIZONTAL
+        fixRow.gravity = Gravity.CENTER_VERTICAL
+        fixRow.background = round(CARD)
+        fixRow.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val fixLabel = TextView(this)
+        fixLabel.text = "تنظيف الأخطاء المحفوظة"
+        fixLabel.setTextColor(TXT)
+        fixLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        fixRow.addView(
+            fixLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val fixArrow = TextView(this)
+        fixArrow.text = "نظّف ›"
+        fixArrow.setTextColor(ACC)
+        fixArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        fixRow.addView(fixArrow)
+        fixRow.setOnClickListener { cleanSlips() }
+        p.addView(fixRow, lp(true, bottom = dp(8)))
+
+        val wipeRow = LinearLayout(this)
+        wipeRow.orientation = LinearLayout.HORIZONTAL
+        wipeRow.gravity = Gravity.CENTER_VERTICAL
+        wipeRow.background = round(CARD)
+        wipeRow.setPadding(dp(12), dp(12), dp(12), dp(12))
+        val wipeLabel = TextView(this)
+        wipeLabel.text = "امسح كل ما تعلّمه"
+        wipeLabel.setTextColor(TXT)
+        wipeLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        wipeRow.addView(
+            wipeLabel,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        val wipeArrow = TextView(this)
+        wipeArrow.text = "امسح ›"
+        wipeArrow.setTextColor(0xFFE0443E.toInt())
+        wipeArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        wipeRow.addView(wipeArrow)
+        wipeRow.setOnClickListener { wipeLearning() }
+        p.addView(wipeRow, lp(true, bottom = dp(8)))
+
         val learnRow = LinearLayout(this)
         learnRow.orientation = LinearLayout.HORIZONTAL
         learnRow.gravity = Gravity.CENTER_VERTICAL
@@ -1237,6 +1279,51 @@ class MainActivity : Activity() {
      * it to a new phone is the kind of loss that is nobody's fault and still hurts.
      * Restoring adds to what is already here rather than replacing it.
      */
+    /**
+     * Clears out slips that older versions filed as words.
+     *
+     * Before the two stores were kept apart, a mistake typed a few times became
+     * "his own spelling" and could never be corrected again. Those entries
+     * survive an upgrade, so there has to be a way to be rid of them without
+     * throwing away everything the keyboard has learnt.
+     */
+    private fun cleanSlips() {
+        toast("جاري الفحص…")
+        Thread {
+            Dict.warm(this)
+            var tries = 0
+            while (!Dict.ready && tries < 60) { Thread.sleep(250); tries++ }
+            val n = UserDict.purgeSlips(true) + UserDict.purgeSlips(false)
+            runOnUiThread {
+                AlertDialog.Builder(this)
+                    .setTitle("تم التنظيف")
+                    .setMessage(
+                        if (n == 0) "ما لكيت أخطاء محفوظة — كل شي سليم."
+                        else "انشالت $n كلمة كانت محفوظة غلط، وصارت تنصحّح من جديد.\n\n" +
+                            "كلماتك الحقيقية ما انلمست."
+                    )
+                    .setPositiveButton("تمام") { _, _ -> recreate() }
+                    .show()
+            }
+        }.apply { isDaemon = true }.start()
+    }
+
+    private fun wipeLearning() {
+        AlertDialog.Builder(this)
+            .setTitle("امسح كل ما تعلّمه؟")
+            .setMessage(
+                "راح ينشال ${UserDict.learned()} كلمة و${UserDict.fixCount()} تصحيح، " +
+                    "ويبدي الكيبورد من الصفر.\n\nاختصاراتك وإعداداتك ما تنلمس."
+            )
+            .setPositiveButton("امسح") { _, _ ->
+                UserDict.forgetAll()
+                toast("انمسح — الكيبورد بدا من جديد")
+                recreate()
+            }
+            .setNegativeButton("إلغاء", null)
+            .show()
+    }
+
     private fun learnBackup() {
         AlertDialog.Builder(this)
             .setTitle("نسخة احتياطية لتعلّمك")

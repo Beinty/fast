@@ -371,8 +371,20 @@ object UserDict {
     fun isOwn(word: String, arabic: Boolean): Boolean {
         val k = Dict.fold(word, arabic)
         if (keep.contains(k)) return true
-        return (counts[k] ?: 0) >= OWN
+        val c = counts[k] ?: 0
+        if (c < OWN) return false
+        // A word that is in no dictionary and sits one slip away from a common one
+        // is a mistake he repeats, not a word he owns. Counting alone let a typo
+        // typed a few times put itself permanently beyond correction, which is
+        // what happened to اكلظ.
+        if (c < STUBBORN && !Dict.known(word, arabic) && Dict.hasStrongFix(word, arabic)) {
+            return false
+        }
+        return true
     }
+
+    /** Repeated this often, a spelling is his however much it looks like a slip. */
+    private const val STUBBORN = 25
 
     /**
      * The person's own words starting with [prefix], the ones they write most first.
@@ -384,6 +396,7 @@ object UserDict {
         val hits = ArrayList<Pair<String, Float>>(16)
         for ((w, c) in counts) {
             if (c < SHOW || w.length <= p.length) continue
+            if (fixes.containsKey(w)) continue
             if (w.startsWith(p)) hits.add(w to score(w))
             if (hits.size > 200) break
         }
@@ -561,6 +574,26 @@ object UserDict {
 
     /** How many of his own slips the keyboard now repairs on sight. */
     fun fixCount(): Int = fixes.size
+
+    /**
+     * Drops the slips that earlier versions counted as words.
+     *
+     * Until the stores were kept apart, a mistake typed a few times was filed as
+     * his own spelling and became uncorrectable. Those entries are still on the
+     * phone after the upgrade, so they are cleared out once: anything in no
+     * dictionary that sits one slip from a common word goes, and everything he
+     * actually writes stays.
+     */
+    fun purgeSlips(arabic: Boolean): Int {
+        var gone = 0
+        for (w in counts.keys.toList()) {
+            if (Dict.known(w, arabic)) continue
+            if (!Dict.hasStrongFix(w, arabic)) continue
+            counts.remove(w); recent.remove(w); keep.remove(w); gone++
+        }
+        if (gone > 0) { dirty = true; save() }
+        return gone
+    }
 
     fun forgetAll() {
         fixUsed.clear()
