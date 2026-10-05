@@ -210,8 +210,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var offeredFor = ""
     private var offeredEnd = ""
 
-    /** Below this a correction is offered rather than applied. */
-    private val SURE = 0.58f
+    /**
+     * Below this a correction is offered rather than applied.
+     *
+     * Measured against the real dictionary rather than picked: every ordinary
+     * slip — اكلظ, كياتي, الخيز, مرحابا, عاشط, مشكوو — lands above it, and only
+     * a repair that is both to a rare word and tied with a rival falls below.
+     */
+    private val SURE = 0.55f
     private var lastSpaceAt = 0L
     /** For each strip zone: true when it is a new word, false when it completes one. */
     private var suggKinds: List<Boolean> = emptyList()

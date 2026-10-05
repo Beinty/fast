@@ -311,7 +311,33 @@ object Dict {
     }
 
     /** True when the word is spelled the way the dictionary has it. */
+    /**
+     * Iraqi he writes every day and no Arabic dictionary has.
+     *
+     * The feminine forms above all: "شلونج" sits one letter from "شلونك" and was
+     * being turned into it, which is the keyboard correcting his dialect into
+     * someone else's.
+     */
+    private val IRAQI: Set<String> = hashSetOf(
+        "شلونج", "شلونچ", "وينج", "اشلونج", "حبيبتج", "الج", "بيج", "عليج",
+        "منج", "وياج", "شخبارج", "شخبارك", "شلونكم", "شلونهم", "هسع", "هسه",
+        "هسا", "اكو", "ماكو", "شنو", "شلون", "وين", "ليش", "منو",
+        "يمك", "يمج", "هيچ", "هيك", "چم", "شگد", "شكد", "هواي",
+        "خوش", "زين", "اشو", "شسالفه", "گلي", "كلي", "دزلي", "دز",
+        "تعال", "خل", "لك", "صدك", "صج", "عفيه", "ماكوشي", "اني",
+        "احنا", "انته", "انتي", "انتو", "هم", "هيه", "هوه", "ياهو",
+        "ياهي", "مو", "ميخالف", "اكدر", "تكدر", "نكدر", "يكدر", "اريد",
+        "تريد", "نريد", "مااريد", "ماريد", "رايح", "رايحه", "جاي", "جايه",
+        "شوكت", "هاي", "هذيچ", "هذاك", "ذاك", "اشگد", "شبيك", "شبيج",
+        "وياك", "وياكم", "عليمن", "لوين", "منين", "شونه", "بالج", "الكم",
+        "الچ", "بيهم", "ويانه", "احجي", "تحجي", "يحجي", "اچذب", "خلص",
+        "خلصت", "يصير", "ميصير", "تدلل", "تدللي", "دللني", "عاشت", "تسلم",
+        "انشالله", "انشاالله", "والله", "يعني", "بس", "بعد", "هلا", "هلاو",
+        "اهلين", "شخبارچ"
+    )
+
     fun known(word: String, arabic: Boolean): Boolean {
+        if (arabic && IRAQI.contains(fold(word, true))) return true
         val l = lang(arabic) ?: return true
         val q = fold(word, arabic).toByteArray(Charsets.UTF_8)
         if (q.isEmpty()) return true
@@ -479,10 +505,16 @@ object Dict {
         private set
 
     private fun confidenceOf(best: Float, second: Float): Float {
-        // 0 at the cut-off, 1 for a perfect hit
+        // The word he typed is already known not to be a word. That on its own is
+        // most of the case for repairing it, so every candidate starts above the
+        // floor and the two measures below only say how much better than that it
+        // is. The first version had no floor and gave the whole decision to those
+        // two, which meant a tie between two plausible repairs scored zero and a
+        // plain mistake was left standing — "اكلظ" sat between "اكلت" and "اكلك"
+        // and so was never repaired at all.
         val quality = (1f - best / CUT).coerceIn(0f, 1f)
         val margin = if (second >= Float.MAX_VALUE / 2f) 1f
         else ((second - best) / (second + 1f)).coerceIn(0f, 1f)
-        return (quality * 0.62f + margin * 0.38f).coerceIn(0f, 1f)
+        return (0.42f + 0.38f * quality + 0.20f * margin).coerceIn(0f, 1f)
     }
 }
