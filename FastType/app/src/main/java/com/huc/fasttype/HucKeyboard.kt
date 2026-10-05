@@ -576,7 +576,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 undoTyped = typed
                 undoFixed = fixed
                 // worth remembering straight away; one backspace takes it back out
-                if (Store.kbLearn) UserDict.learnFix(typed, fixed, arabic)
+                // Remembering a repair is part of correcting, not part of
+                // learning his vocabulary. Tying it to the vocabulary switch meant
+                // that with that switch off nothing was ever remembered and the
+                // engine re-decided from scratch every single time.
+                UserDict.learnFix(typed, fixed, arabic)
                 resetWord()
                 feedback()
                 scheduleSugg()
@@ -690,7 +694,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (t != null && f != null) {
             undoTyped = null
             undoFixed = null
-            if (Store.kbLearn) UserDict.keepAsIs(t, arabic)
+            UserDict.keepAsIs(t, arabic)
             repairFrom = null
             lastDone = t
             eraseCount = 0

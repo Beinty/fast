@@ -469,25 +469,25 @@ object Dict {
 
         if (topIdx[0] < 0) return null
 
+        // Whether to repair at all is settled on the spelling alone, so the same
+        // mistake always gets the same answer wherever it appears. The sentence
+        // only picks which of the candidates is meant. Letting context move the
+        // confidence too meant one slip was repaired in one sentence and left
+        // standing in the next, which is no behaviour at all.
         var bestIdx = topIdx[0]
-        var best = topScore[0]
-        var second = Float.MAX_VALUE
         if (rate != null) {
-            best = Float.MAX_VALUE
+            var pick = Float.MAX_VALUE
             for (t in 0 until topN) {
                 val i = topIdx[t]
                 if (i < 0) continue
                 val s = topScore[t] * rate(shownAt(l, i))
-                if (s < best) { second = best; best = s; bestIdx = i }
-                else if (s < second) second = s
+                if (s < pick) { pick = s; bestIdx = i }
             }
-        } else {
-            second = topScore.getOrElse(1) { Float.MAX_VALUE }
         }
 
         val b = shownAt(l, bestIdx)
         if (b == word) return null
-        lastConfidence = confidenceOf(best, second)
+        lastConfidence = confidenceOf(topScore[0], topScore.getOrElse(1) { Float.MAX_VALUE })
         return b
     }
 
@@ -495,11 +495,20 @@ object Dict {
      * True when this is plainly a slip: no dictionary has it, and a repair for it
      * comes back strong. Used to keep a repeated mistake out of his vocabulary.
      */
+    // the answer never changes for a given word, and this is asked from the
+    // drawing thread, so it is worked out once and kept
+    private val slipMemo = java.util.concurrent.ConcurrentHashMap<String, Boolean>(256)
+
     fun hasStrongFix(word: String, arabic: Boolean): Boolean {
         if (word.length < 4) return false
-        if (known(word, arabic)) return false
-        val fix = correctNear(word, emptyList(), arabic) ?: return false
-        return fix != word && lastConfidence >= 0.70f
+        val key = if (arabic) "a$word" else "e$word"
+        slipMemo[key]?.let { return it }
+        if (known(word, arabic)) { slipMemo[key] = false; return false }
+        val fix = correctNear(word, emptyList(), arabic)
+        val out = fix != null && fix != word && lastConfidence >= 0.70f
+        if (slipMemo.size > 4000) slipMemo.clear()
+        slipMemo[key] = out
+        return out
     }
 
     /**
