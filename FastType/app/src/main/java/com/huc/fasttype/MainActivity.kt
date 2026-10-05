@@ -104,7 +104,14 @@ class MainActivity : Activity() {
         root.addView(title)
 
         val sub = TextView(this)
-        sub.text = "HUC"
+        // which build is actually on the phone, where he can see it without
+        // digging through system settings
+        sub.text = "HUC — " + try {
+            val pi = packageManager.getPackageInfo(packageName, 0)
+            "نسخة " + pi.versionName
+        } catch (_: Exception) {
+            ""
+        }
         sub.setTextColor(MUT)
         sub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         sub.setPadding(0, dp(2), 0, dp(14))
