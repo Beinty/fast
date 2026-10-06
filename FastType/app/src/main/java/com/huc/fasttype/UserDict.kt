@@ -112,9 +112,14 @@ object UserDict {
 
     private const val HOT_PAIRS = 60000
     private const val HOT_TRI = 40000
-    /** Repairs are never trimmed at all: a repair he taught the keyboard is not a
-     * statistic to be aged out, and fifteen hundred of them is a rounding error
-     * next to the dictionary. */
+    /**
+     * Repairs he has taught the keyboard.
+     *
+     * Kept far looser than the rest, because a repair is not a statistic to be
+     * aged out — it is an instruction. Only the coldest go, and only once there
+     * are more than this many.
+     */
+    private const val MAX_FIX = 20000
     private val keep: MutableSet<String> = ConcurrentHashMap.newKeySet(128)
 
     @Volatile private var loaded = false
