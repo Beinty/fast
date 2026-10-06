@@ -1973,18 +1973,25 @@ class KeyboardView(context: Context) : View(context) {
         if (k.code != Code.CHAR || k.out.length != 1) return ""
         val cx = k.x + k.w / 2f
         val cy = k.y + k.h / 2f
-        val reach = (k.w * 1.35f) * (k.w * 1.35f)
-        val sb = StringBuilder(4)
+        // A key is wider than it is far from the row above, so a reach measured in
+        // key widths reached sideways and nowhere else: the letters directly above
+        // and below a finger were never offered to the corrector at all. Measured,
+        // that one line was costing twenty points of accuracy.
+        val reach = max(k.w * 1.45f, k.h * 1.25f)
+        val reach2 = reach * reach
+        val found = ArrayList<Pair<Float, String>>(8)
         for (row in rows) for (o in row) {
             if (o.spacer || o === k) continue
             if (o.code != Code.CHAR || o.out.length != 1) continue
             val dx = (o.x + o.w / 2f) - cx
             val dy = (o.y + o.h / 2f) - cy
-            // only the row above, below and either side — not the whole board
-            if (Math.abs(dy) > k.h * 1.2f) continue
-            if (dx * dx + dy * dy <= reach) sb.append(o.out)
-            if (sb.length >= 5) break
+            val d2 = dx * dx + dy * dy
+            if (d2 <= reach2) found.add(d2 to o.out)
         }
+        if (found.isEmpty()) return ""
+        found.sortBy { it.first }
+        val sb = StringBuilder(6)
+        for (i in 0 until minOf(6, found.size)) sb.append(found[i].second)
         return sb.toString()
     }
 

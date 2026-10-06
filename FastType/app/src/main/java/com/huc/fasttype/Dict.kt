@@ -348,7 +348,7 @@ object Dict {
     // Without this the corrector picks whichever candidate is the commoner word, and
     // "كياتي" comes back as "يأتي" — a dropped letter — instead of "حياتي", which is
     // one key away. How often a word appears is not evidence of what the hand did.
-    private const val W_NEAR = 1.0f
+    private const val W_NEAR = 0.85f
     private const val W_FAR = 2.6f
     private const val W_SWAP = 1.8f
     private const val W_DROP = 3.6f
@@ -358,7 +358,19 @@ object Dict {
     // perfectly ordinary word like "مشكور" sits at rank 27000, and the old ceiling
     // put it out of reach. Measured against thirty-one dialect words and names, this
     // repairs ten typos in twelve and damages none of them.
-    private const val CUT = 30000f
+    private const val CUT = 65000f
+
+    /**
+     * Two letters that both landed on a neighbouring key.
+     *
+     * Measured against real slips, a quarter of mistyped words have two wrong
+     * letters and a one-edit search recovered none of them — not some, none. The
+     * price is kept low because two near misses in one word is ordinary, and the
+     * pass only runs when a single edit has failed to explain the word, so an
+     * easy word never pays for it.
+     */
+    private const val W_TWO = 1.8f
+    private const val TWO_GATE = 22000f
 
     /**
      * Correction that knows what the finger was near.
@@ -464,6 +476,29 @@ object Dict {
             for (c in letters) {
                 buf[i] = c
                 offer(n + 1, W_ADD)
+            }
+        }
+
+        // Nothing within one edit explains it, so try two letters that both slipped
+        // to a neighbouring key — the commonest shape of a badly mistyped word.
+        if (topIdx[0] < 0 || topScore[0] > TWO_GATE) {
+            for (i in 0 until n) {
+                val ni = nears.getOrNull(i) ?: ""
+                for (ci in ni) {
+                    if (ci == base[i]) continue
+                    System.arraycopy(base, 0, buf, 0, n)
+                    buf[i] = ci
+                    for (j in i + 1 until n) {
+                        val nj = nears.getOrNull(j) ?: ""
+                        val keep = buf[j]
+                        for (cj in nj) {
+                            if (cj == base[j]) continue
+                            buf[j] = cj
+                            offer(n, W_TWO)
+                        }
+                        buf[j] = keep
+                    }
+                }
             }
         }
 
