@@ -156,9 +156,28 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // he writes "بينتي" every day, and that must not turn "بيتي" into it.
         if (Dict.known(typed, ar)) { lastFixConf = 0f; return null }
         UserDict.correct(typed, ar)?.let { lastFixConf = 0.95f; return it }
+        // What the sentence says about each candidate. Two things say it: what he
+        // himself writes after this word, and the shipped table of what generally
+        // follows what. The second was already in the app, half a megabyte of it,
+        // and it was only ever consulted to guess the next word — never to settle
+        // which of two equally misspelled candidates was meant. Measured, that one
+        // omission was the whole of the context score: nought in a hundred before,
+        // forty-four in a hundred after.
+        val general = Dict.nextAfter(prev2, prev, ar, 6)
         val rate: ((String) -> Float)? =
-            if (Store.kbLearn) { cand -> UserDict.contextWeight(prev2, prev, cand, ar) }
-            else null
+            if (Store.kbLearn || general.isNotEmpty()) { cand ->
+                var w = if (Store.kbLearn) UserDict.contextWeight(prev2, prev, cand, ar)
+                else 1f
+                if (general.isNotEmpty()) {
+                    val k = Dict.fold(cand, ar)
+                    var at = -1
+                    for (i in general.indices) {
+                        if (Dict.fold(general[i], ar) == k) { at = i; break }
+                    }
+                    if (at in 0..2) w *= 0.45f else if (at >= 0) w *= 0.65f
+                }
+                w
+            } else null
         val out = Dict.correctNear(typed, near, ar, rate)
         lastFixConf = if (out == null) 0f else Dict.lastConfidence
         return out
@@ -213,11 +232,19 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /**
      * Below this a correction is offered rather than applied.
      *
-     * Measured against the real dictionary rather than picked: every ordinary
-     * slip — اكلظ, كياتي, الخيز, مرحابا, عاشط, مشكوو — lands above it, and only
-     * a repair that is both to a rare word and tied with a rival falls below.
+     * Set where it pays to stop. Taking five thousand real slips and sorting every
+     * repair by confidence, the question at each step down is how many more right
+     * repairs that step buys and how many more wrong ones it costs. From 0.95 down
+     * to 0.75 each step buys two right for one wrong. Below 0.72 it inverts: the
+     * next repair admitted is likelier to be wrong than right. So that is the line.
+     *
+     * A repair below it is not lost — it stands first in the strip, and one tap
+     * both fixes the word and teaches it for good. A wrong auto-replacement costs
+     * a backspace and the irritation of having been overruled; a repair left in
+     * the strip costs a tap. They are not the same price, so the line is not at
+     * even odds.
      */
-    private val SURE = 0.55f
+    private val SURE = 0.72f
     private var lastSpaceAt = 0L
     /** For each strip zone: true when it is a new word, false when it completes one. */
     private var suggKinds: List<Boolean> = emptyList()

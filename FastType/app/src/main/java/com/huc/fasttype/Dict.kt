@@ -68,6 +68,7 @@ object Dict {
             try {
                 if (en == null) en = read(app, "dict_en")
                 if (ar == null) ar = read(app, "dict_ar")
+                if (keepSet.isEmpty()) keepSet = readKeep(app)
                 if (nextEn.isEmpty()) nextEn = readNext(app, "bigrams_en.txt", false)
                 if (nextAr.isEmpty()) nextAr = readNext(app, "bigrams_ar.txt", true)
                 if (triEn.isEmpty()) triEn = readNext(app, "trigrams_en.txt", false, 2)
@@ -336,41 +337,169 @@ object Dict {
         "اهلين", "شخبارچ"
     )
 
-    fun known(word: String, arabic: Boolean): Boolean {
-        if (arabic && IRAQI.contains(fold(word, true))) return true
-        val l = lang(arabic) ?: return true
-        val q = fold(word, arabic).toByteArray(Charsets.UTF_8)
-        if (q.isEmpty()) return true
+    /**
+     * Brand, app and place names, read from an asset.
+     *
+     * No corpus carries واتساب or تلكرام or اسياسيل, so the corrector saw them as
+     * mistakes and repaired them into real words — تلكرام became الكرام, one key
+     * away and very sure of itself. This is vocabulary, not a list of
+     * corrections: the words are simply words, and nothing touches them.
+     */
+    @Volatile private var keepSet: Set<String> = emptySet()
+
+    private fun readKeep(ctx: Context): Set<String> {
+        val out = HashSet<String>(256)
+        try {
+            ctx.assets.open("keep_ar.txt").use { input ->
+                BufferedReader(input.reader(Charsets.UTF_8)).use { r ->
+                    var line = r.readLine()
+                    while (line != null) {
+                        for (w in line.trim().split(' ')) {
+                            val f = fold(w, true)
+                            if (f.length >= 3) out.add(f)
+                        }
+                        line = r.readLine()
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return out
+    }
+
+    /**
+     * True when the word is dialect built on a word.
+     *
+     * Iraqi is not a word list. "your", said to a woman, is ـج on the end of any
+     * noun in the language: بيتج، سيارتج، تلفونج، شغلج، مدرستج — and ـلج for "to
+     * you". No list can hold them, and the one I shipped held a hundred and
+     * fourteen while the corrector quietly turned بيتج into بيتر and حبيبج into
+     * حبيبي. So the shape is recognised instead: take the ending off, and if what
+     * is left is a word, the whole thing was a word. Measured on two hundred and
+     * seventy-seven words he writes that no dictionary has, this took the number
+     * it damaged from forty-five to one.
+     */
+    private val SUF_END = arrayOf("لج", "لچ", "تج", "تچ", "ج", "چ")
+    private val SUF_PUT = arrayOf(
+        arrayOf("لك", "ل", ""), arrayOf("لك", "ل", ""),
+        arrayOf("تك", "ته", "ت"), arrayOf("تك", "ته", "ت"),
+        arrayOf("ك", "ه", ""), arrayOf("ك", "ه", "")
+    )
+    private val PRE = arrayOf("د", "ما", "مو", "ب", "ع", "لل", "و", "ف")
+
+    private fun plain(w: String): Boolean {
+        if (w.length < 3) return false
+        if (IRAQI.contains(w) || keepSet.contains(w)) return true
+        val l = ar ?: return false
+        val q = w.toByteArray(Charsets.UTF_8)
         return find(l, q, q.size) >= 0
+    }
+
+    fun iraqiShape(folded: String): Boolean {
+        for (i in SUF_END.indices) {
+            val end = SUF_END[i]
+            if (!folded.endsWith(end) || folded.length - end.length < 3) continue
+            val stem = folded.substring(0, folded.length - end.length)
+            for (put in SUF_PUT[i]) if (plain(stem + put)) return true
+        }
+        for (p in PRE) {
+            if (folded.startsWith(p) && folded.length - p.length >= 3 &&
+                plain(folded.substring(p.length))
+            ) return true
+        }
+        return false
+    }
+
+    fun known(word: String, arabic: Boolean): Boolean {
+        val f = fold(word, arabic)
+        if (arabic && (IRAQI.contains(f) || keepSet.contains(f))) return true
+        val l = lang(arabic) ?: return true
+        val q = f.toByteArray(Charsets.UTF_8)
+        if (q.isEmpty()) return true
+        if (find(l, q, q.size) >= 0) return true
+        return arabic && iraqiShape(f)
     }
 
     // How much less likely each kind of slip is than a neighbouring-key slip.
     // Without this the corrector picks whichever candidate is the commoner word, and
     // "كياتي" comes back as "يأتي" — a dropped letter — instead of "حياتي", which is
     // one key away. How often a word appears is not evidence of what the hand did.
+    //
+    // Every one of these was reasoned about once and measured later, and the
+    // measurement moved all of them. A missing letter cost 5.0 against 0.85 for a
+    // neighbouring key, which meant a wrong common word one key away beat the
+    // right word with one letter put back, and five missing letters in six were
+    // never recovered. Measured against five thousand slips, with the mix of
+    // mistakes a thumb actually makes, these are where the numbers settled.
     private const val W_NEAR = 0.85f
-    private const val W_FAR = 2.6f
-    private const val W_SWAP = 1.8f
-    private const val W_DROP = 3.6f
-    private const val W_ADD = 5.0f
-
-    // Raised from 9000 when the dictionary grew: with two hundred thousand words a
-    // perfectly ordinary word like "مشكور" sits at rank 27000, and the old ceiling
-    // put it out of reach. Measured against thirty-one dialect words and names, this
-    // repairs ten typos in twelve and damages none of them.
-    private const val CUT = 65000f
+    private const val W_FAR = 4.6f
+    private const val W_SWAP = 0.85f
+    private const val W_DROP = 3.2f
+    private const val W_ADD = 0.6f
 
     /**
-     * Two letters that both landed on a neighbouring key.
+     * A letter he wrote for one that sounds like it.
      *
-     * Measured against real slips, a quarter of mistyped words have two wrong
-     * letters and a one-edit search recovered none of them — not some, none. The
-     * price is kept low because two near misses in one word is ordinary, and the
-     * pass only runs when a single edit has failed to explain the word, so an
-     * easy word never pays for it.
+     * ض for ظ, س for ص, ت for ط. These are spelling doubts, not slips of the
+     * hand, and they are far likelier than a letter chosen at random — priced as
+     * a random letter they were recovered two times in three, priced apart,
+     * three times in four. The groups also carry the English vowels people
+     * swap, which is most of what an English misspelling is.
+     */
+    private const val W_SOUND = 1.2f
+
+    private val SOUND: Array<String> = arrayOf(
+        "ضظزذدط", "سصثش", "كقگ", "هحخ", "اع", "جچ", "تط", "فڤپ",
+        "aeiy", "eiy", "ou", "cks", "sz", "fv", "mn", "bp", "dt", "gj"
+    )
+
+    private val soundOf: HashMap<Char, String> = HashMap<Char, String>(64).also { m ->
+        for (g in SOUND) for (c in g) {
+            val had = m[c] ?: ""
+            val b = StringBuilder(had)
+            for (o in g) if (o != c && had.indexOf(o) < 0) b.append(o)
+            m[c] = b.toString()
+        }
+    }
+
+    /**
+     * How far a candidate may be reached at all.
+     *
+     * Three hundred thousand is not a tolerance, it is "the whole dictionary is
+     * in play for a likely slip, and only a far letter is held back". A flat
+     * ceiling of 65000 meant a dropped letter could reach six per cent of the
+     * vocabulary and no more, whatever the sentence said.
+     *
+     * I thought the cause of that was the rank file: two hundred thousand words
+     * do not fit in two bytes, so 72.5% of them sit on the ceiling value, and I
+     * was sure regrading them onto a curve would be the big win. It was not. I
+     * built six graded rank files and measured each: every one came out worse
+     * than the flat ceiling, because compressing the scale costs more
+     * discrimination between common and rare than it buys in reach. The ceiling
+     * stays, and the reasoning that said it had to go was wrong.
+     */
+    private const val CUT = 300000f
+
+    /**
+     * Two letters that both slipped.
+     *
+     * A quarter of mistyped words have two wrong letters and a one-edit search
+     * recovered none of them — not some, none. The second letter is allowed to
+     * be a neighbouring key or a sound-alike, nothing else: two free letters is
+     * a million spellings per word and almost none of them is what he meant.
      */
     private const val W_TWO = 1.8f
-    private const val TWO_GATE = 22000f
+
+    /**
+     * Three letters that all slipped. Worth having and dear enough not to win
+     * against anything simpler: with it, words with three keys off go from zero
+     * to forty-five in a hundred, and words with two keys off lose nothing.
+     */
+    private const val W_THREE = 5.5f
+
+    /** The gates, as a share of [CUT], so they keep their meaning when it moves. */
+    private const val GATE_TWO = 0.12f
+    private const val GATE_THREE = 0.34f
 
     /**
      * Correction that knows what the finger was near.
@@ -410,6 +539,8 @@ object Dict {
         // already a word he could have meant
         System.arraycopy(base, 0, buf, 0, n)
         if (look(n) >= 0) return null
+        if (arabic && (IRAQI.contains(f) || keepSet.contains(f))) return null
+        if (arabic && iraqiShape(f)) return null
 
         val letters = if (arabic) AR_LETTERS else EN_LETTERS
 
@@ -445,10 +576,17 @@ object Dict {
         for (i in 0 until n) {
             System.arraycopy(base, 0, buf, 0, n)
             val near = nears.getOrNull(i) ?: ""
+            val like = soundOf[base[i]] ?: ""
             for (c in letters) {
                 if (c == base[i]) continue
                 buf[i] = c
-                offer(n, if (near.indexOf(c) >= 0) W_NEAR else W_FAR)
+                offer(
+                    n, when {
+                        near.indexOf(c) >= 0 -> W_NEAR
+                        like.indexOf(c) >= 0 -> W_SOUND
+                        else -> W_FAR
+                    }
+                )
             }
         }
 
@@ -479,24 +617,65 @@ object Dict {
             }
         }
 
-        // Nothing within one edit explains it, so try two letters that both slipped
-        // to a neighbouring key — the commonest shape of a badly mistyped word.
-        if (topIdx[0] < 0 || topScore[0] > TWO_GATE) {
+        // What a second or third slipped letter is allowed to be: the keys beside
+        // it and the letters that sound like it.
+        val alts = Array(n) { i ->
+            val near = nears.getOrNull(i) ?: ""
+            val like = soundOf[base[i]] ?: ""
+            if (like.isEmpty()) near
+            else {
+                val s = StringBuilder(near.length + like.length)
+                s.append(near)
+                for (c in like) if (near.indexOf(c) < 0) s.append(c)
+                s.toString()
+            }
+        }
+
+        // Nothing within one edit explains it, so try two letters that both slipped.
+        if (topIdx[0] < 0 || topScore[0] > CUT * GATE_TWO) {
             for (i in 0 until n) {
-                val ni = nears.getOrNull(i) ?: ""
-                for (ci in ni) {
+                for (ci in alts[i]) {
                     if (ci == base[i]) continue
                     System.arraycopy(base, 0, buf, 0, n)
                     buf[i] = ci
                     for (j in i + 1 until n) {
-                        val nj = nears.getOrNull(j) ?: ""
                         val keep = buf[j]
-                        for (cj in nj) {
+                        for (cj in alts[j]) {
                             if (cj == base[j]) continue
                             buf[j] = cj
                             offer(n, W_TWO)
                         }
                         buf[j] = keep
+                    }
+                }
+            }
+        }
+
+        // Still nothing, so three. This is the deepest the search goes: beyond it
+        // the answer stops being a repair and starts being a guess at a word he
+        // never typed.
+        if (topIdx[0] < 0 || topScore[0] > CUT * GATE_THREE) {
+            val three = CharArray(n + 1)
+            for (i in 0 until n) {
+                for (ci in alts[i]) {
+                    if (ci == base[i]) continue
+                    System.arraycopy(base, 0, three, 0, n)
+                    three[i] = ci
+                    for (j in i + 1 until n) {
+                        val keepJ = three[j]
+                        for (cj in alts[j]) {
+                            if (cj == base[j]) continue
+                            three[j] = cj
+                            for (k in j + 1 until n) {
+                                System.arraycopy(three, 0, buf, 0, n)
+                                for (ck in alts[k]) {
+                                    if (ck == base[k]) continue
+                                    buf[k] = ck
+                                    offer(n, W_THREE)
+                                }
+                            }
+                        }
+                        three[j] = keepJ
                     }
                 }
             }
@@ -560,16 +739,16 @@ object Dict {
         private set
 
     private fun confidenceOf(best: Float, second: Float): Float {
-        // The word he typed is already known not to be a word. That on its own is
-        // most of the case for repairing it, so every candidate starts above the
-        // floor and the two measures below only say how much better than that it
-        // is. The first version had no floor and gave the whole decision to those
-        // two, which meant a tie between two plausible repairs scored zero and a
-        // plain mistake was left standing — "اكلظ" sat between "اكلت" and "اكلك"
-        // and so was never repaired at all.
-        val quality = (1f - best / CUT).coerceIn(0f, 1f)
-        val margin = if (second >= Float.MAX_VALUE / 2f) 1f
-        else ((second - best) / (second + 1f)).coerceIn(0f, 1f)
-        return (0.42f + 0.38f * quality + 0.20f * margin).coerceIn(0f, 1f)
+        // Measured against five thousand real slips: how good the winner looks on
+        // its own carries no information at all. Precision is the same 64% whether
+        // the winner scored a tenth of the ceiling or nine tenths of it. So the
+        // term for it is gone, and the whole judgement is how far ahead of the
+        // runner-up the winner is — as a ratio, not a difference. A winner at
+        // 10,000 against a runner-up at 11,000 is a coin toss whatever the
+        // numbers are; the old formula, subtracting them and dividing by the
+        // larger, called that case nearly certain.
+        val m = if (second >= Float.MAX_VALUE / 2f || second <= 0f) 1f
+        else (1f - best / second).coerceIn(0f, 1f)
+        return (0.45f + 0.55f * m).coerceIn(0f, 1f)
     }
 }
