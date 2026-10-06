@@ -860,10 +860,15 @@ class MainActivity : Activity() {
             Store.kbCorrect) {
             Store.setKbFlag(this, "correct", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        // The four numbers, because "it learns" is a claim and these are the
+        // evidence — and because he should be able to watch them climb past the
+        // four thousand the old version stopped at.
+        val s = UserDict.sizes()
         p.addView(switchRow(
             "يتعلّم من كتابتك",
-            "يحفظ كلماتك ويقدّمها، ويصحّح حسب اللي تكتبه عادةً بهذا المكان — " +
-                "تعلّم ${UserDict.learned()} كلمة و${UserDict.fixCount()} تصحيح",
+            "يحفظ كلماتك ويقدّمها، ويصحّح حسب اللي تكتبه عادةً بهذا المكان\n" +
+                "محفوظ: ${s[0]} كلمة · ${s[1]} ثنائية · ${s[2]} ثلاثية · " +
+                "${s[3]} تصحيح — بلا حد أعلى",
             Store.kbLearn
         ) {
             Store.setKbFlag(this, "learn", it); syncPreview()

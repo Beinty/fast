@@ -3,6 +3,7 @@ package com.huc.fasttype
 import android.content.Context
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentSkipListMap
 
 /**
  * The words this person actually writes.
@@ -27,9 +28,22 @@ object UserDict {
     private const val K_FIXUSE = "fixuse"
     private const val K_REJECT = "reject"
 
-    /** Beyond this the rarest entries are dropped, so the file cannot grow forever. */
-    private const val MAX = 4000
-    private const val TRIM_TO = 3000
+    /**
+     * How much is kept in memory — not how much he can learn.
+     *
+     * These used to be the same number, and that was the whole problem. Everything
+     * lived in one JSON string that was rewritten on every space, so the cap had
+     * to be small enough to rewrite cheaply, and past it he simply stopped
+     * learning. Now [Learn] holds every row on disk and these only say how much of
+     * it is held in front of the hand. The hot set is what answers a keystroke, so
+     * it must never be asked to search a database; the rest waits on disk and comes
+     * back up the next time the keyboard starts.
+     *
+     * Thirty thousand words is about ten times a large personal vocabulary, so in
+     * practice the hot set is everything he has, and the trim below never runs.
+     */
+    private const val HOT_WORDS = 30000
+    private const val HOT_TRIM = 24000
 
     /** Seen this many times, a word is treated as the person's own spelling. */
     // Two was too low: one word typed wrong twice became protected for good, and
@@ -47,7 +61,11 @@ object UserDict {
 
     // Read from the worker thread while the keyboard writes from the main one, so
     // every store here has to be safe to walk while it is being changed.
-    private val counts = ConcurrentHashMap<String, Int>(512)
+    // Sorted, so "every word of his starting with ش" is a range on an ordered map
+    // rather than a walk over all of them. At four thousand words a walk per
+    // keystroke was affordable; at thirty thousand it is not, and the structure
+    // has to carry that rather than the cap.
+    private val counts = ConcurrentSkipListMap<String, Int>()
 
     /** When each word was last written, on the counter below. */
     private val recent = ConcurrentHashMap<String, Int>(512)
@@ -67,18 +85,108 @@ object UserDict {
      */
     private val tri = ConcurrentHashMap<String, Int>(256)
 
-    private const val MAX_PAIRS = 6000
-    private const val MAX_TRI = 4000
-    private const val MAX_FIX = 1500
+    /**
+     * The same pairs and triples, indexed the way they are asked for.
+     *
+     * "what follows هلا" used to be answered by walking every pair he had ever
+     * written and testing the prefix of each key — six thousand string tests for
+     * one keystroke. Here each history is a key of its own, holding only the words
+     * that followed it, so the answer is one lookup however much he has written.
+     */
+    private val after = ConcurrentHashMap<String, ConcurrentHashMap<String, Int>>(512)
+
+    private fun link(head: String, next: String, n: Int) {
+        after.getOrPut(head) { ConcurrentHashMap(4) }[next] = n
+    }
+
+    private fun unlink(head: String, next: String) {
+        after[head]?.let { it.remove(next); if (it.isEmpty()) after.remove(head) }
+    }
+
+    /** Splits "a\u0000b" or "a\u0000b\u0000c" into its history and its last word. */
+    private fun headOf(k: String): Pair<String, String>? {
+        val at = k.lastIndexOf('\u0000')
+        if (at <= 0 || at == k.length - 1) return null
+        return k.substring(0, at) to k.substring(at + 1)
+    }
+
+    private const val HOT_PAIRS = 60000
+    private const val HOT_TRI = 40000
+    /** Repairs are never trimmed at all: a repair he taught the keyboard is not a
+     * statistic to be aged out, and fifteen hundred of them is a rounding error
+     * next to the dictionary. */
     private val keep: MutableSet<String> = ConcurrentHashMap.newKeySet(128)
 
     @Volatile private var loaded = false
     @Volatile private var dirty = false
     private var ctx: Context? = null
 
+    /**
+     * Opens the store and reads it back, with the slow part off the main thread.
+     *
+     * The keyboard calls this from onCreate, which is the main thread, and a
+     * hundred thousand rows read there is a keyboard that takes a visible moment
+     * to appear. So the small things that must be right immediately — the repairs
+     * he has taught it, the spellings he insisted on — are read at once, and his
+     * vocabulary follows a moment later. Everything that reads these stores
+     * already copes with them being empty, because for the first second of the
+     * first ever launch they were always going to be.
+     */
     fun load(c: Context) {
         if (loaded) return
+        loaded = true
         ctx = c.applicationContext
+        Learn.open(c)
+        val fresh = Learn.empty()
+        if (!fresh) {
+            // small, and the correction path is wrong without it
+            Learn.loadFixes { k, g, u -> fixes[k] = g; fixUsed[k] = u }
+            Learn.loadKeep { k -> keep.add(k) }
+            Learn.loadRejects { k, n -> rejects[k] = n }
+            tick = Learn.tick()
+        }
+        try {
+            writer.execute {
+                try {
+                    if (fresh) {
+                        // the old file is read exactly once, to carry over what he
+                        // had already taught the keyboard, then never again
+                        readOldFile(ctx ?: return@execute)
+                        markAllDirty()
+                        flushNow()
+                    } else {
+                        Learn.loadWords(HOT_WORDS) { k, n, t ->
+                            counts[k] = n
+                            if (t > 0) recent[k] = t
+                        }
+                        Learn.loadPairs(HOT_PAIRS) { k, n -> pairs[k] = n }
+                        Learn.loadTri(HOT_TRI) { k, n -> tri[k] = n }
+                    }
+                    rebuildIndex()
+                    ready = true
+                } catch (_: Throwable) {
+                    ready = true
+                }
+            }
+        } catch (_: Throwable) {
+            ready = true
+        }
+    }
+
+    /** True once his vocabulary is in memory. Nothing waits on it; it is for tests. */
+    @Volatile var ready = false
+        private set
+
+    private fun markAllDirty() {
+        for (k in counts.keys) Learn.touchWord(k)
+        for (k in pairs.keys) Learn.touchPair(k)
+        for (k in tri.keys) Learn.touchTri(k)
+        for (k in fixes.keys) Learn.touchFix(k)
+        for (k in keep) Learn.touchKeep(k)
+        for (k in rejects.keys) Learn.touchRej(k)
+    }
+
+    private fun readOldFile(c: Context) {
         try {
             val p = c.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
             readInto(p.getString(K_COUNTS, "{}"), counts)
@@ -101,7 +209,6 @@ object UserDict {
             }
         } catch (_: Exception) {
         }
-        loaded = true
     }
 
     private fun readInto(json: String?, into: MutableMap<String, Int>) {
@@ -128,8 +235,10 @@ object UserDict {
         counts[k] = (counts[k] ?: 0) + 1
         tick++
         recent[k] = tick
+        Learn.touchWord(k)
         dirty = true
-        if (counts.size > MAX) trim()
+        maybeFlush()
+        if (counts.size > HOT_WORDS) trim()
     }
 
     /**
@@ -155,21 +264,30 @@ object UserDict {
     fun seenPair(prev: String, next: String, arabic: Boolean) {
         if (prev.length < 2 || next.length < 2) return
         if (!isWordy(prev, arabic) || !isWordy(next, arabic)) return
-        val k = Dict.fold(prev, arabic) + "\u0000" + Dict.fold(next, arabic)
-        pairs[k] = (pairs[k] ?: 0) + 1
+        val a = Dict.fold(prev, arabic)
+        val b = Dict.fold(next, arabic)
+        val k = a + "\u0000" + b
+        val n = (pairs[k] ?: 0) + 1
+        pairs[k] = n
+        link(a, b, n)
+        Learn.touchPair(k)
         dirty = true
-        if (pairs.size > MAX_PAIRS) trimPairs()
+        if (pairs.size > HOT_PAIRS) trimPairs()
     }
 
     /** Records that [c] followed [a] then [b]. */
     fun seenTri(a: String, b: String, c: String, arabic: Boolean) {
         if (a.length < 2 || b.length < 2 || c.length < 2) return
         if (!isWordy(a, arabic) || !isWordy(b, arabic) || !isWordy(c, arabic)) return
-        val k = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic) +
-            "\u0000" + Dict.fold(c, arabic)
-        tri[k] = (tri[k] ?: 0) + 1
+        val h = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic)
+        val last = Dict.fold(c, arabic)
+        val k = h + "\u0000" + last
+        val n = (tri[k] ?: 0) + 1
+        tri[k] = n
+        link(h, last, n)
+        Learn.touchTri(k)
         dirty = true
-        if (tri.size > MAX_TRI) trimTri()
+        if (tri.size > HOT_TRI) trimTri()
     }
 
     fun triCount(a: String, b: String, c: String, arabic: Boolean): Int {
@@ -181,21 +299,74 @@ object UserDict {
 
     /** The words he writes after these two, strongest first. */
     fun nextTri(a: String, b: String, arabic: Boolean, n: Int): List<String> {
-        if (a.isEmpty() || b.isEmpty() || tri.isEmpty()) return emptyList()
-        val head = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic) + "\u0000"
-        val hits = ArrayList<Pair<String, Int>>(6)
-        for ((k, c) in tri) {
-            if (k.startsWith(head)) hits.add(k.substring(head.length) to c)
-        }
-        if (hits.isEmpty()) return emptyList()
-        hits.sortByDescending { it.second }
-        return hits.take(n).map { it.first }
+        if (a.isEmpty() || b.isEmpty()) return emptyList()
+        return best(Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic), n, "")
     }
 
+    /**
+     * The words he writes after [head], strongest first, kept to [n].
+     *
+     * [prefix] is the part of the next word he has already typed. Filtering here
+     * rather than in the caller is what makes "هلا ش" able to answer شلونك: the
+     * history and the letters so far are one question, and asked separately
+     * neither of them knows the answer.
+     */
+    private fun best(head: String, n: Int, prefix: String): List<String> {
+        if (n <= 0) return emptyList()
+        val m = after[head] ?: return emptyList()
+        val topW: Array<String?> = arrayOfNulls(n)
+        val topC = IntArray(n)
+        for ((w, c) in m) {
+            if (prefix.isNotEmpty() && !w.startsWith(prefix)) continue
+            if (c <= topC[n - 1]) continue
+            var at = n - 1
+            while (at > 0 && topC[at - 1] < c) {
+                topC[at] = topC[at - 1]; topW[at] = topW[at - 1]; at--
+            }
+            topC[at] = c; topW[at] = w
+        }
+        val out = ArrayList<String>(n)
+        for (i in 0 until n) topW[i]?.let { out.add(it) }
+        return out
+    }
+
+    /**
+     * What he writes next, given up to two words of history and whatever letters
+     * of the next word he has typed. Two words of history first, one behind it.
+     */
+    fun nextWith(prev2: String, prev: String, prefix: String,
+                 arabic: Boolean, n: Int): List<String> {
+        if (prev.isEmpty() || n <= 0) return emptyList()
+        val p = if (prefix.isEmpty()) "" else Dict.fold(prefix, arabic)
+        val out = ArrayList<String>(n)
+        if (prev2.isNotEmpty()) {
+            for (w in best(Dict.fold(prev2, arabic) + "\u0000" + Dict.fold(prev, arabic),
+                           n, p)) {
+                if (!out.contains(w)) out.add(w)
+            }
+        }
+        if (out.size < n) {
+            for (w in best(Dict.fold(prev, arabic), n, p)) {
+                if (out.size >= n) break
+                if (!out.contains(w)) out.add(w)
+            }
+        }
+        return out
+    }
+
+    /** Drops the weakest from memory only. The rows stay in [Learn]. */
     private fun trimTri() {
-        val keepers = tri.entries.sortedByDescending { it.value }.take(MAX_TRI * 3 / 4)
+        val keepers = tri.entries.sortedByDescending { it.value }.take(HOT_TRI * 3 / 4)
         tri.clear()
         for (e in keepers) tri[e.key] = e.value
+        rebuildIndex()
+    }
+
+    /** Rebuilds [after] from the two flat maps. Runs only after a trim or a load. */
+    private fun rebuildIndex() {
+        after.clear()
+        for ((k, c) in pairs) headOf(k)?.let { link(it.first, it.second, c) }
+        for ((k, c) in tri) headOf(k)?.let { link(it.first, it.second, c) }
     }
 
     /** How often he has put these two words together, in this order. */
@@ -237,15 +408,8 @@ object UserDict {
 
     /** The words this person usually writes after [prev], most used first. */
     fun next(prev: String, arabic: Boolean, n: Int): List<String> {
-        if (prev.isEmpty() || pairs.isEmpty()) return emptyList()
-        val head = Dict.fold(prev, arabic) + "\u0000"
-        val hits = ArrayList<Pair<String, Int>>(8)
-        for ((k, c) in pairs) {
-            if (k.startsWith(head)) hits.add(k.substring(head.length) to c)
-        }
-        if (hits.isEmpty()) return emptyList()
-        hits.sortByDescending { it.second }
-        return hits.take(n).map { it.first }
+        if (prev.isEmpty()) return emptyList()
+        return best(Dict.fold(prev, arabic), n, "")
     }
 
     private fun bestNext(prev: String, arabic: Boolean, least: Int): String? {
@@ -275,10 +439,12 @@ object UserDict {
         return "$start $a $b"
     }
 
+    /** Drops the weakest from memory only. The rows stay in [Learn]. */
     private fun trimPairs() {
-        val keepers = pairs.entries.sortedByDescending { it.value }.take(MAX_PAIRS * 3 / 4)
+        val keepers = pairs.entries.sortedByDescending { it.value }.take(HOT_PAIRS * 3 / 4)
         pairs.clear()
         for (e in keepers) pairs[e.key] = e.value
+        rebuildIndex()
     }
 
     /**
@@ -318,7 +484,7 @@ object UserDict {
             // iterator happened to reach first
             val cold = fixes.keys.sortedBy { fixUsed[it] ?: 0 }
                 .take(fixes.size - MAX_FIX * 3 / 4)
-            for (c in cold) { fixes.remove(c); fixUsed.remove(c) }
+            for (c in cold) { fixes.remove(c); fixUsed.remove(c); Learn.touchFix(c) }
         }
         dirty = true
         save()
@@ -338,7 +504,7 @@ object UserDict {
     /** He put the typed word back, so it was never a mistake. */
     fun forgetFix(word: String, arabic: Boolean) {
         val k = Dict.fold(word, arabic)
-        if (fixes.remove(k) != null) { dirty = true; save() }
+        if (fixes.remove(k) != null) { Learn.touchFix(k); dirty = true; save() }
     }
 
     /**
@@ -357,12 +523,15 @@ object UserDict {
         forgetFix(word, arabic)
         val n = (rejects[k] ?: 0) + 1
         rejects[k] = n
+        Learn.touchRej(k)
         dirty = true
         if (n < REJECTS_TO_KEEP) { save(); return false }
         keep.add(k)
         counts[k] = (counts[k] ?: 0) + OWN
         tick++
         recent[k] = tick
+        Learn.touchKeep(k)
+        Learn.touchWord(k)
         save()
         return true
     }
@@ -393,11 +562,19 @@ object UserDict {
     fun predict(prefix: String, arabic: Boolean, n: Int): List<String> {
         if (prefix.isEmpty() || counts.isEmpty()) return emptyList()
         val p = Dict.fold(prefix, arabic)
+        if (p.isEmpty()) return emptyList()
+        // the words between "شل" and "شل\uffff" are exactly the words starting with
+        // "شل", so the map hands them over without a single wasted comparison
+        val range = try {
+            counts.subMap(p, true, p + '\uffff', true)
+        } catch (_: Throwable) {
+            return emptyList()
+        }
         val hits = ArrayList<Pair<String, Float>>(16)
-        for ((w, c) in counts) {
+        for ((w, c) in range) {
             if (c < SHOW || w.length <= p.length) continue
             if (fixes.containsKey(w)) continue
-            if (w.startsWith(p)) hits.add(w to score(w))
+            hits.add(w to score(w))
             if (hits.size > 200) break
         }
         if (hits.isEmpty()) return emptyList()
@@ -454,9 +631,9 @@ object UserDict {
     }
 
     private fun trim() {
-        val keepers = counts.entries.sortedByDescending { score(it.key) }.take(TRIM_TO)
+        val keepers = counts.entries.sortedByDescending { score(it.key) }.take(HOT_TRIM)
         counts.clear()
-        val keptRecent = HashMap<String, Int>(TRIM_TO)
+        val keptRecent = HashMap<String, Int>(HOT_TRIM)
         for (e in keepers) {
             counts[e.key] = e.value
             recent[e.key]?.let { keptRecent[e.key] = it }
@@ -465,27 +642,70 @@ object UserDict {
         recent.putAll(keptRecent)
     }
 
-    /** Writes to disk only when something changed. Call when the keyboard closes. */
+    /**
+     * Writes what has changed, on a thread of its own.
+     *
+     * The old version rewrote every store, whole, as JSON — so the cost of
+     * learning one word grew with everything already learnt, which is the real
+     * reason the caps existed. Here a space costs one row. Batched, because
+     * fifty rows in one transaction cost barely more than one.
+     */
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "huc-learn").apply { isDaemon = true; priority = Thread.MIN_PRIORITY }
+    }
+
+    /** True while a write is queued but has not started, so one is queued at a time
+     * without a change made meanwhile being left waiting for the next one. */
+    private val queued = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** How many rows may wait before they are written without being asked. */
+    private const val BATCH = 40
+
+    /** Words typed between one ageing pass and the next. */
+    private const val DECAY_EVERY = 4000
+
+    private var decayAt = 0
+
     fun save() {
         if (!dirty) return
-        val c = ctx ?: return
         dirty = false
+        flushLater()
+    }
+
+    private fun flushLater() {
+        if (!queued.compareAndSet(false, true)) return
         try {
-            c.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
-                .putString(K_COUNTS, mapJson(counts))
-                .putString(K_PAIRS, mapJson(pairs))
-                .putString(K_RECENT, mapJson(recent))
-                .putString(K_TRI, mapJson(tri))
-                .putString(K_FIXUSE, mapJson(fixUsed))
-                .putString(K_REJECT, mapJson(rejects))
-                .putInt(K_TICK, tick)
-                .putString(K_KEEP, keep.joinToString("\n"))
-                .putString(K_FIXES, JSONObject().also { fj ->
-                    for ((k, v) in fixes) fj.put(k, v)
-                }.toString())
-                .apply()
-        } catch (_: Exception) {
+            writer.execute {
+                queued.set(false)      // cleared first: a change made during the
+                flushNow()             // write queues another, and is not lost
+            }
+        } catch (_: Throwable) {
+            queued.set(false)
         }
+    }
+
+    /** Called from [seen] on every word, so it must do nothing most of the time. */
+    private fun maybeFlush() {
+        if (Learn.waiting >= BATCH) flushLater()
+        if (tick - decayAt >= DECAY_EVERY) {
+            decayAt = tick
+            try {
+                writer.execute { Learn.decay() }
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    private fun flushNow() {
+        Learn.flush(
+            wordAt = { k -> counts[k]?.let { it to (recent[k] ?: 0) } },
+            pairAt = { k -> pairs[k] },
+            triAt = { k -> tri[k] },
+            fixAt = { k -> fixes[k]?.let { it to (fixUsed[k] ?: 0) } },
+            keepHas = { k -> keep.contains(k) },
+            rejAt = { k -> rejects[k] },
+            tick = tick
+        )
     }
 
     private fun mapJson(m: Map<String, Int>): String {
@@ -549,9 +769,11 @@ object UserDict {
                     if (v.isNotEmpty()) fixes[k] = v
                 }
             }
-            if (counts.size > MAX) trim()
-            if (pairs.size > MAX_PAIRS) trimPairs()
-            if (tri.size > MAX_TRI) trimTri()
+            if (counts.size > HOT_WORDS) trim()
+            if (pairs.size > HOT_PAIRS) trimPairs()
+            if (tri.size > HOT_TRI) trimTri()
+            rebuildIndex()
+            markAllDirty()
             dirty = true
             save()
             true
@@ -570,10 +792,17 @@ object UserDict {
     }
 
     /** How many words the keyboard has picked up — shown in the settings screen. */
-    fun learned(): Int = counts.count { it.value >= SHOW }
+    fun learned(): Int {
+        val onDisk = Learn.counts()[0]
+        val inRam = counts.count { it.value >= SHOW }
+        return if (onDisk > inRam) onDisk else inRam
+    }
+
+    /** Words, pairs, triples and repairs on disk — what settings shows him. */
+    fun sizes(): IntArray = Learn.counts()
 
     /** How many of his own slips the keyboard now repairs on sight. */
-    fun fixCount(): Int = fixes.size
+    fun fixCount(): Int = maxOf(fixes.size, Learn.counts()[3])
 
     /**
      * Drops the slips that earlier versions counted as words.
@@ -590,12 +819,15 @@ object UserDict {
             if (Dict.known(w, arabic)) continue
             if (!Dict.hasStrongFix(w, arabic)) continue
             counts.remove(w); recent.remove(w); keep.remove(w); gone++
+            Learn.touchWord(w); Learn.touchKeep(w)
         }
         if (gone > 0) { dirty = true; save() }
         return gone
     }
 
     fun forgetAll() {
+        Learn.wipe()
+        after.clear()
         fixUsed.clear()
         rejects.clear()
         counts.clear()

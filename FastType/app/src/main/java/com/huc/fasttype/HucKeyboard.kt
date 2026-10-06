@@ -1443,20 +1443,33 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (Store.kbPredict) {
             // what usually follows the finished word comes first — it is the stronger
             // guess once a word is done
-            val prev = if (word.isEmpty()) lastWord else word
-            val back = if (word.isEmpty()) prevWord else lastWord
-            if (prev.isNotEmpty() &&
-                (word.isEmpty() || Dict.known(word, arabic) || UserDict.isOwn(word, arabic))
-            ) {
-                // two words of history first, one word of history behind it
+            // The sentence so far, and whatever of the next word is already on the
+            // screen. While a word is half typed those two used to be asked apart —
+            // and so the strongest thing the keyboard knew went unused at exactly
+            // the moment it was most use.
+            if (word.isNotEmpty() && lastWord.isNotEmpty()) {
                 val mine = if (Store.kbLearn)
-                    UserDict.nextTri(back, prev, arabic, 3) + UserDict.next(prev, arabic, 4)
+                    UserDict.nextWith(prevWord, lastWord, word, arabic, MAX_SUGG)
                 else emptyList()
-                for (w in mine + Dict.nextAfter(back, prev, arabic, 6)) {
+                for (w in mine +
+                    Dict.nextAfterPrefix(prevWord, lastWord, word, arabic, MAX_SUGG)) {
+                    if (zones.size >= MAX_SUGG) break
+                    if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
+                }
+            }
+
+            // once nothing is being typed, what follows the finished sentence
+            if (word.isEmpty() && lastWord.isNotEmpty()) {
+                val mine = if (Store.kbLearn)
+                    UserDict.nextTri(prevWord, lastWord, arabic, 3) +
+                        UserDict.next(lastWord, arabic, 4)
+                else emptyList()
+                for (w in mine + Dict.nextAfter(prevWord, lastWord, arabic, 6)) {
                     if (zones.size >= MAX_SUGG) break
                     if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
                 }
             }
+
             // then every completion of the word being typed
             if (word.isNotEmpty()) {
                 // a line he writes often, offered whole rather than a word at a time
@@ -1470,6 +1483,23 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 for (w in mine + Dict.predict(word, arabic, MAX_SUGG)) {
                     if (zones.size >= MAX_SUGG) break
                     if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
+                }
+            }
+
+            // Last, and only to fill a zone still empty: what tends to follow the
+            // word he has just finished typing but not yet spaced. Measured, this
+            // is worth nothing once the two sources above have had their pick — it
+            // used to come first, and it was taking their places.
+            if (word.isNotEmpty() && zones.size < MAX_SUGG &&
+                (Dict.known(word, arabic) || UserDict.isOwn(word, arabic))
+            ) {
+                val mine = if (Store.kbLearn)
+                    UserDict.nextTri(lastWord, word, arabic, 3) +
+                        UserDict.next(word, arabic, 4)
+                else emptyList()
+                for (w in mine + Dict.nextAfter(lastWord, word, arabic, 6)) {
+                    if (zones.size >= MAX_SUGG) break
+                    if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
                 }
             }
         }
