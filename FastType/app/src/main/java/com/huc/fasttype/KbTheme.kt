@@ -24,7 +24,24 @@ class KbTheme(
     /** True for the dark half of a pair. */
     val dark: Boolean = false,
     /** The id of this theme's opposite number, used when following the device. */
-    val twin: String = ""
+    val twin: String = "",
+
+    // ---- how a key is told apart from a background of its own colour ----
+    //
+    // A white key on a white panel has no edge of its own, so one has to be drawn.
+    // These three are the only ways to do it that a canvas can draw cheaply, and
+    // each gives a different kind of keyboard: a hairline is flat and
+    // architectural, a shadow makes the keys sit on top of the surface, and a
+    // carve makes them sit inside it. Zero means "not this one".
+
+    /** A hairline drawn around every key. */
+    val edge: Int = 0,
+    /** A shadow under every key: the keys look lifted off the panel. */
+    val lift: Int = 0,
+    /** A line inside the top of every key: the keys look pressed into the panel. */
+    val carve: Int = 0,
+    /** The light along the bottom of a carved key, which is what sells it. */
+    val carveLight: Int = 0
 )
 
 object Themes {
@@ -148,6 +165,99 @@ object Themes {
             c("#F0E8F6"), c("#9985A6"), c("#D9BDF0"), c("#1A0F22"), c("#C0ABCD"),
             dark = true, twin = "plumDay"
         ),
+        // ---- white on white -------------------------------------------------
+        //
+        // Five keyboards whose panel and keys are the same white. What separates a
+        // key from the surface is a hairline, a shadow, a carve, or nothing at all
+        // but the gap — and that choice, not the colour, is the whole design.
+
+        KbTheme(
+            "hair", "خيط",
+            c("#FFFFFF"), c("#FFFFFF"), c("#E6E6E2"), c("#FFFFFF"),
+            c("#FFFFFF"), c("#F1F1EF"), c("#FFFFFF"),
+            c("#121212"), c("#FFFFFF"),
+            c("#0B0B0A"), c("#8E8E88"), c("#0B0B0A"), c("#FFFFFF"), c("#2A2A28"),
+            lightKeys = true, twin = "hairNight", edge = c("#E6E6E2")
+        ),
+        KbTheme(
+            "hairNight", "خيط ليلي",
+            c("#0C0C0D"), c("#0C0C0D"), c("#27272A"), c("#0C0C0D"),
+            c("#0C0C0D"), c("#1E1E20"), c("#0C0C0D"),
+            c("#F2F2EF"), c("#0C0C0D"),
+            c("#F7F7F5"), c("#76766F"), c("#F7F7F5"), c("#0C0C0D"), c("#CFCFCB"),
+            dark = true, twin = "hair", edge = c("#27272A")
+        ),
+
+        KbTheme(
+            "float", "طافي",
+            c("#FFFFFF"), c("#FFFFFF"), c("#EDEDEA"), c("#FFFFFF"),
+            c("#FFFFFF"), c("#F0F0EE"), c("#FFFFFF"),
+            c("#1A1A19"), c("#FFFFFF"),
+            c("#0A0A09"), c("#90908A"), c("#0A0A09"), c("#FFFFFF"), c("#2A2A28"),
+            lightKeys = true, twin = "floatNight", lift = c("#26000000")
+        ),
+        KbTheme(
+            "floatNight", "طافي ليلي",
+            c("#0A0A0B"), c("#0A0A0B"), c("#242427"), c("#0A0A0B"),
+            c("#141416"), c("#242427"), c("#141416"),
+            c("#EFEFEC"), c("#0A0A0B"),
+            c("#F8F8F6"), c("#79797A"), c("#F8F8F6"), c("#0A0A0B"), c("#CECECA"),
+            dark = true, twin = "float", lift = c("#8C000000")
+        ),
+
+        KbTheme(
+            "carve", "محفور",
+            c("#FAFAF8"), c("#FAFAF8"), c("#ECECE8"), c("#FAFAF8"),
+            c("#FFFFFF"), c("#F2F2F0"), c("#FFFFFF"),
+            c("#17170F"), c("#FFFFFF"),
+            c("#0C0C0B"), c("#8C8C86"), c("#0C0C0B"), c("#FFFFFF"), c("#2B2B29"),
+            lightKeys = true, twin = "carveNight",
+            carve = c("#18000000"), carveLight = c("#F2FFFFFF")
+        ),
+        KbTheme(
+            "carveNight", "محفور ليلي",
+            c("#0B0B0C"), c("#0B0B0C"), c("#232326"), c("#0B0B0C"),
+            c("#131315"), c("#1F1F22"), c("#131315"),
+            c("#EDEDEA"), c("#0B0B0C"),
+            c("#F6F6F4"), c("#7A7A74"), c("#F6F6F4"), c("#0B0B0C"), c("#CDCDC9"),
+            dark = true, twin = "carve",
+            carve = c("#1FFFFFFF"), carveLight = c("#99000000")
+        ),
+
+        KbTheme(
+            "brass", "نحاس",
+            c("#FFFEFC"), c("#FFFEFC"), c("#EADFC9"), c("#FFFEFC"),
+            c("#FFFEFC"), c("#F6F1E8"), c("#FFFEFC"),
+            c("#A4823F"), c("#FFFEFC"),
+            c("#140F08"), c("#938876"), c("#140F08"), c("#FFFEFC"), c("#2E2619"),
+            lightKeys = true, twin = "brassNight", edge = c("#EADFC9")
+        ),
+        KbTheme(
+            "brassNight", "نحاس ليلي",
+            c("#0C0A07"), c("#0C0A07"), c("#2B2418"), c("#0C0A07"),
+            c("#0C0A07"), c("#1E1A13"), c("#0C0A07"),
+            c("#C79A4A"), c("#0C0A07"),
+            c("#F8F3E9"), c("#7E7465"), c("#F8F3E9"), c("#0C0A07"), c("#CFC6B4"),
+            dark = true, twin = "brass", edge = c("#2B2418")
+        ),
+
+        KbTheme(
+            "gapLight", "فجوة",
+            c("#EFEFED"), c("#EFEFED"), c("#DEDEDB"), c("#EFEFED"),
+            c("#FFFFFF"), c("#E4E4E1"), c("#FFFFFF"),
+            c("#111111"), c("#FFFFFF"),
+            c("#09090A"), c("#86867F"), c("#09090A"), c("#FFFFFF"), c("#292928"),
+            lightKeys = true, twin = "gapNight"
+        ),
+        KbTheme(
+            "gapNight", "فجوة ليلي",
+            c("#0A0A0B"), c("#0A0A0B"), c("#232327"), c("#0A0A0B"),
+            c("#17171A"), c("#232327"), c("#17171A"),
+            c("#F3F3F0"), c("#0A0A0B"),
+            c("#FAFAF8"), c("#76766F"), c("#FAFAF8"), c("#0A0A0B"), c("#D0D0CC"),
+            dark = true, twin = "gapLight"
+        ),
+
         KbTheme(
             "glassLight", "زجاج فاتح",
             c("#F2F2F2"), c("#E8E8E8"), c("#D8D8D8"), c("#E8E8E8"),

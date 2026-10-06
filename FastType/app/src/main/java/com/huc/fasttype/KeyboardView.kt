@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Rect
@@ -375,8 +376,34 @@ class KeyboardView(context: Context) : View(context) {
     private val clipR = Rect()
     private val path = Path()
 
-    private val arFont: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    private val enFont: Typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+    /**
+     * The letters on the keys, at whatever weight he has set.
+     *
+     * They were drawn at 400 — plain regular — and that is the whole of why his
+     * keyboard looked lighter than an iPhone's in the two screenshots side by
+     * side. Android gives a real weight axis from 28 onwards; below that there is
+     * only regular and bold, so the dial lands on whichever is nearer.
+     */
+    private var arFont: Typeface = Typeface.DEFAULT
+    private var enFont: Typeface = Typeface.DEFAULT
+
+    private var fontWeight = -1
+
+    private fun applyFont() {
+        val w = Store.kbWeight
+        if (w == fontWeight) return
+        fontWeight = w
+        val f = if (android.os.Build.VERSION.SDK_INT >= 28) {
+            Typeface.create(Typeface.SANS_SERIF, w, false)
+        } else {
+            Typeface.create(
+                if (w >= 600) "sans-serif-medium" else "sans-serif",
+                if (w >= 700) Typeface.BOLD else Typeface.NORMAL
+            )
+        }
+        arFont = f
+        enFont = f
+    }
 
     private val handler = Handler(Looper.getMainLooper())
     private var repeating = false
@@ -412,6 +439,7 @@ class KeyboardView(context: Context) : View(context) {
         gap = dp(Store.kbGap.toFloat())
         rad = dp(Store.kbRadius.toFloat())
         panelRad = dp(Store.kbPanelRadius.toFloat())
+        applyFont()
         theme = Themes.resolve(Store.kbTheme, Store.kbFollowSystem, deviceIsDark())
         numRow = Store.kbNumberRow
         showSugg = Store.kbSuggBar
@@ -1167,7 +1195,61 @@ class KeyboardView(context: Context) : View(context) {
             else -> theme.key
         }
         val r = rad
+
+        // A white key on a white panel. The shadow is laid down first, in three
+        // thin passes rather than one blurred one — a blur needs a software layer
+        // and this is drawn forty times a frame, where three fills cost nothing.
+        if (theme.lift != 0 && k !== pressed) {
+            val base = Color.alpha(theme.lift)
+            for (i in 3 downTo 1) {
+                keyPaint.color = Color.argb(
+                    (base * (0.34f + 0.22f * (4 - i))).toInt().coerceIn(0, 255),
+                    Color.red(theme.lift), Color.green(theme.lift), Color.blue(theme.lift)
+                )
+                rf.set(k.x, k.y + dp(i * 0.55f), k.x + k.w, k.y + k.h + dp(i * 0.55f))
+                canvas.drawRoundRect(rf, r, r, keyPaint)
+            }
+            rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
+            keyPaint.color = when {
+                isOn -> theme.onBg
+                k.style == Style.GO -> theme.go
+                k.style == Style.DARK -> theme.keyDark
+                else -> theme.key
+            }
+        }
+
         canvas.drawRoundRect(rf, r, r, keyPaint)
+
+        // The carve: a dark line inside the top edge and a light one just under the
+        // key. Without the light underneath the key only looks dirty along its top.
+        if (theme.carve != 0 && k !== pressed) {
+            canvas.save()
+            path.reset()
+            path.addRoundRect(rf, r, r, Path.Direction.CW)
+            canvas.clipPath(path)
+            edgePaint.style = Paint.Style.STROKE
+            edgePaint.strokeWidth = dp(1.1f)
+            edgePaint.color = theme.carve
+            canvas.drawLine(k.x, k.y + dp(0.55f), k.x + k.w, k.y + dp(0.55f), edgePaint)
+            canvas.restore()
+            if (theme.carveLight != 0) {
+                edgePaint.color = theme.carveLight
+                canvas.drawLine(
+                    k.x + r, k.y + k.h + dp(0.6f), k.x + k.w - r, k.y + k.h + dp(0.6f),
+                    edgePaint
+                )
+            }
+        }
+
+        if (theme.edge != 0) {
+            edgePaint.style = Paint.Style.STROKE
+            edgePaint.strokeWidth = dp(1f)
+            edgePaint.color = theme.edge
+            val h = dp(0.5f)
+            rf.set(k.x + h, k.y + h, k.x + k.w - h, k.y + k.h - h)
+            canvas.drawRoundRect(rf, r, r, edgePaint)
+            rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
+        }
 
         // blank mode: the key shapes stay, everything written on them goes
         if (blank) return

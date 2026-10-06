@@ -42,6 +42,7 @@ object Store {
     private const val K_KB_H = "kb_h"
     private const val K_KB_GAP = "kb_gap"
     private const val K_KB_RAD = "kb_rad"
+    private const val K_KB_WEIGHT = "kb_weight"
     private const val K_KB_PRAD = "kb_prad"
     private const val K_KB_NUM = "kb_num"
     private const val K_KB_SUGG = "kb_sugg"
@@ -197,6 +198,15 @@ object Store {
     @Volatile var kbGap: Int = 5
         private set
     @Volatile var kbRadius: Int = 6
+
+    /**
+     * How heavy the letters on the keys are, 300 to 700.
+     *
+     * The keyboard drew them at 400, which is why its letters looked lighter than
+     * an iPhone's beside it. Left as a number rather than a switch because the
+     * right weight depends on the theme and on his eyes, not on mine.
+     */
+    @Volatile var kbWeight: Int = 600
         private set
     @Volatile var kbPanelRadius: Int = 28
         private set
@@ -358,6 +368,7 @@ object Store {
         kbKeyHeight = p.getInt(K_KB_H, 44).coerceIn(34, 58)
         kbGap = p.getInt(K_KB_GAP, 5).coerceIn(2, 10)
         kbRadius = p.getInt(K_KB_RAD, 6).coerceIn(2, 18)
+        kbWeight = p.getInt(K_KB_WEIGHT, 600).coerceIn(300, 700)
         kbPanelRadius = p.getInt(K_KB_PRAD, 28).coerceIn(0, 44)
         kbNumberRow = p.getBoolean(K_KB_NUM, false)
         kbSuggBar = p.getBoolean(K_KB_SUGG, true)
@@ -518,6 +529,7 @@ object Store {
             "h" -> { kbKeyHeight = v.coerceIn(34, 58); prefs(ctx).edit().putInt(K_KB_H, kbKeyHeight).apply() }
             "gap" -> { kbGap = v.coerceIn(2, 10); prefs(ctx).edit().putInt(K_KB_GAP, kbGap).apply() }
             "rad" -> { kbRadius = v.coerceIn(2, 18); prefs(ctx).edit().putInt(K_KB_RAD, kbRadius).apply() }
+            "weight" -> { kbWeight = v.coerceIn(300, 700); prefs(ctx).edit().putInt(K_KB_WEIGHT, kbWeight).apply() }
             "prad" -> { kbPanelRadius = v.coerceIn(0, 44); prefs(ctx).edit().putInt(K_KB_PRAD, kbPanelRadius).apply() }
             "outer" -> { kbOuterH = v.coerceIn(0, 60); prefs(ctx).edit().putInt(K_KB_OUTER, kbOuterH).apply() }
             "bottom" -> { kbBottomPad = v.coerceIn(0, 48); prefs(ctx).edit().putInt(K_KB_BOTTOM, kbBottomPad).apply() }

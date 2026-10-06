@@ -821,6 +821,10 @@ class MainActivity : Activity() {
         p.addView(sliderRow("دوران زوايا الأزرار", Store.kbRadius, 2, 18) {
             Store.setKbInt(this, "rad", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        // 400 is where it was, and why its letters looked lighter than an iPhone's
+        p.addView(sliderRow("ثقل خط الأزرار", Store.kbWeight, 300, 700, 50) {
+            Store.setKbInt(this, "weight", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("إطار اللوحة (صفر = لحافة الشاشة)", Store.kbInset, 0, 14) {
             Store.setKbInt(this, "inset", it); syncPreview()
         }, lp(true, bottom = dp(8)))
@@ -1186,7 +1190,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun sliderRow(label: String, value: Int, lo: Int, hi: Int, cb: (Int) -> Unit): View {
+    /** [step] lets a slider move in useful jumps — font weights go in fifties. */
+    private fun sliderRow(
+        label: String, value: Int, lo: Int, hi: Int, step: Int = 1, cb: (Int) -> Unit
+    ): View {
         val row = LinearLayout(this)
         row.orientation = LinearLayout.VERTICAL
         row.background = round(CARD)
@@ -1210,15 +1217,16 @@ class MainActivity : Activity() {
         row.addView(head)
 
         val bar = SeekBar(this)
-        bar.max = hi - lo
-        bar.progress = (value - lo).coerceIn(0, hi - lo)
+        val steps = ((hi - lo) / step).coerceAtLeast(1)
+        bar.max = steps
+        bar.progress = ((value - lo) / step).coerceIn(0, steps)
         bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar?, pr: Int, fromUser: Boolean) {
-                vv.text = (lo + pr).toString()
+                vv.text = (lo + pr * step).toString()
             }
             override fun onStartTrackingTouch(sb: SeekBar?) {}
             override fun onStopTrackingTouch(sb: SeekBar?) {
-                cb(lo + (sb?.progress ?: 0))
+                cb(lo + (sb?.progress ?: 0) * step)
             }
         })
         row.addView(bar, lp(true))
