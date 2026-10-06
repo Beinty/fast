@@ -7,6 +7,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # the release step writes a tag and an asset; without this the token is read-only
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -82,3 +85,24 @@ jobs:
           name: Glass-launcher-apk
           path: '**/glass/build/outputs/apk/debug/glass-debug.apk'
           if-no-files-found: error
+
+      # An Actions artifact is a zip behind a login, which is no use on a phone.
+      # A release asset is a plain file on a URL that never changes, so the same
+      # two links always point at the newest build.
+      - name: Publish to the fixed download links
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KB=$(find . -path '*app/build/outputs/apk/debug/app-debug.apk' | head -1)
+          GL=$(find . -path '*glass/build/outputs/apk/debug/glass-debug.apk' | head -1)
+          VER=$(grep -m1 'versionName' FastType/app/build.gradle.kts \
+                | sed 's/.*"\(.*\)".*/\1/')
+          mkdir -p out
+          cp "$KB" "out/FastType.apk"
+          cp "$GL" "out/Glass.apk"
+          gh release delete latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create latest out/FastType.apk out/Glass.apk \
+            --title "أحدث نسخة — $VER" \
+            --notes "كتابة سريعة $VER · بُنيت من ${GITHUB_SHA:0:7}" \
+            --latest
