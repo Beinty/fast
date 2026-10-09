@@ -78,6 +78,24 @@ object Store {
     private const val K_TR_DST = "kb_tr_dst"
     private const val K_KB_PICS = "kb_pics"
 
+    // automatic replies
+    private const val K_AR_ON = "ar_on"
+    private const val K_AR_WA = "ar_whats"
+    private const val K_AR_TG = "ar_tg"
+    private const val K_AR_SMS = "ar_sms"
+    private const val K_AR_MODE = "ar_mode"
+    private const val K_AR_LIST = "ar_list"
+    private const val K_AR_GROUPS = "ar_groups"
+    private const val K_AR_ONCE = "ar_once"
+    private const val K_AR_DELAY = "ar_delay"
+    private const val K_AR_HOURS = "ar_hours"
+    private const val K_AR_FROM = "ar_from"
+    private const val K_AR_TO = "ar_to"
+    private const val K_AR_STYLE = "ar_style"
+    private const val K_AR_PERSONA = "ar_persona"
+    private const val K_AR_STOP = "ar_stop"
+    private const val K_AR_LOG = "ar_log"
+
     @Volatile
     var items: List<Shortcut> = emptyList()
         private set
@@ -336,6 +354,69 @@ object Store {
     @Volatile var kbClipExpire: Int = 60
         private set
 
+    // ---------- automatic replies ----------
+    //
+    // Off until he turns it on. Everything here sends a message in his name with
+    // no chance to read it first, so nothing in this block defaults to active.
+
+    @Volatile var arOn: Boolean = false
+        private set
+
+    @Volatile var arWhats: Boolean = true
+        private set
+    @Volatile var arTg: Boolean = true
+        private set
+    @Volatile var arSms: Boolean = false
+        private set
+
+    /** 0 everyone · 1 only the named · 2 everyone except the named. */
+    @Volatile var arMode: Int = 0
+        private set
+
+    /** Names to match against the notification title, comma separated. */
+    @Volatile var arList: String = ""
+        private set
+
+    @Volatile var arGroups: Boolean = false
+        private set
+
+    /** One reply per conversation until he opens the chat himself. */
+    @Volatile var arOnce: Boolean = true
+        private set
+
+    /** Seconds to wait before sending; an instant answer reads as a machine. */
+    @Volatile var arDelay: Int = 8
+        private set
+
+    @Volatile var arHours: Boolean = false
+        private set
+    @Volatile var arFrom: Int = 9
+        private set
+    @Volatile var arTo: Int = 17
+        private set
+
+    /** 0 match the incoming message · 1 Iraqi · 2 standard Arabic. */
+    @Volatile var arStyle: Int = 0
+        private set
+
+    @Volatile var arPersona: String = ""
+        private set
+
+    /**
+     * Any of these in an incoming message and nothing is sent.
+     *
+     * The case this is for: someone posing as a friend asking for a transfer. A
+     * machine answering that in his name is the one failure with a real cost.
+     */
+    @Volatile var arStop: String = "فلوس,تحويل,حوّل,رقم سري,كود,حواله,حوالة,رمز,otp,password"
+        private set
+
+    /** The last [LOG_MAX] replies, newest first, as JSON. */
+    @Volatile var arLog: String = "[]"
+        private set
+
+    const val LOG_MAX = 50
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -403,6 +484,89 @@ object Store {
         kbTrSrc = p.getString(K_TR_SRC, "auto") ?: "auto"
         kbTrDst = p.getString(K_TR_DST, "en") ?: "en"
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
+
+        arOn = p.getBoolean(K_AR_ON, false)
+        arWhats = p.getBoolean(K_AR_WA, true)
+        arTg = p.getBoolean(K_AR_TG, true)
+        arSms = p.getBoolean(K_AR_SMS, false)
+        arMode = p.getInt(K_AR_MODE, 0).coerceIn(0, 2)
+        arList = p.getString(K_AR_LIST, "") ?: ""
+        arGroups = p.getBoolean(K_AR_GROUPS, false)
+        arOnce = p.getBoolean(K_AR_ONCE, true)
+        arDelay = p.getInt(K_AR_DELAY, 8).coerceIn(0, 120)
+        arHours = p.getBoolean(K_AR_HOURS, false)
+        arFrom = p.getInt(K_AR_FROM, 9).coerceIn(0, 23)
+        arTo = p.getInt(K_AR_TO, 17).coerceIn(0, 23)
+        arStyle = p.getInt(K_AR_STYLE, 0).coerceIn(0, 2)
+        arPersona = p.getString(K_AR_PERSONA, "") ?: ""
+        arStop = p.getString(K_AR_STOP, arStop) ?: arStop
+        arLog = p.getString(K_AR_LOG, "[]") ?: "[]"
+    }
+
+    fun setArFlag(ctx: Context, which: String, v: Boolean) {
+        val e = prefs(ctx).edit()
+        when (which) {
+            "on" -> { arOn = v; e.putBoolean(K_AR_ON, v) }
+            "wa" -> { arWhats = v; e.putBoolean(K_AR_WA, v) }
+            "tg" -> { arTg = v; e.putBoolean(K_AR_TG, v) }
+            "sms" -> { arSms = v; e.putBoolean(K_AR_SMS, v) }
+            "groups" -> { arGroups = v; e.putBoolean(K_AR_GROUPS, v) }
+            "once" -> { arOnce = v; e.putBoolean(K_AR_ONCE, v) }
+            "hours" -> { arHours = v; e.putBoolean(K_AR_HOURS, v) }
+        }
+        e.apply()
+    }
+
+    fun setArInt(ctx: Context, which: String, v: Int) {
+        val e = prefs(ctx).edit()
+        when (which) {
+            "mode" -> { arMode = v.coerceIn(0, 2); e.putInt(K_AR_MODE, arMode) }
+            "delay" -> { arDelay = v.coerceIn(0, 120); e.putInt(K_AR_DELAY, arDelay) }
+            "from" -> { arFrom = v.coerceIn(0, 23); e.putInt(K_AR_FROM, arFrom) }
+            "to" -> { arTo = v.coerceIn(0, 23); e.putInt(K_AR_TO, arTo) }
+            "style" -> { arStyle = v.coerceIn(0, 2); e.putInt(K_AR_STYLE, arStyle) }
+        }
+        e.apply()
+    }
+
+    fun setArText(ctx: Context, which: String, v: String) {
+        val e = prefs(ctx).edit()
+        when (which) {
+            "list" -> { arList = v; e.putString(K_AR_LIST, v) }
+            "persona" -> { arPersona = v; e.putString(K_AR_PERSONA, v) }
+            "stop" -> { arStop = v; e.putString(K_AR_STOP, v) }
+        }
+        e.apply()
+    }
+
+    /**
+     * Records one reply attempt, sent or not.
+     *
+     * Anything that goes out in his name has to be readable afterwards, so the
+     * blocked and failed attempts are kept here too, not only the successes.
+     */
+    fun addReplyLog(ctx: Context, pkg: String, who: String, inq: String, out: String, ok: Boolean) {
+        val arr = try { JSONArray(arLog) } catch (_: Throwable) { JSONArray() }
+        val row = JSONObject()
+        row.put("t", System.currentTimeMillis())
+        row.put("app", pkg)
+        row.put("who", who)
+        row.put("in", inq)
+        row.put("out", out)
+        row.put("ok", ok)
+        val next = JSONArray()
+        next.put(row)
+        var i = 0
+        while (i < arr.length() && next.length() < LOG_MAX) {
+            next.put(arr.get(i)); i++
+        }
+        arLog = next.toString()
+        prefs(ctx).edit().putString(K_AR_LOG, arLog).apply()
+    }
+
+    fun clearReplyLog(ctx: Context) {
+        arLog = "[]"
+        prefs(ctx).edit().putString(K_AR_LOG, arLog).apply()
     }
 
     private fun setItems(list: List<Shortcut>) {

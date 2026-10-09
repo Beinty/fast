@@ -1,3 +1,5 @@
 FastType/.gradle/
+# holds the OpenAI key for a local build; must never be committed
+FastType/local.properties
 tools/__pycache__/
 tools/freq_*.txt

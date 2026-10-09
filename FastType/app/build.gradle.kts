@@ -19,6 +19,34 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
+
+        // ===================================================================
+        //  مفتاح OpenAI — لا تكتبه هنا
+        //
+        //  المفتاح يجي من GitHub Secret اسمه OPENAI_KEY.
+        //  تحطه من: github.com/Beinty/fast → Settings → Secrets and variables
+        //           → Actions → New repository secret
+        //           Name: OPENAI_KEY     Secret: sk-...
+        //
+        //  للبناء المحلي: ضيف سطر OPENAI_KEY=sk-... بملف FastType/local.properties
+        //  (هذا الملف مضاف لـ .gitignore وما ينرفع).
+        //
+        //  لا تحطه بـ gradle.properties — ذاك الملف منرفع للريبو.
+        //  إذا انكتب المفتاح بالكود وانرفع، OpenAI يلغيه تلقائياً.
+        // ===================================================================
+        val localKey = rootProject.file("local.properties").let { f ->
+            if (!f.exists()) null else java.util.Properties().apply {
+                f.inputStream().use { load(it) }
+            }.getProperty("OPENAI_KEY")
+        }
+        val openAiKey = localKey
+            ?: System.getenv("OPENAI_KEY")
+            ?: ""
+        buildConfigField("String", "OPENAI_KEY", "\"$openAiKey\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {

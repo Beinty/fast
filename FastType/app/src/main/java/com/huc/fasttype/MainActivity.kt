@@ -29,6 +29,8 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONArray
+import java.text.SimpleDateFormat
 import java.util.Locale
 
 class MainActivity : Activity() {
@@ -71,6 +73,10 @@ class MainActivity : Activity() {
     private lateinit var panelCaller: ScrollView
     private lateinit var tabKb: TextView
     private lateinit var panelKb: LinearLayout
+    private lateinit var tabReply: TextView
+    private lateinit var panelReply: ScrollView
+    private var arBanner: TextView? = null
+    private var arLogBox: LinearLayout? = null
     private var kbPreview: KeyboardView? = null
     private var kbOuterRow: View? = null
     private var voiceReport: TextView? = null
@@ -122,24 +128,30 @@ class MainActivity : Activity() {
         tabShortcuts = makeTab("الاختصارات") { showTab(0) }
         tabCaller = makeTab("نطق المتصل") { showTab(1) }
         tabKb = makeTab("الكيبورد") { showTab(2) }
+        tabReply = makeTab("الرد") { showTab(3) }
         val tp1 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         tp1.marginEnd = dp(4)
         val tp2 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         tp2.marginStart = dp(4)
         val tp3 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         tp3.marginStart = dp(4)
+        val tp4 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        tp4.marginStart = dp(4)
         tabs.addView(tabShortcuts, tp1)
         tabs.addView(tabCaller, tp2)
         tabs.addView(tabKb, tp3)
+        tabs.addView(tabReply, tp4)
         root.addView(tabs, lp(true, bottom = dp(14)))
 
         val content = FrameLayout(this)
         panelShortcuts = buildShortcutsPanel()
         panelCaller = buildCallerPanel()
         panelKb = buildKbPanel()
+        panelReply = buildReplyPanel()
         content.addView(panelShortcuts)
         content.addView(panelCaller)
         content.addView(panelKb)
+        content.addView(panelReply)
         root.addView(
             content,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
@@ -443,11 +455,14 @@ class MainActivity : Activity() {
         panelShortcuts.visibility = if (which == 0) View.VISIBLE else View.GONE
         panelCaller.visibility = if (which == 1) View.VISIBLE else View.GONE
         panelKb.visibility = if (which == 2) View.VISIBLE else View.GONE
+        panelReply.visibility = if (which == 3) View.VISIBLE else View.GONE
         styleTab(tabShortcuts, which == 0)
         styleTab(tabCaller, which == 1)
         styleTab(tabKb, which == 2)
+        styleTab(tabReply, which == 3)
         if (which == 1) refreshPermBanner()
         if (which == 2) refreshKbBanner()
+        if (which == 3) refreshReply()
     }
 
     private fun refreshPermBanner() {
@@ -516,6 +531,8 @@ class MainActivity : Activity() {
         status.setTextColor(if (on) ACC else RED)
         if (tab == 1) refreshPermBanner()
         if (tab == 2) refreshKbBanner()
+        // he may have just come back from the notification access screen
+        if (tab == 3) refreshReply()
     }
 
     private fun isServiceOn(): Boolean {
@@ -1470,6 +1487,303 @@ class MainActivity : Activity() {
         })
         row.addView(bar, lp(true))
         return row
+    }
+
+    // ---------- tab 4 : automatic replies ----------
+
+    /** True when he has granted this app notification access in system settings. */
+    private fun notifAccessOn(): Boolean = try {
+        val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
+        flat != null && flat.contains(packageName)
+    } catch (_: Throwable) {
+        false
+    }
+
+    private fun buildReplyPanel(): ScrollView {
+        val sv = ScrollView(this)
+        sv.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        val p = LinearLayout(this)
+        p.orientation = LinearLayout.VERTICAL
+        p.layoutDirection = View.LAYOUT_DIRECTION_RTL
+
+        // what is standing between the feature and working, in one line
+        val banner = TextView(this)
+        banner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        banner.background = round(CARD)
+        banner.setPadding(dp(12), dp(10), dp(12), dp(10))
+        banner.setOnClickListener {
+            try {
+                startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            } catch (_: Throwable) {
+                toast("ما انفتحت الإعدادات")
+            }
+        }
+        arBanner = banner
+        p.addView(banner, lp(true, bottom = dp(12)))
+
+        p.addView(switchRow(
+            "تشغيل الرد التلقائي",
+            "الردود تنرسل باسمك مباشرة بدون ما تشوفها",
+            Store.arOn
+        ) { v -> Store.setArFlag(this, "on", v); refreshReply() }, lp(true, bottom = dp(12)))
+
+        p.addView(head("التطبيقات"))
+        p.addView(switchRow("واتساب", null, Store.arWhats) { v ->
+            Store.setArFlag(this, "wa", v) }, lp(true, bottom = dp(6)))
+        p.addView(switchRow("تلكرام", null, Store.arTg) { v ->
+            Store.setArFlag(this, "tg", v) }, lp(true, bottom = dp(6)))
+        p.addView(switchRow("الرسائل", null, Store.arSms) { v ->
+            Store.setArFlag(this, "sms", v) }, lp(true, bottom = dp(12)))
+
+        p.addView(head("على منو يرد"))
+        p.addView(segRow(
+            listOf("الكل", "قائمة محددة", "الكل عدا"),
+            Store.arMode
+        ) { i -> Store.setArInt(this, "mode", i) }, lp(true, bottom = dp(6)))
+
+        p.addView(textBox(
+            "أسماء مفصولة بفاصلة — تنطابق مع اسم المرسل بالإشعار",
+            Store.arList,
+            2
+        ) { s -> Store.setArText(this, "list", s) }, lp(true, bottom = dp(6)))
+
+        p.addView(switchRow(
+            "الرد بالكروبات",
+            "رد غلط بكروب يشوفه كل الأعضاء",
+            Store.arGroups
+        ) { v -> Store.setArFlag(this, "groups", v) }, lp(true, bottom = dp(12)))
+
+        p.addView(head("أسلوب الرد"))
+        p.addView(segRow(
+            listOf("نفس لغة الرسالة", "عراقي", "فصحى"),
+            Store.arStyle
+        ) { i -> Store.setArInt(this, "style", i) }, lp(true, bottom = dp(6)))
+
+        p.addView(textBox(
+            "تعليماتك للذكاء الاصطناعي",
+            Store.arPersona,
+            4
+        ) { s -> Store.setArText(this, "persona", s) }, lp(true, bottom = dp(12)))
+
+        p.addView(head("الحدود"))
+        p.addView(switchRow(
+            "رد واحد لكل محادثة",
+            "ما يرد مرة ثانية حتى تفتح الدردشة بنفسك",
+            Store.arOnce
+        ) { v -> Store.setArFlag(this, "once", v) }, lp(true, bottom = dp(6)))
+
+        p.addView(delayRow(), lp(true, bottom = dp(6)))
+
+        p.addView(switchRow(
+            "أوقات التشغيل فقط",
+            "من ${Store.arFrom}:00 إلى ${Store.arTo}:00",
+            Store.arHours
+        ) { v -> Store.setArFlag(this, "hours", v) }, lp(true, bottom = dp(6)))
+
+        p.addView(textBox(
+            "كلمات توقف الرد — إذا وصلت بالرسالة ما يرد نهائياً",
+            Store.arStop,
+            2
+        ) { s -> Store.setArText(this, "stop", s) }, lp(true, bottom = dp(12)))
+
+        val logHead = LinearLayout(this)
+        logHead.orientation = LinearLayout.HORIZONTAL
+        logHead.gravity = Gravity.CENTER_VERTICAL
+        logHead.addView(head("سجل الردود"),
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        logHead.addView(smallButton("مسح") {
+            Store.clearReplyLog(this); refreshReply()
+        })
+        p.addView(logHead, lp(true))
+
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        arLogBox = box
+        p.addView(box, lp(true, bottom = dp(24)))
+
+        sv.addView(p)
+        return sv
+    }
+
+    private fun head(t: String): TextView {
+        val v = TextView(this)
+        v.text = t
+        v.setTextColor(MUT)
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        v.setPadding(dp(4), dp(6), dp(4), dp(6))
+        return v
+    }
+
+    /** Three mutually exclusive choices in a row; the chosen one carries the accent. */
+    private fun segRow(labels: List<String>, chosen: Int, cb: (Int) -> Unit): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        val views = ArrayList<TextView>()
+        for (i in labels.indices) {
+            val t = TextView(this)
+            t.text = labels[i]
+            t.gravity = Gravity.CENTER
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            t.setPadding(dp(4), dp(10), dp(4), dp(10))
+            t.background = round(if (i == chosen) ACC else CARD)
+            t.setTextColor(if (i == chosen) Color.WHITE else MUT)
+            t.setOnClickListener {
+                for (j in views.indices) {
+                    views[j].background = round(if (j == i) ACC else CARD)
+                    views[j].setTextColor(if (j == i) Color.WHITE else MUT)
+                }
+                cb(i)
+            }
+            views.add(t)
+            val lpx = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            if (i > 0) lpx.marginStart = dp(6)
+            row.addView(t, lpx)
+        }
+        return row
+    }
+
+    /** A labelled multi-line field that saves as he leaves it, not per keystroke. */
+    private fun textBox(label: String, value: String, lines: Int, cb: (String) -> Unit): View {
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        col.background = round(CARD)
+        col.setPadding(dp(12), dp(8), dp(12), dp(10))
+
+        val l = TextView(this)
+        l.text = label
+        l.setTextColor(MUT)
+        l.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        col.addView(l)
+
+        val e = EditText(this)
+        e.setText(value)
+        e.setTextColor(TXT)
+        e.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        e.background = null
+        e.minLines = lines
+        e.maxLines = lines + 3
+        e.gravity = Gravity.TOP or Gravity.START
+        e.setPadding(0, dp(4), 0, 0)
+        e.setOnFocusChangeListener { _, has -> if (!has) cb(e.text.toString()) }
+        col.addView(e, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        return col
+    }
+
+    private fun delayRow(): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.background = round(CARD)
+        row.setPadding(dp(12), dp(8), dp(12), dp(8))
+
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        val t = TextView(this)
+        t.text = "تأخير الرد"
+        t.setTextColor(TXT)
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        col.addView(t)
+        val s = TextView(this)
+        s.text = "رد فوري يبيّن إنه بوت"
+        s.setTextColor(MUT)
+        s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        col.addView(s)
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val v = TextView(this)
+        v.setTextColor(TXT)
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        v.gravity = Gravity.CENTER
+        v.minWidth = dp(72)
+        v.text = "${Store.arDelay} ث"
+
+
+        row.addView(stepButton("−") {
+            Store.setArInt(this, "delay", Store.arDelay - 2)
+            v.text = "${Store.arDelay} ث"
+        })
+        row.addView(v)
+        row.addView(stepButton("+") {
+            Store.setArInt(this, "delay", Store.arDelay + 2)
+            v.text = "${Store.arDelay} ث"
+        })
+        return row
+    }
+
+    private fun refreshReply() {
+        Store.load(this)
+
+        arBanner?.let { b ->
+            val access = notifAccessOn()
+            val key = Ai.configured()
+            when {
+                !access -> {
+                    b.text = "يحتاج إذن الوصول للإشعارات — اضغط للمنح"
+                    b.setTextColor(WARN)
+                }
+                !key -> {
+                    b.text = "ماكو مفتاح OpenAI بهذي النسخة — ضيف OPENAI_KEY بأسرار الريبو وأعد البناء"
+                    b.setTextColor(RED)
+                }
+                !Store.arOn -> {
+                    b.text = "جاهز — بس الرد التلقائي مطفي"
+                    b.setTextColor(MUT)
+                }
+                else -> {
+                    b.text = "شغّال — يرد على الرسائل الواصلة"
+                    b.setTextColor(ACC)
+                }
+            }
+        }
+
+        val box = arLogBox ?: return
+        box.removeAllViews()
+        val arr = try { JSONArray(Store.arLog) } catch (_: Throwable) { JSONArray() }
+        if (arr.length() == 0) {
+            val t = TextView(this)
+            t.text = "ماكو ردود بعد"
+            t.setTextColor(MUT)
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            t.setPadding(dp(4), dp(8), dp(4), dp(8))
+            box.addView(t)
+            return
+        }
+        val fmt = SimpleDateFormat("HH:mm", Locale.US)
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val card = LinearLayout(this)
+            card.orientation = LinearLayout.VERTICAL
+            card.background = round(CARD)
+            card.setPadding(dp(12), dp(8), dp(12), dp(10))
+
+            val top = TextView(this)
+            val ok = o.optBoolean("ok", false)
+            top.text = o.optString("who") + " · " +
+                Reply.appName(o.optString("app")) + " · " +
+                fmt.format(java.util.Date(o.optLong("t")))
+            top.setTextColor(if (ok) ACC else WARN)
+            top.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            card.addView(top)
+
+            val inq = TextView(this)
+            inq.text = o.optString("in")
+            inq.setTextColor(MUT)
+            inq.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            inq.maxLines = 2
+            inq.ellipsize = TextUtils.TruncateAt.END
+            card.addView(inq)
+
+            val out = TextView(this)
+            out.text = o.optString("out")
+            out.setTextColor(TXT)
+            out.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            out.setPadding(0, dp(4), 0, 0)
+            card.addView(out)
+
+            box.addView(card, lp(true, bottom = dp(6)))
+        }
     }
 
     private fun makeTab(label: String, cb: () -> Unit): TextView {

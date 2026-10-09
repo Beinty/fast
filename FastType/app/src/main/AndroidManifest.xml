@@ -8,7 +8,8 @@
     <!-- used only to take the notification volume to zero while the mic is open,
          and put it back; Do Not Disturb itself is never switched on -->
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
-    <!-- only ever used to fetch a translation language pack the first time -->
+    <!-- a translation language pack the first time, and the automatic reply when
+         it is switched on; nothing else leaves the phone -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- a screenshot lands in the gallery, not on the clipboard; this is the only
@@ -91,6 +92,18 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!-- reads incoming message notifications and answers them; does nothing at
+             all until he grants notification access and turns the feature on -->
+        <service
+            android:name=".Reply"
+            android:exported="false"
+            android:label="@string/reply_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
         </service>
 
     </application>
