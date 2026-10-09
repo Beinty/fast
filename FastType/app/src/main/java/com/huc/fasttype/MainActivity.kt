@@ -1587,6 +1587,26 @@ class MainActivity : Activity() {
             2
         ) { s -> Store.setArText(this, "stop", s) }, lp(true, bottom = dp(12)))
 
+        p.addView(head("لمن ما يكدر يرد"))
+        p.addView(switchRow(
+            "رد جاهز إذا ماكو نت",
+            "الذكاء الاصطناعي على سيرفر، بدون نت ماكو رد",
+            Store.arOffline
+        ) { v -> Store.setArFlag(this, "offline", v) }, lp(true, bottom = dp(6)))
+
+        p.addView(textBox(
+            "نص الرد الجاهز",
+            Store.arOfflineMsg,
+            2
+        ) { s -> Store.setArText(this, "offmsg", s) }, lp(true, bottom = dp(12)))
+
+        p.addView(head("إضافي"))
+        p.addView(switchRow(
+            "بحث جوجل قبل الرد",
+            "يرد على أسئلة تحتاج معلومة — بس أبطأ ويستهلك من الحد المجاني",
+            Store.arSearch
+        ) { v -> Store.setArFlag(this, "search", v) }, lp(true, bottom = dp(12)))
+
         val logHead = LinearLayout(this)
         logHead.orientation = LinearLayout.HORIZONTAL
         logHead.gravity = Gravity.CENTER_VERTICAL

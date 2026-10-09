@@ -2,7 +2,10 @@ package com.huc.fasttype
 
 import android.app.Notification
 import android.app.RemoteInput
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -39,6 +42,9 @@ class Reply : NotificationListenerService() {
 
         fun appName(pkg: String): String = APPS[pkg] ?: pkg
 
+        /** Turns kept per conversation, counting both sides. */
+        private const val HISTORY_MAX = 8
+
         /** Set while the service is bound, so the settings screen can say so. */
         @Volatile
         var running: Boolean = false
@@ -58,6 +64,23 @@ class Reply : NotificationListenerService() {
     /** Last message seen per conversation; messaging apps repost the same one. */
     private val lastSeen = HashMap<String, String>()
 
+    /**
+     * Recent turns per conversation, oldest first.
+     *
+     * A notification carries one message and no history, so without this the
+     * model is answering "شگد؟" having never seen what it refers to. Held in
+     * memory only — it dies with the service, which is the right lifetime for
+     * other people's messages.
+     */
+    private val history = HashMap<String, ArrayList<Ai.Turn>>()
+
+    private fun remember(key: String, fromMe: Boolean, text: String) {
+        val list = history.getOrPut(key) { ArrayList() }
+        list.add(Ai.Turn(fromMe, text))
+        // enough for the thread to make sense, short enough to stay cheap
+        while (list.size > HISTORY_MAX) list.removeAt(0)
+    }
+
     override fun onListenerConnected() {
         running = true
         Store.load(this)
@@ -76,6 +99,7 @@ class Reply : NotificationListenerService() {
         val key = sbn?.let { convKey(it) } ?: return
         answered.remove(key)
         lastSeen.remove(key)
+        history.remove(key)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -141,24 +165,74 @@ class Reply : NotificationListenerService() {
         } ?: return
 
         if (Store.arOnce) answered.add(key)
+        remember(key, false, body)
+
+        // No network means no model, so the only honest options are a line he
+        // wrote himself or silence. Checked up front to avoid a doomed call.
+        if (!online()) {
+            val canned = Store.arOfflineMsg.trim()
+            if (!Store.arOffline || canned.isEmpty()) {
+                answered.remove(key)
+                log(pkg, who, body, "ماكو نت — ما انرسل رد", false)
+                return
+            }
+            deliver(key, action, pkg, who, body, canned, offline = true)
+            return
+        }
 
         val system = prompt(who, group)
-        Ai.ask(system, body) { r ->
+        val turns = ArrayList(history[key] ?: emptyList())
+        Ai.ask(system, turns, Store.arSearch) { r ->
             val text = r.text
             if (text.isNullOrBlank()) {
                 // a failed call must not silently consume the one allowed reply
                 answered.remove(key)
-                log(pkg, who, body, r.error ?: "ما طلع رد", false)
+                val canned = Store.arOfflineMsg.trim()
+                if (Store.arOffline && canned.isNotEmpty()) {
+                    if (Store.arOnce) answered.add(key)
+                    deliver(key, action, pkg, who, body, canned, offline = true)
+                } else {
+                    log(pkg, who, body, r.error ?: "ما طلع رد", false)
+                }
                 return@ask
             }
-            // An instant answer reads as a machine, and it also removes his chance
-            // to get there first. The wait is deliberate.
-            main.postDelayed({
-                val sent = send(action, text)
-                if (!sent) answered.remove(key)
-                log(pkg, who, body, if (sent) text else "ما انرسل — الإشعار راح", sent)
-            }, Store.arDelay.toLong() * 1000L)
+            deliver(key, action, pkg, who, body, text, offline = false)
         }
+    }
+
+    /**
+     * Waits out the delay, then sends.
+     *
+     * An instant answer reads as a machine and removes his chance to get there
+     * first, so the wait is deliberate — but it is his setting, and zero is
+     * allowed.
+     */
+    private fun deliver(
+        key: String,
+        action: Notification.Action,
+        pkg: String,
+        who: String,
+        inq: String,
+        text: String,
+        offline: Boolean
+    ) {
+        main.postDelayed({
+            val sent = send(action, text)
+            if (!sent) answered.remove(key)
+            if (sent) remember(key, true, text)
+            val shown = if (offline && sent) "$text  (رد جاهز — ماكو نت)" else text
+            log(pkg, who, inq, if (sent) shown else "ما انرسل — الإشعار راح", sent)
+        }, Store.arDelay.toLong() * 1000L)
+    }
+
+    /** Whether anything is actually reachable right now. */
+    private fun online(): Boolean = try {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    } catch (_: Throwable) {
+        // if the check itself fails, let the call decide rather than block it
+        true
     }
 
     // ---------- gates ----------
@@ -218,6 +292,9 @@ class Reply : NotificationListenerService() {
         sb.append(tone).append("\n")
         sb.append("خلّي الرد قصير — جملة أو جملتين.\n")
         sb.append("المرسل اسمه: ").append(who).append("\n")
+        sb.append("الرسائل الي قبل هي سياق المحادثة. رد على آخر رسالة بس.\n")
+        // the failure that matters: a confident wrong answer sent as him
+        sb.append("لا تخترع معلومة ولا تأكد شي ما تعرفه. إذا ما عندك الجواب، كول إنه راح يتأكد ويرد.\n")
         if (group) sb.append("هذي رسالة بكروب، فخلّي ردك عام ومختصر.\n")
         // His own instructions come last so they win over anything above.
         val own = Store.arPersona.trim()

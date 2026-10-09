@@ -95,6 +95,9 @@ object Store {
     private const val K_AR_PERSONA = "ar_persona"
     private const val K_AR_STOP = "ar_stop"
     private const val K_AR_LOG = "ar_log"
+    private const val K_AR_OFFLINE = "ar_offline"
+    private const val K_AR_OFFMSG = "ar_offline_msg"
+    private const val K_AR_SEARCH = "ar_search"
 
     @Volatile
     var items: List<Shortcut> = emptyList()
@@ -385,7 +388,23 @@ object Store {
         private set
 
     /** Seconds to wait before sending; an instant answer reads as a machine. */
-    @Volatile var arDelay: Int = 8
+    @Volatile var arDelay: Int = 3
+        private set
+
+    /**
+     * Send a fixed line when the model cannot be reached at all.
+     *
+     * The model runs on Google's servers, so with no network there is no reply
+     * to generate. This is the only thing that can go out instead.
+     */
+    @Volatile var arOffline: Boolean = false
+        private set
+
+    @Volatile var arOfflineMsg: String = "مشغول هسّه، أرد عليك بعد شوية"
+        private set
+
+    /** Let the model search Google before answering. Slower, and uses quota. */
+    @Volatile var arSearch: Boolean = false
         private set
 
     @Volatile var arHours: Boolean = false
@@ -493,7 +512,10 @@ object Store {
         arList = p.getString(K_AR_LIST, "") ?: ""
         arGroups = p.getBoolean(K_AR_GROUPS, false)
         arOnce = p.getBoolean(K_AR_ONCE, true)
-        arDelay = p.getInt(K_AR_DELAY, 8).coerceIn(0, 120)
+        arDelay = p.getInt(K_AR_DELAY, 3).coerceIn(0, 120)
+        arOffline = p.getBoolean(K_AR_OFFLINE, false)
+        arOfflineMsg = p.getString(K_AR_OFFMSG, arOfflineMsg) ?: arOfflineMsg
+        arSearch = p.getBoolean(K_AR_SEARCH, false)
         arHours = p.getBoolean(K_AR_HOURS, false)
         arFrom = p.getInt(K_AR_FROM, 9).coerceIn(0, 23)
         arTo = p.getInt(K_AR_TO, 17).coerceIn(0, 23)
@@ -513,6 +535,8 @@ object Store {
             "groups" -> { arGroups = v; e.putBoolean(K_AR_GROUPS, v) }
             "once" -> { arOnce = v; e.putBoolean(K_AR_ONCE, v) }
             "hours" -> { arHours = v; e.putBoolean(K_AR_HOURS, v) }
+            "offline" -> { arOffline = v; e.putBoolean(K_AR_OFFLINE, v) }
+            "search" -> { arSearch = v; e.putBoolean(K_AR_SEARCH, v) }
         }
         e.apply()
     }
@@ -535,6 +559,7 @@ object Store {
             "list" -> { arList = v; e.putString(K_AR_LIST, v) }
             "persona" -> { arPersona = v; e.putString(K_AR_PERSONA, v) }
             "stop" -> { arStop = v; e.putString(K_AR_STOP, v) }
+            "offmsg" -> { arOfflineMsg = v; e.putString(K_AR_OFFMSG, v) }
         }
         e.apply()
     }
