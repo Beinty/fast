@@ -371,6 +371,32 @@ object Themes {
             c("#EDEDEF"), c("#0C0C0E"),
             c("#FFFFFF"), c("#80838A"), c("#FFFFFF"), c("#0C0C0E"), c("#070708"),
             dark = true, twin = "graphite", lift = c("#66000000")
+        ),
+
+        // ---- Material: flat, every key the same, one violet enter ----
+        //
+        // The departure from the iOS set is that there is no second key colour:
+        // shift, backspace and ?123 are the same as the letters, and the only
+        // colour anywhere is the enter key. Nothing is lifted, edged or carved —
+        // keys are told apart from the panel by value alone.
+        //
+        // These read best with rounder corners and a slightly wider gap than the
+        // iOS themes want; both are his own settings, not part of a theme.
+        KbTheme(
+            "nebulaDay", "سديم نهاري",
+            c("#F0F0F2"), c("#F0F0F2"), c("#E2E2E6"), c("#F0F0F2"),
+            c("#FFFFFF"), c("#E4E4E9"), c("#FFFFFF"),
+            c("#6B61E8"), c("#FFFFFF"),
+            c("#121214"), c("#5F6066"), c("#121214"), c("#FFFFFF"), c("#26262A"),
+            lightKeys = true, twin = "nebula"
+        ),
+        KbTheme(
+            "nebula", "سديم ليلي",
+            c("#000000"), c("#000000"), c("#1C1C1C"), c("#000000"),
+            c("#1E1E1E"), c("#2E2E2E"), c("#1E1E1E"),
+            c("#6B61E8"), c("#FFFFFF"),
+            c("#FFFFFF"), c("#9AA0A6"), c("#FFFFFF"), c("#000000"), c("#E3E3E3"),
+            dark = true, twin = "nebulaDay"
         )
     )
 
