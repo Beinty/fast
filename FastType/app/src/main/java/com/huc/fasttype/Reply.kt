@@ -74,6 +74,9 @@ class Reply : NotificationListenerService() {
      */
     private val history = HashMap<String, ArrayList<Ai.Turn>>()
 
+    /** Reply waiting to go out, per conversation; a new message restarts its wait. */
+    private val pending = HashMap<String, Runnable>()
+
     private fun remember(key: String, fromMe: Boolean, text: String) {
         val list = history.getOrPut(key) { ArrayList() }
         list.add(Ai.Turn(fromMe, text))
@@ -100,6 +103,8 @@ class Reply : NotificationListenerService() {
         answered.remove(key)
         lastSeen.remove(key)
         history.remove(key)
+        // he is in the chat now, so a queued automatic reply is no longer wanted
+        pending.remove(key)?.let { main.removeCallbacks(it) }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -164,19 +169,50 @@ class Reply : NotificationListenerService() {
             a.remoteInputs?.any { it.resultKey != null } == true
         } ?: return
 
-        if (Store.arOnce) answered.add(key)
         remember(key, false, body)
+        schedule(key, action, pkg, who, group)
+    }
+
+    /**
+     * Holds the reply until the sender has stopped typing.
+     *
+     * People send four short messages where they mean one. Answering each of
+     * them separately is both obviously a machine and four times the cost, so a
+     * new message cancels the pending reply and restarts the wait; whatever has
+     * arrived by the end is answered once, together.
+     */
+    private fun schedule(
+        key: String,
+        action: Notification.Action,
+        pkg: String,
+        who: String,
+        group: Boolean
+    ) {
+        pending.remove(key)?.let { main.removeCallbacks(it) }
+        val task = Runnable {
+            pending.remove(key)
+            fire(key, action, pkg, who, group)
+        }
+        pending[key] = task
+        main.postDelayed(task, Store.arDelay.toLong() * 1000L)
+    }
+
+    private fun fire(
+        key: String,
+        action: Notification.Action,
+        pkg: String,
+        who: String,
+        group: Boolean
+    ) {
+        // checked here, not on arrival: the whole burst counts as one reply
+        if (Store.arOnce && answered.contains(key)) return
+        val asked = history[key]?.lastOrNull { !it.fromMe }?.text ?: ""
+        if (Store.arOnce) answered.add(key)
 
         // No network means no model, so the only honest options are a line he
-        // wrote himself or silence. Checked up front to avoid a doomed call.
+        // wrote himself or silence.
         if (!online()) {
-            val canned = Store.arOfflineMsg.trim()
-            if (!Store.arOffline || canned.isEmpty()) {
-                answered.remove(key)
-                log(pkg, who, body, "ماكو نت — ما انرسل رد", false)
-                return
-            }
-            deliver(key, action, pkg, who, body, canned, offline = true)
+            fallback(key, action, pkg, who, asked, "ماكو نت — ما انرسل رد")
             return
         }
 
@@ -185,44 +221,47 @@ class Reply : NotificationListenerService() {
         Ai.ask(system, turns, Store.arSearch) { r ->
             val text = r.text
             if (text.isNullOrBlank()) {
-                // a failed call must not silently consume the one allowed reply
-                answered.remove(key)
-                val canned = Store.arOfflineMsg.trim()
-                if (Store.arOffline && canned.isNotEmpty()) {
-                    if (Store.arOnce) answered.add(key)
-                    deliver(key, action, pkg, who, body, canned, offline = true)
-                } else {
-                    log(pkg, who, body, r.error ?: "ما طلع رد", false)
-                }
-                return@ask
+                fallback(key, action, pkg, who, asked, r.error ?: "ما طلع رد")
+            } else {
+                send(key, action, pkg, who, asked, text, canned = false)
             }
-            deliver(key, action, pkg, who, body, text, offline = false)
         }
     }
 
-    /**
-     * Waits out the delay, then sends.
-     *
-     * An instant answer reads as a machine and removes his chance to get there
-     * first, so the wait is deliberate — but it is his setting, and zero is
-     * allowed.
-     */
-    private fun deliver(
+    /** The fixed line, if he wrote one; otherwise the reason, logged and nothing sent. */
+    private fun fallback(
         key: String,
         action: Notification.Action,
         pkg: String,
         who: String,
-        inq: String,
-        text: String,
-        offline: Boolean
+        asked: String,
+        reason: String
     ) {
-        main.postDelayed({
-            val sent = send(action, text)
-            if (!sent) answered.remove(key)
-            if (sent) remember(key, true, text)
-            val shown = if (offline && sent) "$text  (رد جاهز — ماكو نت)" else text
-            log(pkg, who, inq, if (sent) shown else "ما انرسل — الإشعار راح", sent)
-        }, Store.arDelay.toLong() * 1000L)
+        // a failure must not silently consume the one allowed reply
+        answered.remove(key)
+        val fixed = Store.arOfflineMsg.trim()
+        if (Store.arOffline && fixed.isNotEmpty()) {
+            if (Store.arOnce) answered.add(key)
+            send(key, action, pkg, who, asked, fixed, canned = true)
+        } else {
+            log(pkg, who, asked, reason, false)
+        }
+    }
+
+    private fun send(
+        key: String,
+        action: Notification.Action,
+        pkg: String,
+        who: String,
+        asked: String,
+        text: String,
+        canned: Boolean
+    ) {
+        val sent = push(action, text)
+        if (!sent) answered.remove(key)
+        if (sent) remember(key, true, text)
+        val shown = if (canned && sent) "$text  (رد جاهز)" else text
+        log(pkg, who, asked, if (sent) shown else "ما انرسل — الإشعار راح", sent)
     }
 
     /** Whether anything is actually reachable right now. */
@@ -281,31 +320,53 @@ class Reply : NotificationListenerService() {
 
     // ---------- the message to the model ----------
 
+    /**
+     * What the model is told before it writes.
+     *
+     * Written against the tells that give a bot away: a formal greeting nobody
+     * uses in chat, standard Arabic answering dialect, a comma in the middle of
+     * a five-word line, and above all a stock "I'll get back to you" bolted onto
+     * every message. The earlier version instructed exactly that last one as a
+     * fallback, and the model used it as the answer to everything.
+     */
     private fun prompt(who: String, group: Boolean): String {
         val tone = when (Store.arStyle) {
-            1 -> "اكتب باللهجة العراقية العامية."
+            1 -> "اكتب باللهجة العراقية العامية الدارجة، مثل ما يكتب أي واحد بالدردشة."
             2 -> "اكتب بالعربية الفصحى."
-            else -> "رد بنفس لغة ولهجة الرسالة الواصلة — إذا جتك عراقي رد عراقي، إذا إنكليزي رد إنكليزي."
+            else -> "رد بنفس لغة ولهجة الرسالة الواصلة بالضبط — إذا جتك عراقي رد عراقي، " +
+                "إذا فصحى رد فصحى، إذا إنكليزي رد إنكليزي، إذا عربي بحروف إنكليزية رد مثلها."
         }
         val sb = StringBuilder()
-        sb.append("إنت ترد على رسالة نيابةً عن صاحب الهاتف. اكتب الرد فقط، بدون مقدمات وبدون علامات اقتباس وبدون ذكر اسمك.\n")
+        sb.append("إنت تكتب رسالة دردشة كأنك صاحب الهاتف نفسه. مو مساعد ولا بوت ولا خدمة عملاء.\n")
         sb.append(tone).append("\n")
-        sb.append("خلّي الرد قصير — جملة أو جملتين.\n")
-        sb.append("المرسل اسمه: ").append(who).append("\n")
-        sb.append("الرسائل الي قبل هي سياق المحادثة. رد على آخر رسالة بس.\n")
-        // the failure that matters: a confident wrong answer sent as him
-        sb.append("لا تخترع معلومة ولا تأكد شي ما تعرفه. إذا ما عندك الجواب، كول إنه راح يتأكد ويرد.\n")
-        if (group) sb.append("هذي رسالة بكروب، فخلّي ردك عام ومختصر.\n")
+        sb.append("\nشلون تكتب:\n")
+        sb.append("- قصير جداً. كلمة أو كلمتين أو سطر واحد. مثل ما يرد أي واحد بالتلفون.\n")
+        sb.append("- بنفس طول وأسلوب رسالة الطرف الثاني. إذا كتب كلمة وحدة، رد بكلمة وحدة.\n")
+        sb.append("- بدون فاصلة (،) نهائياً. إذا احتجت وقفة استعمل نقطة أو ما تحط شي.\n")
+        sb.append("- بدون تحيات رسمية مثل (أهلاً بك) أو (تحياتي) إلا إذا هو بدأ بيها.\n")
+        sb.append("- بدون إيموجي إلا إذا هو استعمل إيموجي.\n")
+        sb.append("- لا تبدأ باسمه ولا تذكر اسمك.\n")
+        sb.append("- لا تعرض مساعدة ولا تسأل (شلون أكدر أساعدك).\n")
+        // the line that was making every reply identical
+        sb.append("- لا تكول (راح أرد عليك بعدين) إلا إذا السؤال فعلاً يحتاج قرار منه. ")
+        sb.append("على التحية والكلام العادي رد رد طبيعي.\n")
+        sb.append("\n")
+        sb.append("اسم الطرف الثاني: ").append(who).append("\n")
+        sb.append("الرسائل الي فوق هي المحادثة. رد على آخر شي كتبه بس.\n")
+        // the failure that matters: a confident wrong answer sent in his name
+        sb.append("لا تخترع معلومة ولا سعر ولا موعد. إذا ما تعرف، رد رد عام قصير بدون تفاصيل.\n")
+        if (group) sb.append("هذي رسالة بكروب فخلي ردك عام ومختصر.\n")
         // His own instructions come last so they win over anything above.
         val own = Store.arPersona.trim()
-        if (own.isNotEmpty()) sb.append("تعليمات صاحب الهاتف: ").append(own).append("\n")
-        sb.append("إذا الرسالة تحتاج قرار أو معلومة ما تعرفها، كول إنه راح يرد بنفسه بعد شوية.")
+        if (own.isNotEmpty()) sb.append("\nتعليمات صاحب الهاتف: ").append(own).append("\n")
+        sb.append("\nاكتب الرد فقط. بدون علامات اقتباس وبدون شرح.")
         return sb.toString()
     }
 
     // ---------- out ----------
 
-    private fun send(action: Notification.Action, text: String): Boolean {
+    /** Fires the notification's own Reply action. */
+    private fun push(action: Notification.Action, text: String): Boolean {
         return try {
             val inputs = action.remoteInputs ?: return false
             val bundle = Bundle()

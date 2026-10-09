@@ -193,6 +193,11 @@ object Ai {
         if (t.length > 1 && t.first() == '«' && t.last() == '»') t = t.substring(1, t.length - 1)
         // "[1]" style citation markers that grounding adds
         t = t.replace(Regex("\\s*\\[\\d+(,\\s*\\d+)*]"), "")
+        // The Arabic comma is the loudest tell that a machine wrote the line:
+        // nobody punctuates a five-word chat message. Asking the model not to
+        // use one mostly works; this makes it certain.
+        t = t.replace("، ", " ").replace("،", " ")
+        t = t.replace(Regex("[ \\t]{2,}"), " ")
         return t.trim()
     }
 }
