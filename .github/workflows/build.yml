@@ -27,10 +27,10 @@ jobs:
 
       - name: Find project root and build
         id: build
-        # the OpenAI key is never in the repo; it is injected here from the secret
+        # the Gemini key is never in the repo; it is injected here from the secret
         # and ends up only inside the built APK
         env:
-          OPENAI_KEY: ${{ secrets.OPENAI_KEY }}
+          GEMINI_KEY: ${{ secrets.GEMINI_KEY }}
         run: |
           SETTINGS=$(find . -name 'settings.gradle.kts' -not -path '*/build/*' | head -1)
           if [ -z "$SETTINGS" ]; then

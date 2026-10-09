@@ -1724,7 +1724,7 @@ class MainActivity : Activity() {
                     b.setTextColor(WARN)
                 }
                 !key -> {
-                    b.text = "ماكو مفتاح OpenAI بهذي النسخة — ضيف OPENAI_KEY بأسرار الريبو وأعد البناء"
+                    b.text = "ماكو مفتاح Gemini بهذي النسخة — ضيف GEMINI_KEY بأسرار الريبو وأعد البناء"
                     b.setTextColor(RED)
                 }
                 !Store.arOn -> {

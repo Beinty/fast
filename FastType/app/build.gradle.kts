@@ -13,8 +13,8 @@ android {
         applicationId = "com.huc.fasttype"
         minSdk = 26
         targetSdk = 35
-        versionCode = 66
-        versionName = "10.3"
+        versionCode = 67
+        versionName = "10.4"
 
         // the translation engine ships a native library per processor type, and four
         // copies of it is most of the download. This phone is arm64, so keep that one.
@@ -23,28 +23,28 @@ android {
         }
 
         // ===================================================================
-        //  مفتاح OpenAI — لا تكتبه هنا
+        //  مفتاح Gemini — لا تكتبه هنا
         //
-        //  المفتاح يجي من GitHub Secret اسمه OPENAI_KEY.
+        //  المفتاح يجي من GitHub Secret اسمه GEMINI_KEY.
         //  تحطه من: github.com/Beinty/fast → Settings → Secrets and variables
         //           → Actions → New repository secret
-        //           Name: OPENAI_KEY     Secret: sk-...
+        //           Name: GEMINI_KEY     Secret: AQ... (المفتاح مالك)
         //
-        //  للبناء المحلي: ضيف سطر OPENAI_KEY=sk-... بملف FastType/local.properties
+        //  للبناء المحلي: ضيف سطر GEMINI_KEY=المفتاح بملف FastType/local.properties
         //  (هذا الملف مضاف لـ .gitignore وما ينرفع).
         //
         //  لا تحطه بـ gradle.properties — ذاك الملف منرفع للريبو.
-        //  إذا انكتب المفتاح بالكود وانرفع، OpenAI يلغيه تلقائياً.
+        //  إذا انكتب المفتاح بالكود وانرفع، ينسرق ويتصرف عليك.
         // ===================================================================
         val localKey = rootProject.file("local.properties").let { f ->
             if (!f.exists()) null else Properties().apply {
                 f.inputStream().use { p -> load(p) }
-            }.getProperty("OPENAI_KEY")
+            }.getProperty("GEMINI_KEY")
         }
-        val openAiKey = localKey
-            ?: System.getenv("OPENAI_KEY")
+        val geminiKey = localKey
+            ?: System.getenv("GEMINI_KEY")
             ?: ""
-        buildConfigField("String", "OPENAI_KEY", "\"$openAiKey\"")
+        buildConfigField("String", "GEMINI_KEY", "\"$geminiKey\"")
     }
 
     buildFeatures {
