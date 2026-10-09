@@ -46,6 +46,9 @@ class KeyboardView(context: Context) : View(context) {
         fun onTransClose()
         fun onTransSwap()
         fun onTransLang(dst: Boolean)
+
+        /** The action: the translation is settled, keep it and close. */
+        fun onTransGo()
         fun onLangPick(code: String)
         /** One of the recent pictures was chosen from the clipboard page. */
         fun onPicPick(index: Int)
@@ -185,9 +188,15 @@ class KeyboardView(context: Context) : View(context) {
         private set
     var transText: String = ""
     var transStatus: String = ""
+
+    /** The translation itself. The bar shows this; the source is already visible. */
+    var transOut: String = ""
     private val trSrcRect = RectF()
-    private val trSwapRect = RectF()
-    private val trDstRect = RectF()
+    private val trGoRect = RectF()
+
+    /** Amber while the engine works, green once the line is settled. */
+    private val WORK_DOT = Color.parseColor("#E8A33C")
+    private val OK_DOT = Color.parseColor("#17A871")
     private val trCloseRect = RectF()
     private val trBoxRect = RectF()
     private var langForDst = true
@@ -254,6 +263,18 @@ class KeyboardView(context: Context) : View(context) {
     private var stripScroll0 = 0f
     private var clipArmed = false
     private var clipFired = false
+
+    /** Holding the direction chip opens the full language list. */
+    private val langHoldRunnable = Runnable {
+        if (!clipArmed) return@Runnable
+        clipArmed = false
+        clipFired = true
+        performHapticFeedback(
+            android.view.HapticFeedbackConstants.LONG_PRESS,
+            android.view.HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+        )
+        listener?.onTransLang(true)
+    }
 
     private val clipHoldRunnable = Runnable {
         if (!clipArmed) return@Runnable
@@ -356,9 +377,16 @@ class KeyboardView(context: Context) : View(context) {
         transOn = on
         transText = ""
         transStatus = ""
+        transOut = ""
         setToolsOpen(false)
         toolsT = 0f
         requestLayout()
+        invalidate()
+    }
+
+    fun setTransOut(out: String) {
+        if (out == transOut) return
+        transOut = out
         invalidate()
     }
 
@@ -899,6 +927,15 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /** The language bar that stands in for the strip while translating. */
+    /**
+     * Back, one direction chip, and the action.
+     *
+     * Two full-width language pills and a swap arrow took the whole row to say
+     * something that fits in a chip, and left nowhere to show the translation —
+     * so the box below it showed what he had just typed, which he could already
+     * see in the message. The chip carries both languages; a tap swaps them and
+     * a hold opens the full list.
+     */
     private fun drawTransBar(canvas: Canvas, w: Float) {
         val top = zonePad + panelPadTop
         val bottom = top + suggH
@@ -906,37 +943,71 @@ class KeyboardView(context: Context) : View(context) {
         val left = zonePad + sideMargin
         val right = w - zonePad - sideMargin
 
-        val closeW = suggH * 0.92f
-        val swapW = suggH * 0.86f
-        val chipH = suggH * 0.80f
-        val chipY = cy - chipH / 2f
-        val chipW = (right - left - closeW - swapW - dp(16f)) / 2f
+        val h = suggH * 0.80f
+        val y = cy - h / 2f
+        val closeW = suggH * 0.86f
 
         trCloseRect.set(right - closeW, cy - closeW / 2f, right, cy + closeW / 2f)
-        trDstRect.set(trCloseRect.left - dp(6f) - chipW, chipY, trCloseRect.left - dp(6f), chipY + chipH)
-        trSwapRect.set(trDstRect.left - swapW, cy - swapW / 2f, trDstRect.left, cy + swapW / 2f)
-        trSrcRect.set(trSwapRect.left - chipW, chipY, trSwapRect.left, chipY + chipH)
 
         txtPaint.typeface = arFont
         txtPaint.textSize = suggH * 0.30f
         val fm = txtPaint.fontMetrics
         val base = cy - (fm.ascent + fm.descent) / 2f
 
-        drawChip(canvas, trSrcRect, Tr.nameOf(Store.kbTrSrc), pressedZone == -10, base)
-        drawChip(canvas, trDstRect, Tr.nameOf(Store.kbTrDst), pressedZone == -12, base)
+        // the action sizes itself to its word, and the chip takes what is left
+        val goLabel = "ترجمة"
+        val goW = (txtPaint.measureText(goLabel) + dp(30f)).coerceAtLeast(suggH * 1.5f)
+        trGoRect.set(left, y, left + goW, y + h)
 
-        if (pressedZone == -11) {
-            bgPaint.color = theme.keyDown
-            canvas.drawCircle(trSwapRect.centerX(), cy, swapW * 0.46f, bgPaint)
+        val chipRight = trCloseRect.left - dp(6f)
+        val chipLeft = (trGoRect.right + dp(6f)).coerceAtMost(chipRight - dp(40f))
+        trSrcRect.set(chipLeft, y, chipRight, y + h)
+
+        // ---- chip: "عربي ⇄ إنجليزي" ----
+        bgPaint.color = if (pressedZone == -10) theme.keyDown else theme.key
+        canvas.drawRoundRect(trSrcRect, dp(10f), dp(10f), bgPaint)
+
+        val srcName = shortLang(Store.kbTrSrc)
+        val dstName = shortLang(Store.kbTrDst)
+        val arrowW = suggH * 0.34f
+        val gapW = dp(6f)
+        val totalW = txtPaint.measureText(srcName) + txtPaint.measureText(dstName) + arrowW + gapW * 2
+        var cx = trSrcRect.centerX() + totalW / 2f
+
+        txtPaint.color = theme.text
+        txtPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText(srcName, cx, base, txtPaint)
+        cx -= txtPaint.measureText(srcName) + gapW
+        icoPaint.color = theme.go
+        icoPaint.strokeWidth = dp(1.6f)
+        drawIcon(canvas, Ico.SWAP, cx - arrowW / 2f, cy, arrowW)
+        cx -= arrowW + gapW
+        canvas.drawText(dstName, cx, base, txtPaint)
+        txtPaint.textAlign = Paint.Align.CENTER
+
+        // ---- action: lit only once there is something to commit ----
+        val armed = transOut.isNotEmpty()
+        bgPaint.color = when {
+            !armed -> theme.keyDark
+            pressedZone == -14 -> theme.onBg
+            else -> theme.go
         }
-        icoPaint.color = theme.outer
-        icoPaint.strokeWidth = dp(1.7f)
-        drawIcon(canvas, Ico.SWAP, trSwapRect.centerX(), cy, suggH * 0.36f)
+        canvas.drawRoundRect(trGoRect, dp(10f), dp(10f), bgPaint)
+        txtPaint.color = if (armed) theme.goIcon else theme.dim
+        canvas.drawText(goLabel, trGoRect.centerX(), base, txtPaint)
 
+        // ---- back ----
         bgPaint.color = if (pressedZone == -13) theme.keyDown else theme.key
         canvas.drawCircle(trCloseRect.centerX(), cy, closeW * 0.46f, bgPaint)
         icoPaint.color = theme.outer
+        icoPaint.strokeWidth = dp(1.7f)
         drawIcon(canvas, Ico.BACK, trCloseRect.centerX(), cy, suggH * 0.34f)
+    }
+
+    /** Names have to fit a chip, so the long ones lose their tail. */
+    private fun shortLang(code: String): String {
+        val n = Tr.nameOf(code)
+        return if (n.length <= 9) n else n.substring(0, 8) + "…"
     }
 
     private fun drawChip(canvas: Canvas, r: RectF, text: String, down: Boolean, base: Float) {
@@ -946,7 +1017,15 @@ class KeyboardView(context: Context) : View(context) {
         canvas.drawText(ellipsize(text, r.width() - dp(14f)), r.centerX(), base, txtPaint)
     }
 
-    /** The box he types into while translating. */
+    /**
+     * The translation, with a dot for whether it is settled.
+     *
+     * This used to show the source text, which he could already read in the
+     * message he was typing it into. What he could not see was the thing
+     * actually being sent, so that is what it shows now: grey while idle, amber
+     * while the engine is working, green once the line is translated and the
+     * action is safe to press.
+     */
     private fun drawTransBox(canvas: Canvas, w: Float) {
         val left = zonePad + sideMargin
         val right = w - zonePad - sideMargin
@@ -954,36 +1033,37 @@ class KeyboardView(context: Context) : View(context) {
         trBoxRect.set(left, top, right, top + transH)
 
         bgPaint.color = theme.key
-        canvas.drawRoundRect(trBoxRect, transH / 2f, transH / 2f, bgPaint)
-        edgePaint.style = Paint.Style.STROKE
-        edgePaint.color = theme.go
-        edgePaint.strokeWidth = dp(1.6f)
-        rf.set(
-            trBoxRect.left + dp(0.8f), trBoxRect.top + dp(0.8f),
-            trBoxRect.right - dp(0.8f), trBoxRect.bottom - dp(0.8f)
-        )
-        canvas.drawRoundRect(rf, transH / 2f, transH / 2f, edgePaint)
+        canvas.drawRoundRect(trBoxRect, dp(10f), dp(10f), bgPaint)
+
+        val working = transText.trim().isNotEmpty() && transOut.isEmpty()
+        val dotC = when {
+            transOut.isNotEmpty() -> OK_DOT
+            working -> WORK_DOT
+            else -> theme.dim
+        }
+        val dotR = dp(3.5f)
+        val dotX = right - dp(14f)
+        bgPaint.color = dotC
+        canvas.drawCircle(dotX, trBoxRect.centerY(), dotR, bgPaint)
 
         txtPaint.typeface = arFont
-        txtPaint.textSize = keyH * 0.33f
+        txtPaint.textSize = keyH * 0.31f
         val fm = txtPaint.fontMetrics
         val base = trBoxRect.centerY() - (fm.ascent + fm.descent) / 2f
-        val pad = dp(16f)
 
         val shown = when {
-            transText.isNotEmpty() -> transText
+            transOut.isNotEmpty() -> transOut
             transStatus.isNotEmpty() -> transStatus
-            else -> "اكتب هنا والترجمة تطلع بالرسالة"
+            working -> "يترجم…"
+            else -> "الترجمة تطلع هنا وإنت تكتب"
         }
-        txtPaint.color = if (transText.isNotEmpty()) theme.text else theme.dim
+        txtPaint.color = if (transOut.isNotEmpty()) theme.text else theme.dim
+        val avail = (dotX - dotR - dp(8f)) - (left + dp(14f))
         // the tail is what matters while typing, so a long line scrolls from the end
-        canvas.drawText(tailFit(shown, right - left - pad * 2f), (left + right) / 2f, base, txtPaint)
-
-        if (transText.isNotEmpty() && transStatus.isNotEmpty()) {
-            txtPaint.textSize = keyH * 0.22f
-            txtPaint.color = theme.dim
-            canvas.drawText(transStatus, (left + right) / 2f, trBoxRect.bottom - dp(3f), txtPaint)
-        }
+        canvas.drawText(
+            tailFit(shown, avail),
+            (left + dp(14f) + dotX - dotR - dp(8f)) / 2f, base, txtPaint
+        )
     }
 
     /** Keeps the end of a string, which is where the cursor is. */
@@ -1624,6 +1704,10 @@ class KeyboardView(context: Context) : View(context) {
                         clipArmed = true
                         handler.postDelayed(clipHoldRunnable, 380)
                     }
+                    if (pressedZone == -10) {
+                        clipArmed = true
+                        handler.postDelayed(langHoldRunnable, 420)
+                    }
                     if (pressedZone != -1) invalidateStrip()
                     return true
                 }
@@ -1731,6 +1815,7 @@ class KeyboardView(context: Context) : View(context) {
                         pressedSugg = -1
                         clipArmed = false
                         handler.removeCallbacks(clipHoldRunnable)
+                        handler.removeCallbacks(langHoldRunnable)
                     }
                     if (suggDragging && suggMax > 0f) {
                         suggScroll = (stripScroll0 - dx).coerceIn(0f, suggMax)
@@ -1847,6 +1932,7 @@ class KeyboardView(context: Context) : View(context) {
                     clipArmed = false
                     clipFired = false
                     handler.removeCallbacks(clipHoldRunnable)
+                    handler.removeCallbacks(langHoldRunnable)
                     invalidateStrip()
                     if (dragged || hadHold) return true
                     when {
@@ -1856,10 +1942,11 @@ class KeyboardView(context: Context) : View(context) {
                             setToolsOpen(false)
                             listener?.onTool(-(z + 4))
                         }
-                        z == -10 -> listener?.onTransLang(false)
-                        z == -11 -> listener?.onTransSwap()
-                        z == -12 -> listener?.onTransLang(true)
+                        // a tap flips the pair; the hold that opens the full list
+                        // has already fired by here and set hadHold
+                        z == -10 -> listener?.onTransSwap()
                         z == -13 -> listener?.onTransClose()
+                        z == -14 -> listener?.onTransGo()
                         z >= 0 && suggAt(x, width.toFloat()) == z -> {
                             if (suggs.getOrNull(z).isNullOrEmpty()) {
                                 if (suggText.isNotEmpty()) listener?.onSuggestionTap()
@@ -2092,9 +2179,8 @@ class KeyboardView(context: Context) : View(context) {
 
         if (transOn) {
             if (trCloseRect.left - dp(4f) <= x) return -13
-            if (trDstRect.contains(x, trDstRect.centerY())) return -12
-            if (trSwapRect.left <= x && x <= trSwapRect.right) return -11
             if (trSrcRect.left - dp(4f) <= x) return -10
+            if (x <= trGoRect.right + dp(4f)) return -14
             return -1
         }
 

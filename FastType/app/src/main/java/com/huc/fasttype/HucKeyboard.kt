@@ -1128,6 +1128,23 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         afterTransEdit(true)
     }
 
+    /**
+     * The translation is already in the message — it has been going in as he
+     * typed — so the action's job is to leave it there and get out of the way.
+     */
+    override fun onTransGo() {
+        feedback()
+        if (transOut.isEmpty() && transBuf.isNotEmpty()) return
+        transOn = false
+        transOut = ""
+        transLastSent = ""
+        transBuf.setLength(0)
+        transJob?.let { ui.removeCallbacks(it) }
+        transJob = null
+        kv?.setTranslate(false)
+        refreshSugg()
+    }
+
     override fun onTransLang(dst: Boolean) {
         feedback()
         kv?.openLangs(dst)
@@ -1148,6 +1165,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private fun afterTransEdit(now: Boolean) {
         feedback()
         kv?.setTransText(transBuf.toString(), Tr.status)
+        // what is on screen is about to be out of date, so stop calling it ready
+        kv?.setTransOut("")
         transJob?.let { ui.removeCallbacks(it) }
         val job = Runnable { runTranslate() }
         transJob = job
@@ -1160,6 +1179,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             replaceOutput("")
             transLastSent = ""
             kv?.setTransText(transBuf.toString(), "")
+            kv?.setTransOut("")
             return
         }
         // nothing changed since the last request, so there is nothing to ask for
@@ -1168,6 +1188,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         Tr.translate(text, Store.kbTrSrc, Store.kbTrDst) { out ->
             if (transOn) {
                 kv?.setTransText(transBuf.toString(), Tr.status)
+                // the bar shows the translation now, so it needs it too
+                kv?.setTransOut(out ?: "")
                 if (out != null) replaceOutput(out)
             }
         }
