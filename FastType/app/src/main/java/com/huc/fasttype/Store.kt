@@ -77,6 +77,7 @@ object Store {
     private const val K_TR_SRC = "kb_tr_src"
     private const val K_TR_DST = "kb_tr_dst"
     private const val K_KB_PICS = "kb_pics"
+    private const val K_KB_FINGERY = "kb_finger_y"
 
     // automatic replies
     private const val K_AR_ON = "ar_on"
@@ -436,6 +437,13 @@ object Store {
 
     const val LOG_MAX = 50
 
+    /**
+     * How far above the touch the keyboard reads a tap, in hundredths of a key
+     * height. A finger aims with the tip and lands with the pad. 0 turns it off.
+     */
+    @Volatile var kbFingerY: Int = 12
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -503,6 +511,7 @@ object Store {
         kbTrSrc = p.getString(K_TR_SRC, "auto") ?: "auto"
         kbTrDst = p.getString(K_TR_DST, "en") ?: "en"
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
+        kbFingerY = p.getInt(K_KB_FINGERY, 12).coerceIn(0, 30)
 
         arOn = p.getBoolean(K_AR_ON, false)
         arWhats = p.getBoolean(K_AR_WA, true)
@@ -729,6 +738,7 @@ object Store {
             "hairw" -> { kbHairW = v.coerceIn(1, 4); prefs(ctx).edit().putInt(K_KB_HAIRW, kbHairW).apply() }
             "letter" -> { kbLetter = v.coerceIn(40, 58); prefs(ctx).edit().putInt(K_KB_LETTER, kbLetter).apply() }
             "clipexp" -> { kbClipExpire = v.coerceIn(0, 1440); prefs(ctx).edit().putInt(K_KB_CLIPEXP, kbClipExpire).apply() }
+            "fingery" -> { kbFingerY = v.coerceIn(0, 30); prefs(ctx).edit().putInt(K_KB_FINGERY, kbFingerY).apply() }
         }
     }
     fun setKbFlag(ctx: Context, which: String, v: Boolean) {

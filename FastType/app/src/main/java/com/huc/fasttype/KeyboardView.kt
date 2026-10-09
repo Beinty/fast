@@ -151,6 +151,16 @@ class KeyboardView(context: Context) : View(context) {
     private var micInStrip = true
     private var letterScale = 0.49f
     private var pressFx = true
+
+    /**
+     * How far above the touch point the keyboard reads the tap, in hundredths of
+     * a key height.
+     *
+     * A finger aims with the tip and lands with the pad, so the contact patch
+     * sits below where the person thinks they are pointing. Every row of keys
+     * therefore collects taps meant for the row above it. Zero turns it off.
+     */
+    private var fingerY = 12
     private var blankOnHold = true
     private var clearBottom = false
     private var pressedZone = -1
@@ -459,6 +469,7 @@ class KeyboardView(context: Context) : View(context) {
         altsOn = Store.kbAlts
         letterScale = Store.kbLetter / 100f
         pressFx = Store.kbPressFx
+        fingerY = Store.kbFingerY
         blankOnHold = Store.kbBlankHold
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
@@ -1601,7 +1612,7 @@ class KeyboardView(context: Context) : View(context) {
                 if (fastKeys) {
                     firedOnDown = true
                     firedKey = k
-                    fire(k)
+                    fire(k, x, y)
                 } else {
                     firedOnDown = false
                     firedKey = null
@@ -1632,7 +1643,7 @@ class KeyboardView(context: Context) : View(context) {
                 if (k2.code == Code.DEL || k2.code == Code.SHIFT ||
                     k2.code == Code.CYCLE
                 ) return true
-                fire(k2)
+                fire(k2, px, py)
                 return true
             }
 
@@ -1813,7 +1824,7 @@ class KeyboardView(context: Context) : View(context) {
                 pressed = null
                 invalidateKey(k)
                 if (!firedOnDown && k != null && k.hitT(x, y)) {
-                    fire(k)
+                    fire(k, x, y)
                 } else if (firedOnDown) {
                     // Typing on down is what makes the letter appear under the finger
                     // instead of after it. The cost is that a finger landing a little
@@ -1828,7 +1839,7 @@ class KeyboardView(context: Context) : View(context) {
                         if (now != null && now !== fk &&
                             now.code == Code.CHAR && now.out.isNotEmpty()
                         ) {
-                            lastNear = neighbours(now)
+                            lastNear = neighbours(now, x, y)
                             listener?.onReplaceChar(now.out)
                         }
                     }
@@ -2028,6 +2039,13 @@ class KeyboardView(context: Context) : View(context) {
      * lands just outside the rows still types instead of doing nothing.
      */
     private fun find(x: Float, y: Float): Key? {
+        // The corrected point first. If the correction pushes the tap off every
+        // key — at the very top row, say — the raw point still counts, so the
+        // offset can never turn a real tap into nothing.
+        if (fingerY > 0) {
+            val lift = keyH * (fingerY / 100f)
+            for (row in rows) for (k in row) if (!k.spacer && k.hitT(x, y - lift)) return k
+        }
         for (row in rows) for (k in row) if (!k.spacer && k.hitT(x, y)) return k
 
         var best: Key? = null
@@ -2051,10 +2069,23 @@ class KeyboardView(context: Context) : View(context) {
     var lastNear: String = ""
         private set
 
-    private fun neighbours(k: Key): String {
+    private fun neighbours(k: Key, tx: Float = Float.NaN, ty: Float = Float.NaN): String {
         if (k.code != Code.CHAR || k.out.length != 1) return ""
-        val cx = k.x + k.w / 2f
-        val cy = k.y + k.h / 2f
+        // Measured from where the finger actually landed.
+        //
+        // This used to measure from the middle of the key, which threw away the
+        // one thing only the keyboard knows: a tap two pixels inside 'س' with
+        // 'ش' against that edge produced exactly the same list as a tap dead
+        // centre. The corrector was being handed a blind guess where a reading
+        // existed.
+        //
+        // Clamped into the key, because find() falls back to the nearest key for
+        // a tap that lands outside the rows, and an unclamped point there would
+        // drag the whole list toward the edge of the keyboard.
+        val useTouch = !tx.isNaN() && !ty.isNaN()
+        val lift = if (fingerY > 0) k.h * (fingerY / 100f) else 0f
+        val cx = if (useTouch) tx.coerceIn(k.x, k.x + k.w) else k.x + k.w / 2f
+        val cy = if (useTouch) (ty - lift).coerceIn(k.y, k.y + k.h) else k.y + k.h / 2f
         // A key is wider than it is far from the row above, so a reach measured in
         // key widths reached sideways and nowhere else: the letters directly above
         // and below a finger were never offered to the corrector at all.
@@ -2083,8 +2114,8 @@ class KeyboardView(context: Context) : View(context) {
         return sb.toString()
     }
 
-    private fun fire(k: Key) {
-        lastNear = if (k.code == Code.CHAR) neighbours(k) else ""
+    private fun fire(k: Key, tx: Float = Float.NaN, ty: Float = Float.NaN) {
+        lastNear = if (k.code == Code.CHAR) neighbours(k, tx, ty) else ""
         when (k.code) {
             Code.DEL -> listener?.onDelete()
             Code.ENTER -> listener?.onEnter()

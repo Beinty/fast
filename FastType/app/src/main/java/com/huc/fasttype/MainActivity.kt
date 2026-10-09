@@ -832,6 +832,10 @@ class MainActivity : Activity() {
         p.addView(sliderRow("ارتفاع الزر", Store.kbKeyHeight, 34, 58) {
             Store.setKbInt(this, "h", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        // the finger lands below where it aims; 0 reads the tap exactly as it fell
+        p.addView(sliderRow("تصحيح انحراف الإصبع", Store.kbFingerY, 0, 30) {
+            Store.setKbInt(this, "fingery", it)
+        }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("المسافة بين الأزرار", Store.kbGap, 2, 10) {
             Store.setKbInt(this, "gap", it); syncPreview()
         }, lp(true, bottom = dp(8)))
