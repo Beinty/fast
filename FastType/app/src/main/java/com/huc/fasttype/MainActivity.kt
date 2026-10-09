@@ -1706,7 +1706,7 @@ class MainActivity : Activity() {
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         col.addView(t)
         val s = TextView(this)
-        s.text = "رد فوري يبيّن إنه بوت"
+        s.text = "حتى بصفر ينتظر ٢.٥ ثانية حتى يجمّع الرسائل"
         s.setTextColor(MUT)
         s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
         col.addView(s)

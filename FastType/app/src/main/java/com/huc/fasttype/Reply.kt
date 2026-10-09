@@ -57,6 +57,16 @@ class Reply : NotificationListenerService() {
          */
         private const val COOLDOWN_MS = 25_000L
 
+        /**
+         * The shortest the reply ever waits, whatever the delay is set to.
+         *
+         * The wait is doing two jobs: not looking instant, and collecting a
+         * burst of short messages into one answer. Only the first is his to
+         * turn off — with a zero window there is nothing to collect in, and
+         * four messages get four replies again.
+         */
+        private const val COLLECT_MS = 2_500L
+
         /** Set while the service is bound, so the settings screen can say so. */
         @Volatile
         var running: Boolean = false
@@ -235,7 +245,8 @@ class Reply : NotificationListenerService() {
             fire(key, action, pkg, who, group)
         }
         pending[key] = task
-        main.postDelayed(task, Store.arDelay.toLong() * 1000L)
+        val wait = maxOf(Store.arDelay.toLong() * 1000L, COLLECT_MS)
+        main.postDelayed(task, wait)
     }
 
     private fun fire(
