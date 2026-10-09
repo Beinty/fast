@@ -45,6 +45,18 @@ class Reply : NotificationListenerService() {
         /** Turns kept per conversation, counting both sides. */
         private const val HISTORY_MAX = 8
 
+        /** Recent message bodies remembered per conversation, each direction. */
+        private const val SEEN_MAX = 12
+
+        /**
+         * No conversation gets a second automatic reply inside this window.
+         *
+         * The backstop for everything that can make one message look like
+         * several: a reposted notification, a changed notification id, a
+         * message echoed back. Whatever the cause, one reply per window.
+         */
+        private const val COOLDOWN_MS = 25_000L
+
         /** Set while the service is bound, so the settings screen can say so. */
         @Volatile
         var running: Boolean = false
@@ -61,8 +73,30 @@ class Reply : NotificationListenerService() {
      */
     private val answered = HashSet<String>()
 
-    /** Last message seen per conversation; messaging apps repost the same one. */
-    private val lastSeen = HashMap<String, String>()
+    /**
+     * Messages already handled per conversation.
+     *
+     * Not just the last one: a messaging app reposts its notification whenever
+     * anything in the thread changes, and the text it carries moves back and
+     * forth between the recent messages. Matching only the previous body let
+     * the same message through again a moment later.
+     */
+    private val seen = HashMap<String, ArrayDeque<String>>()
+
+    /** What this service itself sent, so a repost of it is never answered. */
+    private val mine = HashMap<String, ArrayDeque<String>>()
+
+    /** When the last reply went out per conversation. */
+    private val lastReplyAt = HashMap<String, Long>()
+
+    private fun recent(map: HashMap<String, ArrayDeque<String>>, key: String): ArrayDeque<String> =
+        map.getOrPut(key) { ArrayDeque() }
+
+    private fun note(map: HashMap<String, ArrayDeque<String>>, key: String, text: String) {
+        val d = recent(map, key)
+        d.addLast(text)
+        while (d.size > SEEN_MAX) d.removeFirst()
+    }
 
     /**
      * Recent turns per conversation, oldest first.
@@ -101,8 +135,10 @@ class Reply : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification?) {
         val key = sbn?.let { convKey(it) } ?: return
         answered.remove(key)
-        lastSeen.remove(key)
         history.remove(key)
+        seen.remove(key)
+        mine.remove(key)
+        lastReplyAt.remove(key)
         // he is in the chat now, so a queued automatic reply is no longer wanted
         pending.remove(key)?.let { main.removeCallbacks(it) }
     }
@@ -152,9 +188,14 @@ class Reply : NotificationListenerService() {
 
         val key = convKey(sbn)
 
-        // the same notification reposted while he has not opened it
-        if (lastSeen[key] == body) return
-        lastSeen[key] = body
+        // a repost of something already handled, or an echo of our own reply
+        if (recent(seen, key).contains(body)) return
+        if (recent(mine, key).contains(body)) return
+        note(seen, key, body)
+
+        // the backstop: whatever slipped past the checks above, one reply per window
+        val since = System.currentTimeMillis() - (lastReplyAt[key] ?: 0L)
+        if (since < COOLDOWN_MS) return
 
         if (Store.arOnce && answered.contains(key)) return
         if (!allowed(who)) return
@@ -223,10 +264,20 @@ class Reply : NotificationListenerService() {
             if (text.isNullOrBlank()) {
                 fallback(key, action, pkg, who, asked, r.error ?: "ما طلع رد")
             } else {
-                send(key, action, pkg, who, asked, text, canned = false)
+                send(key, action, pkg, who, asked, oneLine(text), canned = false)
             }
         }
     }
+
+    /**
+     * Keeps the reply to a single line.
+     *
+     * Asking for one line works most of the time; this makes it always. Only
+     * whole lines are dropped — a sentence is never cut mid-word, because half
+     * a message sent in his name is worse than a slightly long one.
+     */
+    private fun oneLine(text: String): String =
+        text.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: text.trim()
 
     /** The fixed line, if he wrote one; otherwise the reason, logged and nothing sent. */
     private fun fallback(
@@ -259,7 +310,11 @@ class Reply : NotificationListenerService() {
     ) {
         val sent = push(action, text)
         if (!sent) answered.remove(key)
-        if (sent) remember(key, true, text)
+        if (sent) {
+            remember(key, true, text)
+            note(mine, key, text)
+            lastReplyAt[key] = System.currentTimeMillis()
+        }
         val shown = if (canned && sent) "$text  (رد جاهز)" else text
         log(pkg, who, asked, if (sent) shown else "ما انرسل — الإشعار راح", sent)
     }
@@ -340,8 +395,12 @@ class Reply : NotificationListenerService() {
         sb.append("إنت تكتب رسالة دردشة كأنك صاحب الهاتف نفسه. مو مساعد ولا بوت ولا خدمة عملاء.\n")
         sb.append(tone).append("\n")
         sb.append("\nشلون تكتب:\n")
-        sb.append("- قصير جداً. كلمة أو كلمتين أو سطر واحد. مثل ما يرد أي واحد بالتلفون.\n")
-        sb.append("- بنفس طول وأسلوب رسالة الطرف الثاني. إذا كتب كلمة وحدة، رد بكلمة وحدة.\n")
+        sb.append("- سطر واحد فقط. ممنوع سطرين.\n")
+        // the complaint that produced this rule: two words in, seven words out
+        sb.append("- طول ردك لا يتجاوز طول رسالته. إذا كتب كلمة رد بكلمة. ")
+        sb.append("إذا كتب كلمتين رد بكلمتين أو ثلاثة. ما تزيد.\n")
+        sb.append("- رد على نفس الكلمة الي كتبها بالضبط. تحية مقابل تحية. سؤال مقابل جواب. ")
+        sb.append("لا تضيف كلام ما سأل عنه ولا تفتح موضوع جديد.\n")
         sb.append("- بدون فاصلة (،) نهائياً. إذا احتجت وقفة استعمل نقطة أو ما تحط شي.\n")
         sb.append("- بدون تحيات رسمية مثل (أهلاً بك) أو (تحياتي) إلا إذا هو بدأ بيها.\n")
         sb.append("- بدون إيموجي إلا إذا هو استعمل إيموجي.\n")
@@ -383,8 +442,20 @@ class Reply : NotificationListenerService() {
         }
     }
 
-    private fun convKey(sbn: StatusBarNotification): String =
-        sbn.packageName + "|" + (sbn.tag ?: "") + "|" + sbn.id
+    /**
+     * Which conversation this is.
+     *
+     * The sender's name, not the notification id: messaging apps re-post with a
+     * new id, and keying on that made one thread look like a fresh conversation
+     * every time, so every repost earned its own reply.
+     */
+    private fun convKey(sbn: StatusBarNotification): String {
+        val ex = sbn.notification?.extras
+        val title = (ex?.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
+            ?: ex?.getCharSequence(Notification.EXTRA_TITLE)
+            ?: "").toString().trim()
+        return sbn.packageName + "|" + (if (title.isEmpty()) (sbn.tag ?: "") else title)
+    }
 
     private fun log(pkg: String, who: String, inq: String, out: String, ok: Boolean) {
         try {
