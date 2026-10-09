@@ -1038,6 +1038,11 @@ class MainActivity : Activity() {
             Store.kbPeek) {
             Store.setKbFlag(this, "peek", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        // the bundled file has Arabic glyphs only, so it is offered as such
+        p.addView(switchRow("خط عربي خاص", "للحروف العربية فقط — الإنكليزي والإيموجي ما يتغيرون",
+            Store.kbArFont) {
+            Store.setKbFlag(this, "arfont", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
             Store.setKbFlag(this, "num", it); syncPreview()
         }, lp(true, bottom = dp(8)))

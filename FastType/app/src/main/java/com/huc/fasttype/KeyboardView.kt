@@ -454,12 +454,44 @@ class KeyboardView(context: Context) : View(context) {
     private var enFont: Typeface = Typeface.DEFAULT
 
     private var fontWeight = -1
+    private var fontArabicOn = false
 
+    /**
+     * The bundled Arabic face, loaded once.
+     *
+     * Null while it has not been asked for, and null again if it cannot be read,
+     * which is the same thing to every caller: fall back to the system face.
+     */
+    private var packFont: Typeface? = null
+    private var packTried = false
+
+    private fun pack(): Typeface? {
+        if (packTried) return packFont
+        packTried = true
+        packFont = try {
+            Typeface.createFromAsset(context.assets, "fonts/arabic_ui.ttf")
+        } catch (_: Throwable) {
+            null
+        }
+        return packFont
+    }
+
+    /**
+     * Picks the two faces.
+     *
+     * They are chosen separately because the bundled file has no Latin letters
+     * and no digits in it at all — 255 Arabic glyphs and nothing else. Setting
+     * it on both would leave the English layout drawing blanks, so it is only
+     * ever the Arabic one, and the weight slider keeps working on the Latin
+     * side as before.
+     */
     private fun applyFont() {
         val w = Store.kbWeight
-        if (w == fontWeight) return
+        val useArabic = Store.kbArFont
+        if (w == fontWeight && useArabic == fontArabicOn) return
         fontWeight = w
-        val f = if (android.os.Build.VERSION.SDK_INT >= 28) {
+        fontArabicOn = useArabic
+        val sys = if (android.os.Build.VERSION.SDK_INT >= 28) {
             Typeface.create(Typeface.SANS_SERIF, w, false)
         } else {
             Typeface.create(
@@ -467,8 +499,8 @@ class KeyboardView(context: Context) : View(context) {
                 if (w >= 700) Typeface.BOLD else Typeface.NORMAL
             )
         }
-        arFont = f
-        enFont = f
+        enFont = sys
+        arFont = if (useArabic) (pack() ?: sys) else sys
     }
 
     private val handler = Handler(Looper.getMainLooper())

@@ -81,6 +81,7 @@ object Store {
     private const val K_KB_PEEK = "kb_peek"
     private const val K_KB_SHADE = "kb_shade"
     private const val K_KB_WARM = "kb_warm"
+    private const val K_KB_ARFONT = "kb_ar_font"
 
     // automatic replies
     private const val K_AR_ON = "ar_on"
@@ -463,6 +464,15 @@ object Store {
     @Volatile var kbWarm: Int = 0
         private set
 
+    /**
+     * Draw Arabic in the bundled face rather than the system one.
+     *
+     * Arabic only: the file carries no Latin letters, no digits and no emoji,
+     * so those keep the system face whatever this is set to.
+     */
+    @Volatile var kbArFont: Boolean = false
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -534,6 +544,7 @@ object Store {
         kbPeek = p.getBoolean(K_KB_PEEK, true)
         kbShade = p.getInt(K_KB_SHADE, 0).coerceIn(0, 60)
         kbWarm = p.getInt(K_KB_WARM, 0).coerceIn(0, 40)
+        kbArFont = p.getBoolean(K_KB_ARFONT, false)
 
         arOn = p.getBoolean(K_AR_ON, false)
         arWhats = p.getBoolean(K_AR_WA, true)
@@ -792,6 +803,7 @@ object Store {
             "dots" -> { kbDoubleSpace = v; e.putBoolean(K_KB_DOTS, v) }
             "pics" -> { kbPics = v; e.putBoolean(K_KB_PICS, v) }
             "peek" -> { kbPeek = v; e.putBoolean(K_KB_PEEK, v) }
+            "arfont" -> { kbArFont = v; e.putBoolean(K_KB_ARFONT, v) }
         }
         e.apply()
     }
