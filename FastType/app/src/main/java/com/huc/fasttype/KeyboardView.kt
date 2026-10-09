@@ -52,6 +52,9 @@ class KeyboardView(context: Context) : View(context) {
 
         /** The line was tapped: bring in whatever was copied. */
         fun onTransPaste()
+
+        /** Empty the line in one go. */
+        fun onTransClear()
         fun onLangPick(code: String)
         /** One of the recent pictures was chosen from the clipboard page. */
         fun onPicPick(index: Int)
@@ -202,9 +205,13 @@ class KeyboardView(context: Context) : View(context) {
         private set
     private val trSrcRect = RectF()
     private val trGoRect = RectF()
+    private val trClearRect = RectF()
 
     /** Set while the translate line is held down, for its pressed fill. */
     private var transBoxDown = false
+
+    /** Set while the clear button inside that line is held down. */
+    private var transClearDown = false
 
     /** Amber while the engine works, green once the line is settled. */
     private val WORK_DOT = Color.parseColor("#E8A33C")
@@ -1059,6 +1066,29 @@ class KeyboardView(context: Context) : View(context) {
         bgPaint.color = dotC
         canvas.drawCircle(dotX, trBoxRect.centerY(), dotR, bgPaint)
 
+        // There is no caret and no selection to drag in a line painted onto a
+        // canvas, so the only way to empty it was one backspace per letter. The
+        // button appears only when there is something to clear.
+        val hasText = transText.isNotEmpty()
+        if (hasText) {
+            val r = trBoxRect.height() * 0.30f
+            val cxc = left + dp(15f)
+            trClearRect.set(
+                cxc - r - dp(5f), trBoxRect.centerY() - r - dp(5f),
+                cxc + r + dp(5f), trBoxRect.centerY() + r + dp(5f)
+            )
+            bgPaint.color = if (transClearDown) theme.go else theme.keyDark
+            canvas.drawCircle(cxc, trBoxRect.centerY(), r, bgPaint)
+            edgePaint.style = Paint.Style.STROKE
+            edgePaint.strokeWidth = dp(1.5f)
+            edgePaint.color = if (transClearDown) theme.goIcon else theme.dim
+            val a = r * 0.42f
+            canvas.drawLine(cxc - a, trBoxRect.centerY() - a, cxc + a, trBoxRect.centerY() + a, edgePaint)
+            canvas.drawLine(cxc + a, trBoxRect.centerY() - a, cxc - a, trBoxRect.centerY() + a, edgePaint)
+        } else {
+            trClearRect.setEmpty()
+        }
+
         txtPaint.typeface = arFont
         txtPaint.textSize = keyH * 0.31f
         val fm = txtPaint.fontMetrics
@@ -1071,11 +1101,12 @@ class KeyboardView(context: Context) : View(context) {
             else -> "اكتب هنا — أو دوس للّصق"
         }
         txtPaint.color = if (typed.isNotEmpty()) theme.text else theme.dim
-        val avail = (dotX - dotR - dp(8f)) - (left + dp(14f))
+        val textLeft = if (hasText) trClearRect.right + dp(6f) else left + dp(14f)
+        val textRight = dotX - dotR - dp(8f)
         // the tail is what matters while typing, so a long line scrolls from the end
         canvas.drawText(
-            tailFit(shown, avail),
-            (left + dp(14f) + dotX - dotR - dp(8f)) / 2f, base, txtPaint
+            tailFit(shown, textRight - textLeft),
+            (textLeft + textRight) / 2f, base, txtPaint
         )
     }
 
@@ -1730,7 +1761,11 @@ class KeyboardView(context: Context) : View(context) {
                 // the translate line is not a key and not the strip; without this
                 // a tap on it fell through to the nearest letter
                 if (transOn && trBoxRect.contains(x, y)) {
-                    transBoxDown = true
+                    if (!trClearRect.isEmpty && trClearRect.contains(x, y)) {
+                        transClearDown = true
+                    } else {
+                        transBoxDown = true
+                    }
                     invalidate()
                     return true
                 }
@@ -1909,6 +1944,15 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
+                if (transClearDown) {
+                    transClearDown = false
+                    invalidate()
+                    if (!trClearRect.isEmpty && trClearRect.contains(x, y)) {
+                        listener?.onTransClear()
+                    }
+                    return true
+                }
+
                 if (transBoxDown) {
                     transBoxDown = false
                     invalidate()
@@ -2014,7 +2058,11 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                if (transBoxDown) { transBoxDown = false; invalidate() }
+                if (transBoxDown || transClearDown) {
+                    transBoxDown = false
+                    transClearDown = false
+                    invalidate()
+                }
                 firedKey = null
                 cancelCycleHold()
                 altArmed = false

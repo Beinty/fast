@@ -1111,6 +1111,7 @@ class MainActivity : Activity() {
             override fun onTransLang(dst: Boolean) {}
             override fun onTransGo() {}
             override fun onTransPaste() {}
+            override fun onTransClear() {}
             override fun onLangPick(code: String) {}
             override fun onPicPick(index: Int) {}
             override fun onReplaceChar(s: String) {}

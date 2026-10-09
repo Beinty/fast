@@ -1174,6 +1174,18 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         afterTransEdit(true)
     }
 
+    override fun onTransClear() {
+        if (transBuf.isEmpty()) return
+        feedback()
+        transBuf.setLength(0)
+        transReady = ""
+        transLastSent = ""
+        kv?.setTransText("", "")
+        kv?.setTransOut("")
+        transJob?.let { ui.removeCallbacks(it) }
+        transJob = null
+    }
+
     override fun onTransLang(dst: Boolean) {
         feedback()
         kv?.openLangs(dst)
