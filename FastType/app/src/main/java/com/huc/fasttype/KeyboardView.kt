@@ -189,8 +189,14 @@ class KeyboardView(context: Context) : View(context) {
     var transText: String = ""
     var transStatus: String = ""
 
-    /** The translation itself. The bar shows this; the source is already visible. */
+    /**
+     * The translation itself. The bar shows this; the source is already visible.
+     *
+     * Private setter: a public one would compile to the same JVM method as
+     * [setTransOut] below, which takes the same single String.
+     */
     var transOut: String = ""
+        private set
     private val trSrcRect = RectF()
     private val trGoRect = RectF()
 
