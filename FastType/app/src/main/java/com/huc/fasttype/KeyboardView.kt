@@ -1024,13 +1024,14 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /**
-     * The translation, with a dot for whether it is settled.
+     * What he is typing, with a dot for whether its translation is ready.
      *
-     * This used to show the source text, which he could already read in the
-     * message he was typing it into. What he could not see was the thing
-     * actually being sent, so that is what it shows now: grey while idle, amber
-     * while the engine is working, green once the line is translated and the
-     * action is safe to press.
+     * The message field stays empty until he presses the action, so this line
+     * is the only place his sentence exists while he writes it — it has to show
+     * the words themselves, not the translation of them.
+     *
+     * The dot carries the part he cannot see: grey idle, amber while the engine
+     * works, green once there is a finished translation behind the button.
      */
     private fun drawTransBox(canvas: Canvas, w: Float) {
         val left = zonePad + sideMargin
@@ -1057,13 +1058,13 @@ class KeyboardView(context: Context) : View(context) {
         val fm = txtPaint.fontMetrics
         val base = trBoxRect.centerY() - (fm.ascent + fm.descent) / 2f
 
+        val typed = transText.trim()
         val shown = when {
-            transOut.isNotEmpty() -> transOut
+            typed.isNotEmpty() -> transText
             transStatus.isNotEmpty() -> transStatus
-            working -> "يترجم…"
-            else -> "الترجمة تطلع هنا وإنت تكتب"
+            else -> "اكتب هنا، وبعدين دوس ترجمة"
         }
-        txtPaint.color = if (transOut.isNotEmpty()) theme.text else theme.dim
+        txtPaint.color = if (typed.isNotEmpty()) theme.text else theme.dim
         val avail = (dotX - dotR - dp(8f)) - (left + dp(14f))
         // the tail is what matters while typing, so a long line scrolls from the end
         canvas.drawText(

@@ -26,7 +26,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private val transBuf = StringBuilder()
     private var transJob: Runnable? = null
     /** Exactly what we last put in the app's field, so it can be replaced cleanly. */
-    private var transOut = ""
+    /** The finished translation, waiting for him to ask for it. */
+    private var transReady = ""
     private var transLastSent = ""
 
     /** Recent pictures shown on the clipboard page, newest first. */
@@ -413,7 +414,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         page = Pages.LETTERS
         if (transOn) {
             transOn = false
-            transOut = ""
             transLastSent = ""
             transBuf.setLength(0)
         }
@@ -1098,7 +1098,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val ic = currentInputConnection
         if (ic != null) releaseComposing(ic)
         transOn = true
-        transOut = ""
         transLastSent = ""
         transBuf.setLength(0)
         kv?.setTranslate(true)
@@ -1109,7 +1108,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onTransClose() {
         transOn = false
-        transOut = ""
+        transReady = ""
         transLastSent = ""
         transBuf.setLength(0)
         transJob?.let { ui.removeCallbacks(it) }
@@ -1132,11 +1131,19 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      * The translation is already in the message — it has been going in as he
      * typed — so the action's job is to leave it there and get out of the way.
      */
+    /**
+     * Puts the translation into the message, and only now.
+     *
+     * Nothing has been written while he typed, so this is the single moment the
+     * chat field changes: the finished line goes in and the bar closes. Pressing
+     * it with nothing ready does nothing rather than committing a half sentence.
+     */
     override fun onTransGo() {
+        if (transReady.isEmpty()) return
         feedback()
-        if (transOut.isEmpty() && transBuf.isNotEmpty()) return
+        currentInputConnection?.commitText(transReady, 1)
         transOn = false
-        transOut = ""
+        transReady = ""
         transLastSent = ""
         transBuf.setLength(0)
         transJob?.let { ui.removeCallbacks(it) }
@@ -1165,7 +1172,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private fun afterTransEdit(now: Boolean) {
         feedback()
         kv?.setTransText(transBuf.toString(), Tr.status)
-        // what is on screen is about to be out of date, so stop calling it ready
+        // what is ready is about to be out of date, so stop calling it ready
+        transReady = ""
         kv?.setTransOut("")
         transJob?.let { ui.removeCallbacks(it) }
         val job = Runnable { runTranslate() }
@@ -1176,7 +1184,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private fun runTranslate() {
         val text = transBuf.toString().trim()
         if (text.isEmpty()) {
-            replaceOutput("")
+            transReady = ""
             transLastSent = ""
             kv?.setTransText(transBuf.toString(), "")
             kv?.setTransOut("")
@@ -1187,10 +1195,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         transLastSent = text
         Tr.translate(text, Store.kbTrSrc, Store.kbTrDst) { out ->
             if (transOn) {
+                // Held, not written. Writing it as he typed meant the chat field
+                // filled with half-translated fragments of a sentence he had not
+                // finished; the message is left alone until he asks for it.
+                transReady = out ?: ""
                 kv?.setTransText(transBuf.toString(), Tr.status)
-                // the bar shows the translation now, so it needs it too
-                kv?.setTransOut(out ?: "")
-                if (out != null) replaceOutput(out)
+                kv?.setTransOut(transReady)
             }
         }
         kv?.setTransText(transBuf.toString(), Tr.status)
@@ -1205,23 +1215,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      * disappearing. Reading back what is actually there before deleting it means we
      * only ever remove our own output.
      */
-    private fun replaceOutput(out: String) {
-        val ic = currentInputConnection ?: return
-        if (out == transOut) return
-        ic.beginBatchEdit()
-        if (transOut.isNotEmpty()) {
-            val before = try {
-                ic.getTextBeforeCursor(transOut.length, 0)?.toString() ?: ""
-            } catch (_: Throwable) {
-                ""
-            }
-            if (before == transOut) ic.deleteSurroundingText(transOut.length, 0)
-        }
-        if (out.isNotEmpty()) ic.commitText(out, 1)
-        ic.endBatchEdit()
-        transOut = out
-    }
-
     override fun onMic() {
         Log.i(Voice.TAG, "mic key pressed")
         val vo = voice ?: Voice(this).also { it.sink = this; voice = it }
