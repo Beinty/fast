@@ -273,6 +273,104 @@ object Themes {
             c("#E0E0E0"), c("#000000"),
             c("#FFFFFF"), c("#9A9A9A"), c("#FFFFFF"), c("#000000"), c("#E3E3E3"),
             dark = true, twin = "glassLight"
+        ),
+
+        // ---- five light schemes, each with its night twin ----
+        //
+        // Every one keeps the iOS proportions and only moves colour: the point of
+        // the set is that the light half is distinct enough to choose between,
+        // where the earlier light themes were all the same cool grey.
+
+        // Warm off-white, the colour of paper rather than glass. Softly lifted.
+        KbTheme(
+            "pearl", "لؤلؤ",
+            c("#EBE8E4"), c("#EBE8E4"), c("#D5D0CA"), c("#EBE8E4"),
+            c("#FFFEFC"), c("#F0ECE6"), c("#DAD5CF"),
+            c("#3478F7"), c("#FFFFFF"),
+            c("#1A1817"), c("#8B8580"), c("#1A1817"), c("#FFFFFF"), c("#2A2724"),
+            lightKeys = true, twin = "pearlNight", lift = c("#2E5A5048")
+        ),
+        KbTheme(
+            "pearlNight", "لؤلؤ ليلي",
+            c("#191715"), c("#191715"), c("#332E29"), c("#191715"),
+            c("#2C2825"), c("#35312D"), c("#201D1A"),
+            c("#3478F7"), c("#FFFFFF"),
+            c("#F6F2ED"), c("#8E867E"), c("#F6F2ED"), c("#191715"), c("#0F0E0D"),
+            dark = true, twin = "pearl", lift = c("#59000000")
+        ),
+
+        // Cool and flat: a hairline round every key instead of a shadow.
+        KbTheme(
+            "mist", "ضباب",
+            c("#DCE2E9"), c("#DCE2E9"), c("#C7CDD5"), c("#DCE2E9"),
+            c("#FBFCFE"), c("#E8ECF2"), c("#C3CBD5"),
+            c("#2F7DF6"), c("#FFFFFF"),
+            c("#141C25"), c("#7A8694"), c("#141C25"), c("#FFFFFF"), c("#252E38"),
+            lightKeys = true, twin = "mistNight", edge = c("#E2E7ED")
+        ),
+        KbTheme(
+            "mistNight", "ضباب ليلي",
+            c("#10151B"), c("#10151B"), c("#2A333D"), c("#10151B"),
+            c("#212932"), c("#2A333D"), c("#192027"),
+            c("#2F7DF6"), c("#FFFFFF"),
+            c("#E9EFF6"), c("#7E8A98"), c("#E9EFF6"), c("#10151B"), c("#090D11"),
+            dark = true, twin = "mist", edge = c("#2B343E")
+        ),
+
+        // Cream and brass, keys carved into the surface rather than sitting on it.
+        KbTheme(
+            "sand", "رمل",
+            c("#E7E0D4"), c("#E7E0D4"), c("#D2C9B9"), c("#E7E0D4"),
+            c("#FFFDF7"), c("#F2EDE2"), c("#D3C9B7"),
+            c("#B8853A"), c("#FFFFFF"),
+            c("#282015"), c("#8E8470"), c("#282015"), c("#FFFFFF"), c("#332B1E"),
+            lightKeys = true, twin = "sandNight",
+            carve = c("#1A000000"), carveLight = c("#F0FFFFFF")
+        ),
+        KbTheme(
+            "sandNight", "رمل ليلي",
+            c("#1C1813"), c("#1C1813"), c("#342C21"), c("#1C1813"),
+            c("#2C261C"), c("#362F24"), c("#221D15"),
+            c("#C08A3E"), c("#FFFFFF"),
+            c("#F3EADA"), c("#948872"), c("#F3EADA"), c("#1C1813"), c("#110E0A"),
+            dark = true, twin = "sand",
+            carve = c("#38000000"), carveLight = c("#1AFFFFFF")
+        ),
+
+        // Neutral with just enough green that it reads as fresh, not as coloured.
+        KbTheme(
+            "mint", "نعناع",
+            c("#DEE7E2"), c("#DEE7E2"), c("#C9D3CD"), c("#DEE7E2"),
+            c("#FCFEFD"), c("#E9F0EC"), c("#C5D0CA"),
+            c("#0E9E6A"), c("#FFFFFF"),
+            c("#101B16"), c("#798780"), c("#101B16"), c("#FFFFFF"), c("#1F2A24"),
+            lightKeys = true, twin = "mintNight", lift = c("#2B28503F")
+        ),
+        KbTheme(
+            "mintNight", "نعناع ليلي",
+            c("#0F1613"), c("#0F1613"), c("#27332C"), c("#0F1613"),
+            c("#1E2923"), c("#27332C"), c("#17201B"),
+            c("#11A06B"), c("#FFFFFF"),
+            c("#E6F3EC"), c("#7C8D84"), c("#E6F3EC"), c("#0F1613"), c("#080D0A"),
+            dark = true, twin = "mint", lift = c("#59000000")
+        ),
+
+        // No colour anywhere, including the enter key. The highest contrast here.
+        KbTheme(
+            "graphite", "فحم فاتح",
+            c("#CFD1D6"), c("#CFD1D6"), c("#BBBEC4"), c("#CFD1D6"),
+            c("#FFFFFF"), c("#E7E8EC"), c("#B4B7BE"),
+            c("#1C1C1F"), c("#FFFFFF"),
+            c("#000000"), c("#6E7177"), c("#000000"), c("#FFFFFF"), c("#26262A"),
+            lightKeys = true, twin = "graphiteNight", lift = c("#382D3037")
+        ),
+        KbTheme(
+            "graphiteNight", "فحم ليلي",
+            c("#0C0C0E"), c("#0C0C0E"), c("#2A2A2F"), c("#0C0C0E"),
+            c("#1F1F23"), c("#2A2A2F"), c("#161619"),
+            c("#EDEDEF"), c("#0C0C0E"),
+            c("#FFFFFF"), c("#80838A"), c("#FFFFFF"), c("#0C0C0E"), c("#070708"),
+            dark = true, twin = "graphite", lift = c("#66000000")
         )
     )
 
