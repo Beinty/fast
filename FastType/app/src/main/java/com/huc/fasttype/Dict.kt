@@ -469,6 +469,22 @@ object Dict {
     // never recovered. Measured against five thousand slips, with the mix of
     // mistakes a thumb actually makes, these are where the numbers settled.
     private const val W_NEAR = 0.85f
+
+    /**
+     * How much the position of a neighbour in its list counts.
+     *
+     * The keyboard hands the neighbours ordered by how close the finger actually
+     * came to each one, and that order was being thrown away: the key the finger
+     * was almost touching and the key three along both scored a flat W_NEAR. The
+     * ramp spends that information — nearest cheapest, furthest dearest.
+     *
+     * Centred so the mean across a full list of six is about 1, which leaves
+     * W_NEAR itself worth what it was measured to be worth against W_DROP and
+     * the rest. Those constants were measured; this shape was reasoned, and the
+     * comment above says plainly what that is worth, so it is deliberately a
+     * gentle ramp rather than a steep one.
+     */
+    private fun nearRamp(index: Int): Float = 0.72f + 0.10f * index.coerceIn(0, 5)
     private const val W_FAR = 4.6f
     private const val W_SWAP = 0.85f
     private const val W_DROP = 3.2f
@@ -617,9 +633,10 @@ object Dict {
             for (c in letters) {
                 if (c == base[i]) continue
                 buf[i] = c
+                val at = near.indexOf(c)
                 offer(
                     n, when {
-                        near.indexOf(c) >= 0 -> W_NEAR
+                        at >= 0 -> W_NEAR * nearRamp(at)
                         like.indexOf(c) >= 0 -> W_SOUND
                         else -> W_FAR
                     }

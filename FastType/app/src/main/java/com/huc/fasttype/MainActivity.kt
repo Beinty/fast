@@ -1027,6 +1027,10 @@ class MainActivity : Activity() {
             Store.kbPressFx) {
             Store.setKbFlag(this, "pressfx", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("رفع الحرف فوق الإصبع", "تشوف شنو ضغطت قبل ما ترفع إصبعك",
+            Store.kbPeek) {
+            Store.setKbFlag(this, "peek", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
             Store.setKbFlag(this, "num", it); syncPreview()
         }, lp(true, bottom = dp(8)))

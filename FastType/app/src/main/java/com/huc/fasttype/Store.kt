@@ -78,6 +78,7 @@ object Store {
     private const val K_TR_DST = "kb_tr_dst"
     private const val K_KB_PICS = "kb_pics"
     private const val K_KB_FINGERY = "kb_finger_y"
+    private const val K_KB_PEEK = "kb_peek"
 
     // automatic replies
     private const val K_AR_ON = "ar_on"
@@ -444,6 +445,10 @@ object Store {
     @Volatile var kbFingerY: Int = 12
         private set
 
+    /** Lift a copy of the letter above the finger while a key is held. */
+    @Volatile var kbPeek: Boolean = true
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -512,6 +517,7 @@ object Store {
         kbTrDst = p.getString(K_TR_DST, "en") ?: "en"
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
         kbFingerY = p.getInt(K_KB_FINGERY, 12).coerceIn(0, 30)
+        kbPeek = p.getBoolean(K_KB_PEEK, true)
 
         arOn = p.getBoolean(K_AR_ON, false)
         arWhats = p.getBoolean(K_AR_WA, true)
@@ -767,6 +773,7 @@ object Store {
             "alts" -> { kbAlts = v; e.putBoolean(K_KB_ALTS, v) }
             "dots" -> { kbDoubleSpace = v; e.putBoolean(K_KB_DOTS, v) }
             "pics" -> { kbPics = v; e.putBoolean(K_KB_PICS, v) }
+            "peek" -> { kbPeek = v; e.putBoolean(K_KB_PEEK, v) }
         }
         e.apply()
     }

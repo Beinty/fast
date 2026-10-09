@@ -161,6 +161,9 @@ class KeyboardView(context: Context) : View(context) {
      * therefore collects taps meant for the row above it. Zero turns it off.
      */
     private var fingerY = 12
+
+    /** Whether a held letter key lifts a copy of itself above the finger. */
+    private var peekOn = true
     private var blankOnHold = true
     private var clearBottom = false
     private var pressedZone = -1
@@ -470,6 +473,7 @@ class KeyboardView(context: Context) : View(context) {
         letterScale = Store.kbLetter / 100f
         pressFx = Store.kbPressFx
         fingerY = Store.kbFingerY
+        peekOn = Store.kbPeek
         blankOnHold = Store.kbBlankHold
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
@@ -675,6 +679,7 @@ class KeyboardView(context: Context) : View(context) {
 
         if (outerH > 0f) drawOuterRow(canvas, w, h)
 
+        drawPeek(canvas)
         drawAlts(canvas)
     }
 
@@ -1959,6 +1964,49 @@ class KeyboardView(context: Context) : View(context) {
         return out
     }
 
+    /**
+     * The letter lifted above the finger while a key is held, the way the iPhone
+     * does it.
+     *
+     * The finger covers the key it is pressing, so without this there is no way
+     * to see a slip until the letter is already in the text. Drawn only for
+     * letter keys, and only while nothing else owns the screen.
+     *
+     * The top row has nothing above it to draw into, so there the bubble sits
+     * over the key itself rather than being clipped away.
+     */
+    private fun drawPeek(canvas: Canvas) {
+        if (!pressFx || !peekOn) return
+        if (altList.isNotEmpty() || blank || transOn) return
+        val k = pressed ?: return
+        if (k.code != Code.CHAR || k.out.isEmpty()) return
+
+        val w = k.w * 1.32f
+        val h = k.h * 1.16f
+        val gap = dp(5f)
+        var left = k.x + k.w / 2f - w / 2f
+        left = left.coerceIn(dp(2f), width - w - dp(2f))
+        var top = k.y - gap - h
+        if (top < dp(2f)) top = k.y + (k.h - h) / 2f
+
+        val r = dp(11f)
+        rf.set(left - dp(1f), top, left + w + dp(1f), top + h + dp(2.5f))
+        bgPaint.color = theme.keyDark
+        canvas.drawRoundRect(rf, r, r, bgPaint)
+        rf.set(left, top, left + w, top + h)
+        bgPaint.color = theme.key
+        canvas.drawRoundRect(rf, r, r, bgPaint)
+
+        txtPaint.typeface = if (k.arabic) arFont else enFont
+        txtPaint.textSize = keyH * 0.62f
+        txtPaint.color = theme.text
+        val fm = txtPaint.fontMetrics
+        canvas.drawText(
+            k.out, left + w / 2f,
+            top + h / 2f - (fm.ascent + fm.descent) / 2f, txtPaint
+        )
+    }
+
     private fun drawAlts(canvas: Canvas) {
         if (altList.isEmpty()) return
         val padding = dp(4f)
@@ -2020,9 +2068,13 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun invalidateKey(k: Key?) {
         if (k == null) { invalidate(); return }
+        // The preview bubble is drawn above the key and wider than it, so the
+        // repainted area has to cover where it lands or it leaves a trail.
+        val padX = if (peekOn) k.w * 0.22f + 4f else 2f
+        val padTop = if (peekOn) k.h * 1.35f else 2f
         invalidate(
-            (k.x - 2f).toInt(), (k.y - 2f).toInt(),
-            (k.x + k.w + 2f).toInt(), (k.y + k.h + 2f).toInt()
+            (k.x - padX).toInt(), (k.y - padTop).toInt(),
+            (k.x + k.w + padX).toInt(), (k.y + k.h + 2f).toInt()
         )
     }
 
