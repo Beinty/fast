@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -35,8 +37,8 @@ android {
         //  إذا انكتب المفتاح بالكود وانرفع، OpenAI يلغيه تلقائياً.
         // ===================================================================
         val localKey = rootProject.file("local.properties").let { f ->
-            if (!f.exists()) null else java.util.Properties().apply {
-                f.inputStream().use { load(it) }
+            if (!f.exists()) null else Properties().apply {
+                f.inputStream().use { p -> load(p) }
             }.getProperty("OPENAI_KEY")
         }
         val openAiKey = localKey
