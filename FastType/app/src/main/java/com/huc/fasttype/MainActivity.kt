@@ -1109,6 +1109,7 @@ class MainActivity : Activity() {
             override fun onTransClose() {}
             override fun onTransSwap() {}
             override fun onTransLang(dst: Boolean) {}
+            override fun onTransGo() {}
             override fun onLangPick(code: String) {}
             override fun onPicPick(index: Int) {}
             override fun onReplaceChar(s: String) {}
