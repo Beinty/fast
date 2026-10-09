@@ -164,6 +164,12 @@ class KeyboardView(context: Context) : View(context) {
 
     /** Whether a held letter key lifts a copy of itself above the finger. */
     private var peekOn = true
+
+    /** How far the whole keyboard is veiled, 0-60. */
+    private var shadePct = 0
+
+    /** How much amber is laid over it, 0-40. */
+    private var warmPct = 0
     private var blankOnHold = true
     private var clearBottom = false
     private var pressedZone = -1
@@ -474,6 +480,8 @@ class KeyboardView(context: Context) : View(context) {
         pressFx = Store.kbPressFx
         fingerY = Store.kbFingerY
         peekOn = Store.kbPeek
+        shadePct = Store.kbShade
+        warmPct = Store.kbWarm
         blankOnHold = Store.kbBlankHold
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
@@ -681,6 +689,42 @@ class KeyboardView(context: Context) : View(context) {
 
         drawPeek(canvas)
         drawAlts(canvas)
+        drawShade(canvas)
+    }
+
+    /**
+     * Takes the glare off, over whatever theme is on.
+     *
+     * A keyboard of white keys is not a colour on the screen, it is a lamp: it
+     * is the brightest thing in the room, the nearest thing to the eye, and it
+     * is there for as long as the typing lasts. No choice of white fixes that,
+     * because the problem is how much light leaves the panel, not which white it
+     * is. So the last thing drawn is a veil over everything — keys, letters,
+     * strip and bubbles alike.
+     *
+     * Drawn after the alternates and the preview deliberately: something left
+     * undimmed on a dimmed keyboard is a brighter lamp than before.
+     *
+     * The warm pass is separate because it is a different complaint. Dimming
+     * lowers the amount of light; the amber lowers the blue in it, which is what
+     * makes a screen hard to look at late at night rather than merely bright.
+     */
+    private fun drawShade(canvas: Canvas) {
+        if (shadePct <= 0 && warmPct <= 0) return
+        val w = width.toFloat()
+        val h = height.toFloat()
+        bgPaint.style = Paint.Style.FILL
+        if (shadePct > 0) {
+            // capped well below opaque: the keys have to stay readable
+            bgPaint.color = Color.argb((shadePct * 2.3f).toInt().coerceIn(0, 170), 0, 0, 0)
+            canvas.drawRect(0f, 0f, w, h, bgPaint)
+        }
+        if (warmPct > 0) {
+            bgPaint.color = Color.argb(
+                (warmPct * 1.9f).toInt().coerceIn(0, 110), 0xFF, 0x9A, 0x3C
+            )
+            canvas.drawRect(0f, 0f, w, h, bgPaint)
+        }
     }
 
     /**

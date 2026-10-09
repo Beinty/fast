@@ -13,8 +13,8 @@ android {
         applicationId = "com.huc.fasttype"
         minSdk = 26
         targetSdk = 35
-        versionCode = 75
-        versionName = "11.2"
+        versionCode = 76
+        versionName = "11.3"
 
         // the translation engine ships a native library per processor type, and four
         // copies of it is most of the download. This phone is arm64, so keep that one.

@@ -836,6 +836,13 @@ class MainActivity : Activity() {
         p.addView(sliderRow("تصحيح انحراف الإصبع", Store.kbFingerY, 0, 30) {
             Store.setKbInt(this, "fingery", it)
         }, lp(true, bottom = dp(8)))
+        // the glare is how much light the panel puts out, not which white it is
+        p.addView(sliderRow("تخفيف الإضاءة", Store.kbShade, 0, 60) {
+            Store.setKbInt(this, "shade", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دفء اللون", Store.kbWarm, 0, 40) {
+            Store.setKbInt(this, "warm", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(sliderRow("المسافة بين الأزرار", Store.kbGap, 2, 10) {
             Store.setKbInt(this, "gap", it); syncPreview()
         }, lp(true, bottom = dp(8)))

@@ -79,6 +79,8 @@ object Store {
     private const val K_KB_PICS = "kb_pics"
     private const val K_KB_FINGERY = "kb_finger_y"
     private const val K_KB_PEEK = "kb_peek"
+    private const val K_KB_SHADE = "kb_shade"
+    private const val K_KB_WARM = "kb_warm"
 
     // automatic replies
     private const val K_AR_ON = "ar_on"
@@ -449,6 +451,18 @@ object Store {
     @Volatile var kbPeek: Boolean = true
         private set
 
+    /**
+     * How far the whole keyboard is veiled, 0-60. Works over any theme, because
+     * the glare comes from how much light the panel puts out, not from which
+     * white it was painted.
+     */
+    @Volatile var kbShade: Int = 0
+        private set
+
+    /** Amber laid over the keyboard, 0-40. Takes the blue out rather than the light. */
+    @Volatile var kbWarm: Int = 0
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -518,6 +532,8 @@ object Store {
         kbClipExpire = p.getInt(K_KB_CLIPEXP, 60).coerceIn(0, 1440)
         kbFingerY = p.getInt(K_KB_FINGERY, 12).coerceIn(0, 30)
         kbPeek = p.getBoolean(K_KB_PEEK, true)
+        kbShade = p.getInt(K_KB_SHADE, 0).coerceIn(0, 60)
+        kbWarm = p.getInt(K_KB_WARM, 0).coerceIn(0, 40)
 
         arOn = p.getBoolean(K_AR_ON, false)
         arWhats = p.getBoolean(K_AR_WA, true)
@@ -745,6 +761,8 @@ object Store {
             "letter" -> { kbLetter = v.coerceIn(40, 58); prefs(ctx).edit().putInt(K_KB_LETTER, kbLetter).apply() }
             "clipexp" -> { kbClipExpire = v.coerceIn(0, 1440); prefs(ctx).edit().putInt(K_KB_CLIPEXP, kbClipExpire).apply() }
             "fingery" -> { kbFingerY = v.coerceIn(0, 30); prefs(ctx).edit().putInt(K_KB_FINGERY, kbFingerY).apply() }
+            "shade" -> { kbShade = v.coerceIn(0, 60); prefs(ctx).edit().putInt(K_KB_SHADE, kbShade).apply() }
+            "warm" -> { kbWarm = v.coerceIn(0, 40); prefs(ctx).edit().putInt(K_KB_WARM, kbWarm).apply() }
         }
     }
     fun setKbFlag(ctx: Context, which: String, v: Boolean) {
