@@ -896,7 +896,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val app = applicationContext
         Thread {
             val changed = Pics.refresh(app, px) || Pics.fromClipboard(app, px)
-            val list = Pics.recent(app, 8)
+            // Only the newest. A row of eight was a gallery, and a gallery is
+            // not what the key is for — he wants the thing he just took.
+            val list = Pics.recent(app, 1)
             ui.post {
                 picList = list
                 if (changed) kv?.stripChanged()

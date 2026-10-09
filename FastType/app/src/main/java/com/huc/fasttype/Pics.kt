@@ -189,7 +189,8 @@ object Pics {
                 FileOutputStream(out).use { o -> ins.copyTo(o, 64 * 1024) }
             } ?: return null
             if (out.length() == 0L) { out.delete(); return null }
-            ImgProvider.sweep(ctx, 6)
+            // one staged copy, matching the one picture offered
+            ImgProvider.sweep(ctx, 1)
             Pair(ImgProvider.uriFor(name), type)
         } catch (_: Throwable) {
             null
