@@ -49,6 +49,9 @@ class KeyboardView(context: Context) : View(context) {
 
         /** The action: the translation is settled, keep it and close. */
         fun onTransGo()
+
+        /** The line was tapped: bring in whatever was copied. */
+        fun onTransPaste()
         fun onLangPick(code: String)
         /** One of the recent pictures was chosen from the clipboard page. */
         fun onPicPick(index: Int)
@@ -199,6 +202,9 @@ class KeyboardView(context: Context) : View(context) {
         private set
     private val trSrcRect = RectF()
     private val trGoRect = RectF()
+
+    /** Set while the translate line is held down, for its pressed fill. */
+    private var transBoxDown = false
 
     /** Amber while the engine works, green once the line is settled. */
     private val WORK_DOT = Color.parseColor("#E8A33C")
@@ -1039,7 +1045,7 @@ class KeyboardView(context: Context) : View(context) {
         val top = zonePad + panelPadTop + suggH + vGap
         trBoxRect.set(left, top, right, top + transH)
 
-        bgPaint.color = theme.key
+        bgPaint.color = if (transBoxDown) theme.keyDown else theme.key
         canvas.drawRoundRect(trBoxRect, dp(10f), dp(10f), bgPaint)
 
         val working = transText.trim().isNotEmpty() && transOut.isEmpty()
@@ -1062,7 +1068,7 @@ class KeyboardView(context: Context) : View(context) {
         val shown = when {
             typed.isNotEmpty() -> transText
             transStatus.isNotEmpty() -> transStatus
-            else -> "اكتب هنا، وبعدين دوس ترجمة"
+            else -> "اكتب هنا — أو دوس للّصق"
         }
         txtPaint.color = if (typed.isNotEmpty()) theme.text else theme.dim
         val avail = (dotX - dotR - dp(8f)) - (left + dp(14f))
@@ -1721,6 +1727,14 @@ class KeyboardView(context: Context) : View(context) {
 
                 if (toolsOpen) setToolsOpen(false)
 
+                // the translate line is not a key and not the strip; without this
+                // a tap on it fell through to the nearest letter
+                if (transOn && trBoxRect.contains(x, y)) {
+                    transBoxDown = true
+                    invalidate()
+                    return true
+                }
+
                 val k = find(x, y) ?: return true
 
                 // any key press brings the labels back, and that press does nothing else
@@ -1895,6 +1909,13 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
+                if (transBoxDown) {
+                    transBoxDown = false
+                    invalidate()
+                    if (trBoxRect.contains(x, y)) listener?.onTransPaste()
+                    return true
+                }
+
                 if (altList.isNotEmpty()) {
                     val out = closeAlts(true)
                     pressed = null
@@ -1993,6 +2014,7 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                if (transBoxDown) { transBoxDown = false; invalidate() }
                 firedKey = null
                 cancelCycleHold()
                 altArmed = false

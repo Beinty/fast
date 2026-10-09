@@ -1154,6 +1154,26 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         refreshSugg()
     }
 
+    /**
+     * Brings a copied passage into the translate line.
+     *
+     * Typing a paragraph letter by letter to translate it is not a thing anyone
+     * does, so the line takes what is on the clipboard instead. It replaces
+     * rather than appends: he is bringing a passage over, not adding to one.
+     */
+    override fun onTransPaste() {
+        val text = Clip.latest()?.trim().orEmpty()
+        if (text.isEmpty()) {
+            showStrip("ماكو شي منسوخ")
+            return
+        }
+        feedback()
+        transBuf.setLength(0)
+        transBuf.append(text)
+        transLastSent = ""
+        afterTransEdit(true)
+    }
+
     override fun onTransLang(dst: Boolean) {
         feedback()
         kv?.openLangs(dst)
