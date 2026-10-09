@@ -511,14 +511,28 @@ class KeyboardView(context: Context) : View(context) {
      * Backspace repeat. It starts quickly, speeds up as it goes, and after about a
      * second and a half switches to whole words, so clearing a line never crawls.
      */
+    /**
+     * Backspace repeat, paced so that a slip costs one letter.
+     *
+     * The old curve was built for clearing a line fast: repeating after 210ms
+     * and reaching whole words in about a second and a half. The cost showed up
+     * in ordinary typing — a palm or a thumb resting on the key for a moment
+     * took out a sentence, and what was deleted is the one thing a keyboard
+     * cannot give back.
+     *
+     * So the hold has to be deliberate before anything repeats at all, the first
+     * few are slow enough to see, and words only come in once it is unmistakably
+     * a hold. Clearing a line still accelerates; it just no longer starts there.
+     */
     private val repeatRunnable = object : Runnable {
         override fun run() {
             if (!repeating) return
             repeatTicks++
             val delay = when {
-                repeatTicks > 44 -> { listener?.onDeleteWord(); 70L }
-                repeatTicks > 16 -> { listener?.onDelete(); 16L }
-                else -> { listener?.onDelete(); 28L }
+                repeatTicks > 60 -> { listener?.onDeleteWord(); 95L }
+                repeatTicks > 26 -> { listener?.onDelete(); 24L }
+                repeatTicks > 6 -> { listener?.onDelete(); 42L }
+                else -> { listener?.onDelete(); 85L }
             }
             handler.postDelayed(this, delay)
         }
@@ -1479,7 +1493,10 @@ class KeyboardView(context: Context) : View(context) {
         if (k.icon != Ico.NONE) {
             icoPaint.color = fg
             icoPaint.strokeWidth = dp(1.8f)
-            drawIcon(canvas, k.icon, rf.centerX(), rf.centerY(), keyH * 0.46f)
+            // the return arrow sits on the widest key in the row and reads large
+            // there at the size the rest of the icons want
+            val size = if (k.icon == Ico.ENTER) keyH * 0.40f else keyH * 0.46f
+            drawIcon(canvas, k.icon, rf.centerX(), rf.centerY(), size)
             return
         }
 
@@ -1843,7 +1860,8 @@ class KeyboardView(context: Context) : View(context) {
                     repeating = true
                     repeatTicks = 0
                     listener?.onRepeatState(true)
-                    handler.postDelayed(repeatRunnable, 210)
+                    // long enough that a brush past the key deletes one letter
+                    handler.postDelayed(repeatRunnable, 430)
                 }
                 return true
             }

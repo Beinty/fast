@@ -198,8 +198,11 @@ object KbLayout {
     const val W_MOD = 1.374f
     const val W_SYM = 1.29f
     const val W_EMOJI = 1.30f
-    const val W_GO = 2.85f
-    const val W_SPACE = 5.88f
+    // The action key was measured off iOS, where its label is a word. Here it is
+    // one arrow, so some of its width goes to the space bar, which carries the
+    // language name and is the key most often reached for.
+    const val W_GO = 2.42f
+    const val W_SPACE = 6.31f
     const val W_DOT = 1.30f
     const val W_ROW2_PAD = 0.62f
     const val GAP_MOD = 2.05f
