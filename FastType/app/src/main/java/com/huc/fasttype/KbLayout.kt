@@ -288,7 +288,9 @@ object KbLayout {
                 arabic = ar, smallText = true
             )
             else -> Key(
-                label = if (ar) "؟١٢٣" else "?123",
+                // "123", not "?123": the question mark on it is Android's habit,
+                // and the key goes to a page the question mark is only one item on.
+                label = if (ar) "١٢٣" else "123",
                 weight = w, style = Style.DARK, code = Code.CYCLE,
                 arabic = ar, smallText = true
             )
@@ -409,7 +411,7 @@ object KbLayout {
                 val row3 = ArrayList<Key>()
                 row3.add(
                     Key(
-                        if (arabic) "؟١٢٣" else "?123", "", W_MOD,
+                        if (arabic) "١٢٣" else "123", "", W_MOD,
                         Style.DARK, Code.TO_SYM, arabic = arabic, smallText = true
                     )
                 )
