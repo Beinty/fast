@@ -319,19 +319,77 @@ class KeyboardView(context: Context) : View(context) {
     fun setFixReplies(list: List<String>, error: String) {
         fixBusy = false
         fixReplies = list
+        fixReplyLines = list.map { measureFixLines(it, keyH * 0.29f, 3) }
         fixResult = ""
         fixError = error
         requestLayout()
         invalidate()
     }
 
+    /** Lines each reply row needs, same reason as the result box. */
+    private var fixReplyLines: List<Int> = emptyList()
+
+    private fun fixReplyRowH(i: Int): Float {
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.29f
+        val fm = txtPaint.fontMetrics
+        val lh = (fm.descent - fm.ascent) * 1.08f
+        return dp(8f) * 2 + lh * (fixReplyLines.getOrNull(i) ?: 2)
+    }
+
     fun setFixResult(text: String, error: String) {
         fixBusy = false
         fixResult = text
+        fixResultLines = measureFixLines(text)
         fixReplies = emptyList()
         fixError = error
         requestLayout()
         invalidate()
+    }
+
+    /**
+     * How many lines the result box stands at.
+     *
+     * The box used to be a fixed four and anything longer was cut with an
+     * ellipsis — so a rewrite that came back whole still *looked* half done,
+     * and the full text went in on استبدل anyway. It measures instead.
+     */
+    private var fixResultLines = 2
+
+    /** Up to here the panel grows with the answer; past it the phone runs out. */
+    private val FIX_MAX_LINES = 8
+
+    private fun measureFixLines(
+        text: String, size: Float = -1f, max: Int = FIX_MAX_LINES
+    ): Int {
+        if (width <= 0 || keyH <= 0f || text.isEmpty()) return 2
+        txtPaint.typeface = arFont
+        txtPaint.textSize = if (size > 0f) size else keyH * 0.30f
+        val avail = (width - (zonePad + sideMargin) * 2) - dp(12f) * 2
+        if (avail <= 0f) return 2
+        var n = 1
+        val line = StringBuilder()
+        for (wd in text.split(' ')) {
+            val probe = if (line.isEmpty()) wd else line.toString() + " " + wd
+            if (txtPaint.measureText(probe) <= avail) {
+                line.setLength(0); line.append(probe)
+            } else if (line.isEmpty()) {
+                line.append(wd)
+            } else {
+                n++
+                line.setLength(0); line.append(wd)
+            }
+        }
+        return n.coerceIn(1, max)
+    }
+
+    /** The height of the result box for the number of lines in it. */
+    private fun fixResultBoxH(): Float {
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.30f
+        val fm = txtPaint.fontMetrics
+        val lh = (fm.descent - fm.ascent) * 1.08f
+        return dp(10f) * 2 + lh * fixResultLines
     }
 
     private var transBoxDown = false
@@ -767,9 +825,9 @@ class KeyboardView(context: Context) : View(context) {
         h += keyH * 0.95f                         // what he wrote, over two lines
         if (fixBusy) h += keyH * 0.85f
         if (fixError.isNotEmpty()) h += keyH * 0.90f
-        if (fixResult.isNotEmpty()) h += keyH * 2.30f + keyH * 0.95f
+        if (fixResult.isNotEmpty()) h += fixResultBoxH() + dp(6f) + keyH * 0.95f
         // each reply is a row he taps, so they stand instead of a result box
-        if (fixReplies.isNotEmpty()) h += fixReplies.size * keyH * 1.25f
+        for (i in fixReplies.indices) h += fixReplyRowH(i) + dp(6f)
         return maxOf(h + vGap * 2, floor)
     }
 
@@ -1082,28 +1140,32 @@ class KeyboardView(context: Context) : View(context) {
         fixReplyRects.clear()
         if (fixReplies.isNotEmpty()) {
             txtPaint.textSize = keyH * 0.29f
-            for (r0 in fixReplies) {
-                val rowH = keyH * 1.25f - dp(6f)
+            for (i in fixReplies.indices) {
+                val rowH = fixReplyRowH(i)
                 rf.set(left, y, right, y + rowH)
                 fixReplyRects.add(RectF(rf))
                 bgPaint.color =
-                    if (fixPressed == -60 - (fixReplyRects.size - 1)) theme.keyDown
+                    if (fixPressed == -60 - i) theme.keyDown
                     else theme.key
                 canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
+                txtPaint.textSize = keyH * 0.29f
                 txtPaint.color = theme.text
-                wrapText(canvas, r0, left + pad, right - pad, y + dp(7f), 2)
-                y += keyH * 1.25f
+                wrapText(
+                    canvas, fixReplies[i], left + pad, right - pad, y + dp(8f),
+                    fixReplyLines.getOrNull(i) ?: 2
+                )
+                y += rowH + dp(6f)
             }
         }
 
         if (fixResult.isNotEmpty()) {
-            val boxH = keyH * 2.30f - dp(6f)
+            val boxH = fixResultBoxH()
             rf.set(left, y, right, y + boxH)
             bgPaint.color = theme.key
             canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
             txtPaint.textSize = keyH * 0.30f
             txtPaint.color = theme.text
-            wrapText(canvas, fixResult, left + pad, right - pad, y + dp(9f), 4)
+            wrapText(canvas, fixResult, left + pad, right - pad, y + dp(10f), fixResultLines)
             y += boxH + dp(6f)
 
             // ---- apply / cancel ----

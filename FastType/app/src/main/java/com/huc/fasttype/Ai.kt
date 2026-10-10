@@ -108,8 +108,11 @@ object Ai {
                 JSONObject()
                     .put("temperature", 0.6)
                     // headroom: these models spend tokens thinking before they
-                    // write, and a tight cap comes back as an empty answer
-                    .put("maxOutputTokens", 512)
+                    // write, so the cap is not the length of the answer — it is
+                    // the thinking plus the answer. At 512 a long message came
+                    // back cut off mid-sentence, which is worse than useless
+                    // when the next thing he does is send it.
+                    .put("maxOutputTokens", 2048)
             )
             if (search) {
                 body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
@@ -148,15 +151,20 @@ object Ai {
                 }
             }
             val text = sb.toString().trim()
+            val why = cand?.optString("finishReason") ?: ""
 
             if (text.isEmpty()) {
-                val why = cand?.optString("finishReason") ?: ""
                 val blocked = root.optJSONObject("promptFeedback")?.optString("blockReason") ?: ""
                 Result(null, when {
                     blocked.isNotEmpty() -> "الرسالة انحجبت — $blocked"
                     why.isNotEmpty() -> "ما طلع رد — $why"
                     else -> "رد فارغ"
                 })
+            } else if (why == "MAX_TOKENS") {
+                // The answer stops mid-sentence. Half a sentence looks like a
+                // finished one in the box, and he sends it — so it is a failure
+                // with a reason, not a result.
+                Result(null, "النص طويل — انقصه وجرب")
             } else {
                 Result(clean(text), null)
             }
