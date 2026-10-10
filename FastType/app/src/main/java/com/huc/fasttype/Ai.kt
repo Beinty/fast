@@ -24,20 +24,10 @@ import java.util.concurrent.Executors
 object Ai {
 
     /**
-     * The cheapest current Flash model, for work where the answer is a line and
-     * any sane model gives the same one.
+     * The cheapest current Flash model. Replies here are a sentence or two, so a
+     * larger model buys nothing but latency.
      */
     const val MODEL = "gemini-3.5-flash-lite"
-
-    /**
-     * For writing he is going to send as himself.
-     *
-     * Rewriting a message into correct Arabic is not the kind of task where the
-     * cheapest model gives the same answer as a better one: it is exactly where
-     * the difference shows — hamza, agreement, a sentence that holds together.
-     * He asked for it, so it is worth the second or so.
-     */
-    const val MODEL_GOOD = "gemini-3.5-flash"
 
     private const val HOST = "https://generativelanguage.googleapis.com/v1beta/models/"
 
@@ -69,13 +59,7 @@ object Ai {
      * a notification listener, and a throw there takes the listener down for every
      * app on the phone.
      */
-    fun ask(
-        system: String,
-        turns: List<Turn>,
-        search: Boolean,
-        model: String = MODEL,
-        done: (Result) -> Unit
-    ) {
+    fun ask(system: String, turns: List<Turn>, search: Boolean, done: (Result) -> Unit) {
         if (!configured()) {
             done(Result(null, "ماكو مفتاح — راجع الإعدادات"))
             return
@@ -85,13 +69,13 @@ object Ai {
             return
         }
         pool.execute {
-            val first = call(system, turns, search, model)
+            val first = call(system, turns, search)
             if (first.text != null || !worthRetry(first.error)) {
                 done(first)
                 return@execute
             }
             try { Thread.sleep(1200) } catch (_: Throwable) {}
-            done(call(system, turns, search, model))
+            done(call(system, turns, search))
         }
     }
 
@@ -101,9 +85,7 @@ object Ai {
         return e.contains("ما وصل") || e.contains("واقع")
     }
 
-    private fun call(
-        system: String, turns: List<Turn>, search: Boolean, model: String
-    ): Result {
+    private fun call(system: String, turns: List<Turn>, search: Boolean): Result {
         var conn: HttpURLConnection? = null
         return try {
             val contents = JSONArray()
@@ -133,7 +115,7 @@ object Ai {
                 body.put("tools", JSONArray().put(JSONObject().put("google_search", JSONObject())))
             }
 
-            conn = (URL(HOST + model + ":generateContent").openConnection()
+            conn = (URL(HOST + MODEL + ":generateContent").openConnection()
                 as HttpURLConnection).apply {
                 requestMethod = "POST"
                 connectTimeout = CONNECT_MS
