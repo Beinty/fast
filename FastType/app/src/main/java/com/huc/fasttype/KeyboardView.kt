@@ -263,6 +263,19 @@ class KeyboardView(context: Context) : View(context) {
     private var suggDragging = false
     private var clipOn = true
 
+    /**
+     * The iOS bottom row: three keys, and every key the same colour.
+     *
+     * On iOS shift, delete, 123 and return are the same white as the letters —
+     * nothing on the keyboard is tinted. That is most of what makes it read as
+     * iOS, and it cannot come from the theme table: every theme there has a
+     * second key colour and an accent, by design.
+     */
+    private var iosRow = false
+
+    /** Centre of the language key in the strip, or -1 when it is not there. */
+    private var globeStripC = -1f
+
     /** The long-press bubble: its options, where it sits, and which one is picked. */
     private var altKey: Key? = null
     private var altList: List<String> = emptyList()
@@ -619,6 +632,8 @@ class KeyboardView(context: Context) : View(context) {
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
         KbLayout.dotInRow = Store.kbDotKey
+        KbLayout.iosRow = Store.kbIosRow
+        iosRow = Store.kbIosRow
         requestLayout()
         invalidate()
     }
@@ -883,7 +898,15 @@ class KeyboardView(context: Context) : View(context) {
         val clipL = left + micEdge
         val micC = right - micEdge - micW / 2f
         val clipC = clipL + micW / 2f
-        val zoneLeft = clipL + micW + dp(2f)
+        // The head of the strip is a row of slots: the clipboard, then the
+        // language key when the bottom row has given it up. The suggestions
+        // start after whichever of them are there.
+        val globeInStrip = iosRow && outerH <= 0f
+        var slot = clipL
+        if (clipOn) slot += micW
+        globeStripC = if (globeInStrip) slot + micW / 2f else -1f
+        if (globeInStrip) slot += micW
+        val zoneLeft = slot + dp(2f)
         val zoneRight = right - micEdge - micW - dp(2f)
 
         // ---- the suggestions, clipped to the space between the two keys ----
@@ -952,6 +975,16 @@ class KeyboardView(context: Context) : View(context) {
                 icoPaint.strokeWidth = dp(1.7f)
                 drawIcon(canvas, Ico.CLIP, clipC, cy, suggH * 0.46f)
             }
+        }
+
+        if (globeStripC >= 0f) {
+            if (pressedZone == -15) {
+                bgPaint.color = theme.keyDown
+                canvas.drawCircle(globeStripC, cy, micW * 0.46f, bgPaint)
+            }
+            icoPaint.color = theme.outer
+            icoPaint.strokeWidth = dp(1.7f)
+            drawIcon(canvas, Ico.GLOBE, globeStripC, cy, suggH * 0.44f)
         }
 
         // ---- the icon bar, sliding in over the suggestions ----
@@ -1460,6 +1493,7 @@ class KeyboardView(context: Context) : View(context) {
         keyPaint.color = keyCol(when {
             k === pressed -> theme.keyDown
             isOn -> theme.onBg
+            iosRow -> theme.key
             k.style == Style.GO -> theme.go
             k.style == Style.DARK -> theme.keyDark
             else -> theme.key
@@ -1482,6 +1516,7 @@ class KeyboardView(context: Context) : View(context) {
             rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
             keyPaint.color = keyCol(when {
                 isOn -> theme.onBg
+                iosRow -> theme.key
                 k.style == Style.GO -> theme.go
                 k.style == Style.DARK -> theme.keyDark
                 else -> theme.key
@@ -1526,6 +1561,8 @@ class KeyboardView(context: Context) : View(context) {
 
         val fg = when {
             isOn -> theme.onText
+            // the return key is no longer tinted, so its glyph cannot be either
+            iosRow -> theme.text
             k.style == Style.GO -> theme.goIcon
             else -> theme.text
         }
@@ -2100,6 +2137,7 @@ class KeyboardView(context: Context) : View(context) {
                     when {
                         z == -2 -> setToolsOpen(!toolsOpen)
                         z == -3 -> listener?.onClipTap()
+                        z == -15 -> listener?.onLang()
                         z <= -4 && z >= -7 -> {
                             setToolsOpen(false)
                             listener?.onTool(-(z + 4))
@@ -2359,7 +2397,10 @@ class KeyboardView(context: Context) : View(context) {
             }
             return -1
         }
-        if (clipOn && x < left + micEdge + micW * 1.25f) return -3
+        if (clipOn && x < left + micEdge + micW * 1.1f) return -3
+        if (globeStripC >= 0f &&
+            x >= globeStripC - micW * 0.6f && x <= globeStripC + micW * 0.6f
+        ) return -15
         return suggAt(x, width.toFloat())
     }
 

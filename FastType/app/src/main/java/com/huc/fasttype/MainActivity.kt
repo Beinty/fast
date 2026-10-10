@@ -1043,6 +1043,11 @@ class MainActivity : Activity() {
             Store.kbArFont) {
             Store.setKbFlag(this, "arfont", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("صف سفلي مثل الآيفون",
+            "؟١٢٣ · مسافة · إدخال — زر اللغة يطلع للشريط العلوي وكل الأزرار بلون واحد",
+            Store.kbIosRow) {
+            Store.setKbFlag(this, "iosrow", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("كيبورد شفاف", "يبيّن التطبيق خلف الكيبورد — بدون ضبابية",
             Store.kbGlass) {
             Store.setKbFlag(this, "glass", it); syncPreview()
