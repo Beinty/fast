@@ -174,6 +174,39 @@ class KeyboardView(context: Context) : View(context) {
     /** Whether a held letter key lifts a copy of itself above the finger. */
     private var peekOn = true
 
+    /**
+     * Glass: how much of the app behind shows through.
+     *
+     * 0 is the solid keyboard. Above that the panel and the keys are painted with
+     * alpha, and — on Android 12 and up, when the system has blurs on — the
+     * window blurs what is behind it, which is what makes translucency read as
+     * glass rather than as a keyboard someone forgot to finish.
+     */
+    private var glassOn = false
+    private var glassPanel = 62
+    private var glassKey = 78
+
+    /**
+     * Whether the system is actually blurring behind the window right now.
+     *
+     * Without the blur, translucency is just a keyboard you can see the app
+     * through — harder to read, and it looks broken rather than deliberate. So
+     * when the blur is not there the glass is pulled most of the way back
+     * towards solid instead of being switched off outright, which would make
+     * the keyboard flicker between two looks as the system changes its mind.
+     */
+    private var blurReady = false
+
+    fun setBlurReady(on: Boolean) {
+        if (on == blurReady) return
+        blurReady = on
+        invalidate()
+    }
+
+    /** How much of the chosen translucency survives without a blur behind it. */
+    private fun glassMix(pct: Int): Int =
+        if (blurReady) pct else (pct + (100 - pct) * 72 / 100)
+
     /** How far the whole keyboard is veiled, 0-60. */
     private var shadePct = 0
 
@@ -534,6 +567,27 @@ class KeyboardView(context: Context) : View(context) {
 
     fun dp(v: Float) = v * resources.displayMetrics.density
 
+    /**
+     * The panel colour, with glass applied.
+     *
+     * The alpha multiplies whatever the theme already asked for rather than
+     * replacing it, so a theme that was itself translucent stays that way.
+     */
+    private fun panelCol(c: Int = theme.panel): Int =
+        if (!glassOn) c
+        else Color.argb(
+            (Color.alpha(c) * glassMix(glassPanel) / 100f).toInt().coerceIn(0, 255),
+            Color.red(c), Color.green(c), Color.blue(c)
+        )
+
+    /** The same for a key face. Keys stay more solid than the panel: they are hit. */
+    private fun keyCol(c: Int): Int =
+        if (!glassOn) c
+        else Color.argb(
+            (Color.alpha(c) * glassMix(glassKey) / 100f).toInt().coerceIn(0, 255),
+            Color.red(c), Color.green(c), Color.blue(c)
+        )
+
     /** Whether the phone itself is in dark mode right now. */
     private fun deviceIsDark(): Boolean =
         (resources.configuration.uiMode and
@@ -567,6 +621,9 @@ class KeyboardView(context: Context) : View(context) {
         pressFx = Store.kbPressFx
         fingerY = Store.kbFingerY
         peekOn = Store.kbPeek
+        glassOn = Store.kbGlass
+        glassPanel = Store.kbGlassPanel
+        glassKey = Store.kbGlassKey
         shadePct = Store.kbShade
         warmPct = Store.kbWarm
         blankOnHold = Store.kbBlankHold
@@ -727,7 +784,7 @@ class KeyboardView(context: Context) : View(context) {
         val pTop = zonePad
         val pBottom = h - bottomPad - zonePad
         rf.set(zonePad, pTop, w - zonePad, pBottom)
-        bgPaint.color = theme.panel
+        bgPaint.color = panelCol()
         canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
         if (panelRad > 0f) {
             // square off the bottom; only the top two corners are rounded
@@ -739,7 +796,7 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRoundRect(rf, panelRad, panelRad, edgePaint)
         }
         if (bottomPad > 0f && !clearBottom) {
-            bgPaint.color = theme.panel
+            bgPaint.color = panelCol()
             canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }
 
@@ -1411,13 +1468,13 @@ class KeyboardView(context: Context) : View(context) {
         rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
 
         val isOn = k.code == Code.SHIFT && shift > 0
-        keyPaint.color = when {
+        keyPaint.color = keyCol(when {
             k === pressed -> theme.keyDown
             isOn -> theme.onBg
             k.style == Style.GO -> theme.go
             k.style == Style.DARK -> theme.keyDark
             else -> theme.key
-        }
+        })
         val r = rad
 
         // A white key on a white panel. The shadow is laid down first, in three
@@ -1434,12 +1491,12 @@ class KeyboardView(context: Context) : View(context) {
                 canvas.drawRoundRect(rf, r, r, keyPaint)
             }
             rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
-            keyPaint.color = when {
+            keyPaint.color = keyCol(when {
                 isOn -> theme.onBg
                 k.style == Style.GO -> theme.go
                 k.style == Style.DARK -> theme.keyDark
                 else -> theme.key
-            }
+            })
         }
 
         canvas.drawRoundRect(rf, r, r, keyPaint)

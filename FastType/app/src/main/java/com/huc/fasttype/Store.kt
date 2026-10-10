@@ -82,6 +82,10 @@ object Store {
     private const val K_KB_SHADE = "kb_shade"
     private const val K_KB_WARM = "kb_warm"
     private const val K_KB_ARFONT = "kb_ar_font"
+    private const val K_KB_GLASS = "kb_glass"
+    private const val K_KB_GLASS_P = "kb_glass_panel"
+    private const val K_KB_GLASS_K = "kb_glass_key"
+    private const val K_KB_GLASS_B = "kb_glass_blur"
 
     // automatic replies
     private const val K_AR_ON = "ar_on"
@@ -473,6 +477,29 @@ object Store {
     @Volatile var kbArFont: Boolean = false
         private set
 
+    /**
+     * Let the app behind show through the keyboard, blurred.
+     *
+     * The blur is the system's, from Android 12 up, and the system can withdraw
+     * it at any moment; the view pulls the translucency back toward solid when
+     * that happens rather than leaving a see-through keyboard over a sharp
+     * picture.
+     */
+    @Volatile var kbGlass: Boolean = false
+        private set
+
+    /** How solid the panel stays, 20-100. Lower lets more through. */
+    @Volatile var kbGlassPanel: Int = 62
+        private set
+
+    /** The same for the key faces. Kept higher: they are what he aims at. */
+    @Volatile var kbGlassKey: Int = 78
+        private set
+
+    /** Blur radius in dp, 0-60. */
+    @Volatile var kbGlassBlur: Int = 22
+        private set
+
     fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREF, Context.MODE_PRIVATE)
 
@@ -545,6 +572,10 @@ object Store {
         kbShade = p.getInt(K_KB_SHADE, 0).coerceIn(0, 60)
         kbWarm = p.getInt(K_KB_WARM, 0).coerceIn(0, 40)
         kbArFont = p.getBoolean(K_KB_ARFONT, false)
+        kbGlass = p.getBoolean(K_KB_GLASS, false)
+        kbGlassPanel = p.getInt(K_KB_GLASS_P, 62).coerceIn(20, 100)
+        kbGlassKey = p.getInt(K_KB_GLASS_K, 78).coerceIn(20, 100)
+        kbGlassBlur = p.getInt(K_KB_GLASS_B, 22).coerceIn(0, 60)
 
         arOn = p.getBoolean(K_AR_ON, false)
         arWhats = p.getBoolean(K_AR_WA, true)
@@ -772,6 +803,9 @@ object Store {
             "letter" -> { kbLetter = v.coerceIn(40, 58); prefs(ctx).edit().putInt(K_KB_LETTER, kbLetter).apply() }
             "clipexp" -> { kbClipExpire = v.coerceIn(0, 1440); prefs(ctx).edit().putInt(K_KB_CLIPEXP, kbClipExpire).apply() }
             "fingery" -> { kbFingerY = v.coerceIn(0, 30); prefs(ctx).edit().putInt(K_KB_FINGERY, kbFingerY).apply() }
+            "glassp" -> { kbGlassPanel = v.coerceIn(20, 100); prefs(ctx).edit().putInt(K_KB_GLASS_P, kbGlassPanel).apply() }
+            "glassk" -> { kbGlassKey = v.coerceIn(20, 100); prefs(ctx).edit().putInt(K_KB_GLASS_K, kbGlassKey).apply() }
+            "glassb" -> { kbGlassBlur = v.coerceIn(0, 60); prefs(ctx).edit().putInt(K_KB_GLASS_B, kbGlassBlur).apply() }
             "shade" -> { kbShade = v.coerceIn(0, 60); prefs(ctx).edit().putInt(K_KB_SHADE, kbShade).apply() }
             "warm" -> { kbWarm = v.coerceIn(0, 40); prefs(ctx).edit().putInt(K_KB_WARM, kbWarm).apply() }
         }
@@ -804,6 +838,7 @@ object Store {
             "pics" -> { kbPics = v; e.putBoolean(K_KB_PICS, v) }
             "peek" -> { kbPeek = v; e.putBoolean(K_KB_PEEK, v) }
             "arfont" -> { kbArFont = v; e.putBoolean(K_KB_ARFONT, v) }
+            "glass" -> { kbGlass = v; e.putBoolean(K_KB_GLASS, v) }
         }
         e.apply()
     }

@@ -1043,6 +1043,20 @@ class MainActivity : Activity() {
             Store.kbArFont) {
             Store.setKbFlag(this, "arfont", it); syncPreview()
         }, lp(true, bottom = dp(8)))
+        // the blur is the system's and it can take it away; the view copes
+        p.addView(switchRow("كيبورد زجاجي", "يبيّن التطبيق خلف الكيبورد مع ضبابية — يحتاج أندرويد ١٢ فما فوق",
+            Store.kbGlass) {
+            Store.setKbFlag(this, "glass", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("صلابة اللوح", Store.kbGlassPanel, 20, 100) {
+            Store.setKbInt(this, "glassp", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("صلابة الأزرار", Store.kbGlassKey, 20, 100) {
+            Store.setKbInt(this, "glassk", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("قوة الضبابية", Store.kbGlassBlur, 0, 60) {
+            Store.setKbInt(this, "glassb", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
             Store.setKbFlag(this, "num", it); syncPreview()
         }, lp(true, bottom = dp(8)))
