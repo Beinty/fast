@@ -375,6 +375,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         voice?.stop()
         kv?.listening = false
         if (transOn) onTransClose()
+        // a panel left open would come back over a field it no longer belongs to
+        kv?.closeFix()
         UserDict.save()
     }
 
@@ -427,8 +429,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             it.page = page
             it.suggText = ""
             it.suggs = emptyList()
-            // before rebuild, so an address field opens with the key already there
-            KbLayout.dotNow = wantsDot()
             it.rebuild()
         }
         clearWindowBackground()
@@ -667,33 +667,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         return before[1] == ' ' && before[0].isLetterOrDigit()
     }
 
-    /**
-     * Is a full stop about to be wanted?
-     *
-     * Two cases, and only two. He has typed an @, so he is partway through an
-     * address and the dot is the next thing he needs. Or the field itself is
-     * for an address or a link, where a dot is wanted from the first letter.
-     *
-     * Everything else gets the space bar's full width instead, which is the
-     * point: the key earns its place rather than holding it.
-     */
-    private fun wantsDot(): Boolean {
-        if (page != Pages.LETTERS) return false
-        if (buffer.contains('@')) return true
-        val it = currentInputEditorInfo?.inputType ?: return false
-        if (it and android.text.InputType.TYPE_MASK_CLASS !=
-            android.text.InputType.TYPE_CLASS_TEXT
-        ) return false
-        return when (it and android.text.InputType.TYPE_MASK_VARIATION) {
-            android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
-            android.text.InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
-            android.text.InputType.TYPE_TEXT_VARIATION_URI -> true
-            else -> false
-        }
-    }
-
     private fun afterType() {
-        kv?.setDotNow(wantsDot())
         if (shift == 1 && !arabic && page == Pages.LETTERS) {
             shift = 0
             kv?.shift = 0
@@ -811,8 +785,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 eraseCount = 0
             }
         }
-        // the @ may have just gone, and with it the reason for the dot
-        kv?.setDotNow(wantsDot())
         feedback()
         scheduleSugg()
     }
@@ -1125,8 +1097,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             0 -> onPage(if (page == Pages.EMOJI) Pages.LETTERS else Pages.EMOJI)
             1 -> onMic()
             2 -> openTranslate()
-            3 -> onClipTap()
-            4 -> {
+            3 -> openFix()
+            4 -> onClipTap()
+            5 -> {
                 try {
                     val i = Intent(this, MainActivity::class.java)
                     i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1135,6 +1108,160 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 }
             }
         }
+    }
+
+    // ---------------- rewrite ----------------
+
+    /** What the rewrite is working on, so applying it replaces exactly that. */
+    private var fixText = ""
+
+    /** True when the selection was used; otherwise the whole field is replaced. */
+    private var fixWasSelection = false
+
+    private val FIX_AR = listOf("تصحيح", "فصحى", "رسمي", "تبسيط")
+    private val FIX_EN = listOf("Fix", "Formal", "Casual", "Shorter")
+
+    /**
+     * Opens the rewrite panel on whatever he has selected, or on the whole field.
+     *
+     * The selection comes first because it is the explicit instruction; without
+     * one the field is the obvious subject. Either way the panel shows what it
+     * has taken before anything is sent.
+     */
+    private fun openFix() {
+        val ic = currentInputConnection ?: return
+        var text = ""
+        fixWasSelection = false
+        try {
+            val sel = ic.getSelectedText(0)?.toString() ?: ""
+            if (sel.isNotBlank()) { text = sel; fixWasSelection = true }
+            else {
+                val before = ic.getTextBeforeCursor(2000, 0)?.toString() ?: ""
+                val after = ic.getTextAfterCursor(2000, 0)?.toString() ?: ""
+                text = before + after
+            }
+        } catch (_: Throwable) {
+        }
+        text = text.trim()
+        if (text.length < 3) {
+            showStrip("اكتب شي أول")
+            return
+        }
+        fixText = text
+        kv?.openFix(text, if (looksArabic(text)) FIX_AR else FIX_EN)
+    }
+
+    private fun looksArabic(t: String): Boolean {
+        var ar = 0
+        var la = 0
+        for (c in t) {
+            if (c in '\u0600'..'\u06FF') ar++
+            else if (c in 'a'..'z' || c in 'A'..'Z') la++
+        }
+        return ar >= la
+    }
+
+    override fun onFixPick(index: Int) {
+        feedback()
+        val arabic = looksArabic(fixText)
+        val opts = if (arabic) FIX_AR else FIX_EN
+        if (index !in opts.indices) return
+        kv?.setFixBusy(index)
+        val system = fixPrompt(index, arabic)
+        Ai.ask(system, listOf(Ai.Turn(false, fixText)), false) { r ->
+            ui.post {
+                if (kv?.fixOn != true) return@post
+                val out = r.text?.let { cleanFix(it) }
+                if (out.isNullOrBlank()) kv?.setFixResult("", r.error ?: "ما طلع رد")
+                else kv?.setFixResult(out, "")
+            }
+        }
+    }
+
+    /**
+     * What the model is told.
+     *
+     * Every one of these ends the same way: give back the text and nothing else.
+     * A model asked to improve writing likes to explain what it improved, and
+     * that explanation would go straight into his message.
+     */
+    private fun fixPrompt(index: Int, arabic: Boolean): String {
+        val tail = if (arabic)
+            "\n\nرجّع النص المعدّل فقط. بدون شرح وبدون مقدمة وبدون علامات اقتباس. " +
+                "لا تستعمل الفاصلة المنقوطة (؛) نهائياً."
+        else
+            "\n\nReturn only the rewritten text. No explanation, no preface, no quotes. " +
+                "Never use a semicolon."
+        val body = if (arabic) when (index) {
+            0 -> "صحّح الإملاء والهمزات والتاء المربوطة وعلامات الترقيم بهذا النص. " +
+                "خلّي اللهجة والأسلوب مثل ما هي بالضبط — لا تحوّلها لفصحى ولا تغيّر الكلمات " +
+                "إلا الغلط منها."
+            1 -> "أعد كتابة النص بعربية فصحى سليمة وواضحة. حافظ على المعنى كامل " +
+                "ولا تضيف معلومة مو موجودة."
+            2 -> "أعد كتابة النص بصيغة مخاطبة رسمية مناسبة لجهة حكومية أو إدارية. " +
+                "استعمل الصيغ المتعارف عليها وحافظ على المعنى كامل ولا تخترع تفاصيل."
+            else -> "اختصر النص وخلّيه أوضح وأبسط، بنفس لغته وأسلوبه، " +
+                "بدون ما تحذف أي معلومة مهمة."
+        } else when (index) {
+            0 -> "Fix the spelling, grammar and punctuation in this text. Keep the " +
+                "wording and tone exactly as they are; change only what is wrong."
+            1 -> "Rewrite this text in clear formal English. Keep the full meaning " +
+                "and add nothing that is not there."
+            2 -> "Rewrite this text in a relaxed, friendly tone. Keep the full meaning."
+            else -> "Make this text shorter and clearer in the same tone, without " +
+                "dropping anything important."
+        }
+        return body + tail
+    }
+
+    /**
+     * Strips what a model adds around an answer.
+     *
+     * The semicolon goes because he reads it as a comma dropped into the middle
+     * of a sentence; the prompt asks for none and this makes sure.
+     */
+    private fun cleanFix(s: String): String {
+        var t = s.trim()
+        if (t.length > 1 && t.first() == '"' && t.last() == '"') t = t.substring(1, t.length - 1)
+        if (t.length > 1 && t.first() == '«' && t.last() == '»') t = t.substring(1, t.length - 1)
+        t = t.replace("؛ ", " ").replace("؛", " ")
+        t = t.replace("; ", " ").replace(";", " ")
+        t = t.replace(Regex("[ \\t]{2,}"), " ")
+        return t.trim()
+    }
+
+    override fun onFixApply() {
+        val out = kv?.fixResult ?: ""
+        if (out.isBlank()) return
+        feedback()
+        val ic = currentInputConnection
+        kv?.closeFix()
+        if (ic == null) return
+        try {
+            ic.beginBatchEdit()
+            if (fixWasSelection) {
+                ic.commitText(out, 1)
+            } else {
+                // clear the field by its real length, read back rather than assumed
+                val before = ic.getTextBeforeCursor(4000, 0)?.toString() ?: ""
+                val after = ic.getTextAfterCursor(4000, 0)?.toString() ?: ""
+                if (after.isNotEmpty()) ic.deleteSurroundingText(0, after.length)
+                if (before.isNotEmpty()) ic.deleteSurroundingText(before.length, 0)
+                ic.commitText(out, 1)
+            }
+            ic.endBatchEdit()
+        } catch (_: Throwable) {
+        }
+        resetWord()
+        lastWord = ""
+        prevWord = ""
+        refreshSugg()
+    }
+
+    override fun onFixClose() {
+        feedback()
+        kv?.closeFix()
+        refreshSugg()
     }
 
     private fun openTranslate() {

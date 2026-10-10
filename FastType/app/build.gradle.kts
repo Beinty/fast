@@ -13,7 +13,7 @@ android {
         applicationId = "com.huc.fasttype"
         minSdk = 26
         targetSdk = 35
-        versionCode = 89
+        versionCode = 88
         versionName = "12.6"
 
         // the translation engine ships a native library per processor type, and four

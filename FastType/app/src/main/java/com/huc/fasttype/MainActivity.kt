@@ -1043,11 +1043,6 @@ class MainActivity : Activity() {
             Store.kbArFont) {
             Store.setKbFlag(this, "arfont", it); syncPreview()
         }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("صف سفلي مثل الآيفون",
-            "؟١٢٣ · مسافة · إدخال — زر اللغة يطلع للشريط العلوي وكل الأزرار بلون واحد",
-            Store.kbIosRow) {
-            Store.setKbFlag(this, "iosrow", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
         p.addView(switchRow("كيبورد شفاف", "يبيّن التطبيق خلف الكيبورد — بدون ضبابية",
             Store.kbGlass) {
             Store.setKbFlag(this, "glass", it); syncPreview()
@@ -1131,6 +1126,9 @@ class MainActivity : Activity() {
             override fun onTransLang(dst: Boolean) {}
             override fun onTransGo() {}
             override fun onTransPaste() {}
+            override fun onFixPick(index: Int) {}
+            override fun onFixApply() {}
+            override fun onFixClose() {}
             override fun onTransClear() {}
             override fun onLangPick(code: String) {}
             override fun onPicPick(index: Int) {}

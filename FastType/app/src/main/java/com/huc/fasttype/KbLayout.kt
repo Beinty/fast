@@ -46,6 +46,9 @@ object Ico {
     const val BACK = 12
     const val SWAP = 13
     const val COG = 14
+
+    /** The text-rewrite tool: a four-pointed star, drawn like the rest. */
+    const val WAND = 15
 }
 
 class Key(
@@ -203,17 +206,6 @@ object KbLayout {
     // language name and is the key most often reached for.
     const val W_GO = 2.42f
     const val W_SPACE = 6.31f
-
-    // Measured off an iOS screenshot of the three-key bottom row: against a
-    // letter key of 87px, the 123 key is 229px, the space bar 545px and the
-    // return 240px. The row carries nothing else, so these are the whole row.
-    const val W_IOS_SYM = 2.60f
-    const val W_IOS_SPACE = 6.30f
-    const val W_IOS_GO = 2.70f
-
-    /** iOS has three keys down there: 123, space, return. Nothing else. */
-    @Volatile
-    var iosRow = false
     const val W_DOT = 1.30f
     const val W_ROW2_PAD = 0.62f
     const val GAP_MOD = 2.05f
@@ -226,34 +218,17 @@ object KbLayout {
     @Volatile
     var dotInRow = true
 
-    /**
-     * A full stop the moment one is about to be needed.
-     *
-     * Set while he is writing something a dot belongs in — an address, a
-     * domain — and cleared when he is not. It overrides both the setting and
-     * the iOS row, because the whole point is that it appears where it
-     * otherwise would not.
-     */
-    @Volatile
-    var dotNow = false
-
     private fun del() = Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
-    private fun enter() =
-        Key(weight = if (iosRow) W_IOS_GO else W_GO,
-            style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
+    private fun enter() = Key(weight = W_GO, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
     private fun globe() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.LANG, icon = Ico.GLOBE)
     private fun pad() = Key(weight = W_ROW2_PAD, spacer = true)
 
     private fun dot(ar: Boolean) = Key(label = ".", out = ".", weight = W_DOT, arabic = ar)
 
-    /** Whether the row has a full stop in it at this moment. */
-    private fun dotShown(): Boolean = dotNow || (dotInRow && !iosRow)
-
     private fun spaceWeight(): Float {
-        // the space bar is what gives the dot its room and takes it back
-        var w = if (iosRow) W_IOS_SPACE else W_SPACE
-        if (!iosRow && !globeInRow) w += W_EMOJI
-        if (dotShown()) w -= W_DOT
+        var w = W_SPACE
+        if (!globeInRow) w += W_EMOJI
+        if (dotInRow) w -= W_DOT
         return w
     }
 
@@ -283,10 +258,7 @@ object KbLayout {
      * remember the order — and it keeps the same cell on every page, bottom left of
      * the last row, because a key that moves is a key the thumb has to look for.
      */
-    /** The 123 key is wider on the iOS row, where it is one of only three. */
-    private fun symWeight(): Float = if (iosRow) W_IOS_SYM else W_SYM
-
-    private fun cycle(ar: Boolean, page: Int, w: Float = symWeight()): Key {
+    private fun cycle(ar: Boolean, page: Int, w: Float = W_SYM): Key {
         val to = nextPage(page)
         return when (to) {
             Pages.NPAD -> Key(
@@ -318,11 +290,10 @@ object KbLayout {
      */
     private fun lastRow(ar: Boolean, page: Int): MutableList<Key> {
         val out = mutableListOf(cycle(ar, page))
-        // On the iOS row the language key lives in the strip above and there is
-        // no full stop at all — three keys, and the space bar takes the room.
-        if (globeInRow && !iosRow) out.add(globe())
+        if (globeInRow) out.add(globe())
         out.add(space(ar))
-        if (dotShown()) out.add(dot(ar))
+        // the space bar then sits between two keys of the same width
+        if (dotInRow) out.add(dot(ar))
         out.add(enter())
         return out
     }

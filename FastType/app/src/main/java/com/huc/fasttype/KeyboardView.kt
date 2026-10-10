@@ -53,6 +53,15 @@ class KeyboardView(context: Context) : View(context) {
         /** The line was tapped: bring in whatever was copied. */
         fun onTransPaste()
 
+        /** One of the rewrite choices, by index into [KeyboardView.fixOpts]. */
+        fun onFixPick(index: Int)
+
+        /** Put the finished rewrite into the field. */
+        fun onFixApply()
+
+        /** Close the rewrite panel and change nothing. */
+        fun onFixClose()
+
         /** Empty the line in one go. */
         fun onTransClear()
         fun onLangPick(code: String)
@@ -230,6 +239,78 @@ class KeyboardView(context: Context) : View(context) {
     private val trClearRect = RectF()
 
     /** Set while the translate line is held down, for its pressed fill. */
+    // ---- the rewrite panel ----
+
+    var fixOn = false
+        private set
+
+    /** The choices on offer, which depend on the language of the text. */
+    var fixOpts: List<String> = emptyList()
+        private set
+
+    /** -1 nothing chosen, otherwise the one being worked on or finished. */
+    var fixChosen = -1
+        private set
+
+    var fixBusy = false
+        private set
+
+    /** The rewrite, once it is back. Empty until then. */
+    var fixResult = ""
+        private set
+
+    /** What he wrote, kept so the panel can show it above the result. */
+    var fixSource = ""
+        private set
+
+    var fixError = ""
+        private set
+
+    private val fixRects = ArrayList<RectF>(4)
+    private val fixApplyRect = RectF()
+    private val fixCancelRect = RectF()
+    private val fixCloseRect = RectF()
+    private var fixPressed = -99
+
+    fun openFix(source: String, opts: List<String>) {
+        fixOn = true
+        fixSource = source
+        fixOpts = opts
+        fixChosen = -1
+        fixBusy = false
+        fixResult = ""
+        fixError = ""
+        requestLayout()
+        invalidate()
+    }
+
+    fun closeFix() {
+        if (!fixOn) return
+        fixOn = false
+        fixResult = ""
+        fixError = ""
+        fixChosen = -1
+        fixBusy = false
+        requestLayout()
+        invalidate()
+    }
+
+    fun setFixBusy(i: Int) {
+        fixChosen = i
+        fixBusy = true
+        fixResult = ""
+        fixError = ""
+        invalidate()
+    }
+
+    fun setFixResult(text: String, error: String) {
+        fixBusy = false
+        fixResult = text
+        fixError = error
+        requestLayout()
+        invalidate()
+    }
+
     private var transBoxDown = false
 
     /** Set while the clear button inside that line is held down. */
@@ -262,31 +343,6 @@ class KeyboardView(context: Context) : View(context) {
     private var suggScroll = 0f
     private var suggDragging = false
     private var clipOn = true
-
-    /**
-     * The iOS bottom row: three keys, and every key the same colour.
-     *
-     * On iOS shift, delete, 123 and return are the same white as the letters —
-     * nothing on the keyboard is tinted. That is most of what makes it read as
-     * iOS, and it cannot come from the theme table: every theme there has a
-     * second key colour and an accent, by design.
-     */
-    private var iosRow = false
-
-    /** Centre of the language key in the strip, or -1 when it is not there. */
-    private var globeStripC = -1f
-
-    /**
-     * Shows or hides the contextual full stop, rebuilding only on a change.
-     *
-     * Adding a key changes every width in the row, so this cannot run on each
-     * keystroke — it runs on the keystroke that flips it, and no other.
-     */
-    fun setDotNow(on: Boolean) {
-        if (on == KbLayout.dotNow) return
-        KbLayout.dotNow = on
-        rebuild()
-    }
 
     /** The long-press bubble: its options, where it sits, and which one is picked. */
     private var altKey: Key? = null
@@ -410,7 +466,7 @@ class KeyboardView(context: Context) : View(context) {
     private val REC = 0xFFD93025.toInt()
 
     /** Voice, translate, clipboard, settings — the order they sit in the bar. */
-    private val TOOL_ICONS = intArrayOf(Ico.SMILE, Ico.MIC, Ico.TRANS, Ico.CLIP, Ico.COG)
+    private val TOOL_ICONS = intArrayOf(Ico.SMILE, Ico.MIC, Ico.TRANS, Ico.WAND, Ico.CLIP, Ico.COG)
 
     private val toolsRunnable = object : Runnable {
         override fun run() {
@@ -644,8 +700,6 @@ class KeyboardView(context: Context) : View(context) {
         clearBottom = Store.kbClearBottom
         KbLayout.globeInRow = Store.kbGlobeRow
         KbLayout.dotInRow = Store.kbDotKey
-        KbLayout.iosRow = Store.kbIosRow
-        iosRow = Store.kbIosRow
         requestLayout()
         invalidate()
     }
@@ -674,6 +728,24 @@ class KeyboardView(context: Context) : View(context) {
 
     private fun rowCount(): Int = rows.size
 
+    /**
+     * How tall the rewrite panel is right now.
+     *
+     * It grows as the exchange does — the choices, then the answer, then the
+     * two buttons — rather than reserving room for an answer that has not come
+     * back yet and may not.
+     */
+    private fun fixHeight(): Float {
+        var h = keyH * 0.95f                      // the choices
+        h += keyH * 0.62f                         // what he wrote
+        if (fixBusy) h += keyH * 0.80f
+        if (fixResult.isNotEmpty() || fixError.isNotEmpty()) {
+            h += keyH * (if (fixError.isNotEmpty()) 0.85f else 1.75f)
+            if (fixResult.isNotEmpty()) h += keyH * 0.90f  // apply / cancel
+        }
+        return h + vGap * 2
+    }
+
     private fun contentHeight(): Float {
         // The clipboard page has no key rows of its own, so it borrows the height of
         // the letter keyboard — otherwise it collapses to nothing and the list has
@@ -681,6 +753,10 @@ class KeyboardView(context: Context) : View(context) {
         if (page == Pages.CLIP || page == Pages.LANGS) {
             return zonePad * 2 + panelPadTop + panelPadBottom +
                 suggH + vGap + keyH * 4 + vGap * 3 + outerH + bottomPad
+        }
+        if (fixOn) {
+            return zonePad * 2 + panelPadTop + panelPadBottom +
+                suggH + vGap + fixHeight() + outerH + bottomPad
         }
         var h = zonePad * 2 + panelPadTop + panelPadBottom
         if (stripVisible) h += suggH + vGap
@@ -816,6 +892,7 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }
 
+        if (fixOn) { drawStrip(canvas, w); drawFix(canvas, w); return }
         if (page == Pages.CLIP) { drawClipPage(canvas, w, h); return }
         if (page == Pages.LANGS) { drawLangPage(canvas, w, h); return }
         if (transOn) {
@@ -900,6 +977,150 @@ class KeyboardView(context: Context) : View(context) {
      * key and the microphone sitting at either end as a matched pair — same size,
      * same weight, nothing boxed around either of them.
      */
+    /**
+     * The rewrite panel.
+     *
+     * It replaces the keys rather than sitting over them: there is nothing to
+     * type while it is open, and a half-covered keyboard invites a tap that
+     * does nothing. Every row is drawn in the theme's own key colour, so it
+     * belongs to whichever theme is on.
+     */
+    private fun drawFix(canvas: Canvas, w: Float) {
+        val left = zonePad + sideMargin
+        val right = w - zonePad - sideMargin
+        var y = zonePad + panelPadTop + suggH + vGap
+
+        txtPaint.typeface = arFont
+        val pad = dp(12f)
+
+        // ---- the choices ----
+        val chH = keyH * 0.95f - dp(5f)
+        fixRects.clear()
+        if (fixOpts.isNotEmpty()) {
+            val gapN = dp(5f)
+            val cw = (right - left - gapN * (fixOpts.size - 1)) / fixOpts.size
+            txtPaint.textSize = keyH * 0.30f
+            val fm0 = txtPaint.fontMetrics
+            for (i in fixOpts.indices) {
+                val x0 = left + i * (cw + gapN)
+                rf.set(x0, y, x0 + cw, y + chH)
+                fixRects.add(RectF(rf))
+                val live = i == fixChosen && (fixBusy || fixResult.isNotEmpty())
+                bgPaint.color = when {
+                    live -> theme.go
+                    fixPressed == i -> theme.keyDown
+                    else -> theme.key
+                }
+                canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
+                txtPaint.color = if (live) theme.goIcon else theme.text
+                canvas.drawText(
+                    ellipsize(fixOpts[i], cw - dp(8f)), rf.centerX(),
+                    rf.centerY() - (fm0.ascent + fm0.descent) / 2f, txtPaint
+                )
+            }
+        }
+        y += chH + vGap
+
+        // ---- what he wrote, so the two can be compared ----
+        txtPaint.textSize = keyH * 0.26f
+        txtPaint.color = theme.dim
+        val fm1 = txtPaint.fontMetrics
+        canvas.drawText(
+            ellipsize(fixSource, right - left - pad * 2),
+            (left + right) / 2f, y + keyH * 0.40f - (fm1.ascent + fm1.descent) / 2f, txtPaint
+        )
+        y += keyH * 0.62f
+
+        if (fixBusy) {
+            rf.set(left, y, right, y + keyH * 0.80f - dp(6f))
+            bgPaint.color = theme.key
+            canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
+            txtPaint.textSize = keyH * 0.30f
+            txtPaint.color = theme.go
+            val fm2 = txtPaint.fontMetrics
+            canvas.drawText("يشتغل…", rf.centerX(),
+                rf.centerY() - (fm2.ascent + fm2.descent) / 2f, txtPaint)
+            y += keyH * 0.80f
+        }
+
+        if (fixError.isNotEmpty()) {
+            rf.set(left, y, right, y + keyH * 0.85f - dp(6f))
+            bgPaint.color = theme.key
+            canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
+            txtPaint.textSize = keyH * 0.28f
+            txtPaint.color = theme.dim
+            val fm3 = txtPaint.fontMetrics
+            canvas.drawText(ellipsize(fixError, right - left - pad * 2), rf.centerX(),
+                rf.centerY() - (fm3.ascent + fm3.descent) / 2f, txtPaint)
+            y += keyH * 0.85f
+        }
+
+        if (fixResult.isNotEmpty()) {
+            val boxH = keyH * 1.75f - dp(6f)
+            rf.set(left, y, right, y + boxH)
+            bgPaint.color = theme.key
+            canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
+            txtPaint.textSize = keyH * 0.30f
+            txtPaint.color = theme.text
+            wrapText(canvas, fixResult, left + pad, right - pad, y + dp(9f), 3)
+            y += boxH + dp(6f)
+
+            // ---- apply / cancel ----
+            val bh = keyH * 0.90f - dp(6f)
+            val half = (right - left - dp(6f)) / 2f
+            fixApplyRect.set(left, y, left + half, y + bh)
+            fixCancelRect.set(right - half, y, right, y + bh)
+            txtPaint.textSize = keyH * 0.30f
+            val fm4 = txtPaint.fontMetrics
+
+            bgPaint.color = if (fixPressed == -50) theme.onBg else theme.go
+            canvas.drawRoundRect(fixApplyRect, dp(10f), dp(10f), bgPaint)
+            txtPaint.color = theme.goIcon
+            canvas.drawText("استبدل", fixApplyRect.centerX(),
+                fixApplyRect.centerY() - (fm4.ascent + fm4.descent) / 2f, txtPaint)
+
+            bgPaint.color = if (fixPressed == -51) theme.keyDown else theme.key
+            canvas.drawRoundRect(fixCancelRect, dp(10f), dp(10f), bgPaint)
+            txtPaint.color = theme.text
+            canvas.drawText("لا", fixCancelRect.centerX(),
+                fixCancelRect.centerY() - (fm4.ascent + fm4.descent) / 2f, txtPaint)
+        } else {
+            fixApplyRect.setEmpty()
+            fixCancelRect.setEmpty()
+        }
+    }
+
+    /** Draws [text] over at most [maxLines] lines, breaking on spaces. */
+    private fun wrapText(
+        canvas: Canvas, text: String, left: Float, right: Float, top: Float, maxLines: Int
+    ) {
+        val avail = right - left
+        val fm = txtPaint.fontMetrics
+        val lh = (fm.descent - fm.ascent) * 1.08f
+        val words = text.split(' ')
+        val line = StringBuilder()
+        var n = 0
+        var y = top - fm.ascent
+        for (wd in words) {
+            val probe = if (line.isEmpty()) wd else line.toString() + " " + wd
+            if (txtPaint.measureText(probe) <= avail) {
+                line.setLength(0); line.append(probe); continue
+            }
+            if (line.isEmpty()) { line.append(wd); continue }
+            n++
+            if (n >= maxLines) {
+                canvas.drawText(ellipsize(line.toString() + " " + wd, avail),
+                    (left + right) / 2f, y, txtPaint)
+                return
+            }
+            canvas.drawText(line.toString(), (left + right) / 2f, y, txtPaint)
+            y += lh
+            line.setLength(0); line.append(wd)
+        }
+        if (line.isNotEmpty()) canvas.drawText(
+            ellipsize(line.toString(), avail), (left + right) / 2f, y, txtPaint)
+    }
+
     private fun drawStrip(canvas: Canvas, w: Float) {
         val top = zonePad + panelPadTop
         val bottom = top + suggH
@@ -910,15 +1131,7 @@ class KeyboardView(context: Context) : View(context) {
         val clipL = left + micEdge
         val micC = right - micEdge - micW / 2f
         val clipC = clipL + micW / 2f
-        // The head of the strip is a row of slots: the clipboard, then the
-        // language key when the bottom row has given it up. The suggestions
-        // start after whichever of them are there.
-        val globeInStrip = iosRow && outerH <= 0f
-        var slot = clipL
-        if (clipOn) slot += micW
-        globeStripC = if (globeInStrip) slot + micW / 2f else -1f
-        if (globeInStrip) slot += micW
-        val zoneLeft = slot + dp(2f)
+        val zoneLeft = clipL + micW + dp(2f)
         val zoneRight = right - micEdge - micW - dp(2f)
 
         // ---- the suggestions, clipped to the space between the two keys ----
@@ -987,16 +1200,6 @@ class KeyboardView(context: Context) : View(context) {
                 icoPaint.strokeWidth = dp(1.7f)
                 drawIcon(canvas, Ico.CLIP, clipC, cy, suggH * 0.46f)
             }
-        }
-
-        if (globeStripC >= 0f) {
-            if (pressedZone == -15) {
-                bgPaint.color = theme.keyDown
-                canvas.drawCircle(globeStripC, cy, micW * 0.46f, bgPaint)
-            }
-            icoPaint.color = theme.outer
-            icoPaint.strokeWidth = dp(1.7f)
-            drawIcon(canvas, Ico.GLOBE, globeStripC, cy, suggH * 0.44f)
         }
 
         // ---- the icon bar, sliding in over the suggestions ----
@@ -1505,7 +1708,6 @@ class KeyboardView(context: Context) : View(context) {
         keyPaint.color = keyCol(when {
             k === pressed -> theme.keyDown
             isOn -> theme.onBg
-            iosRow -> theme.key
             k.style == Style.GO -> theme.go
             k.style == Style.DARK -> theme.keyDark
             else -> theme.key
@@ -1528,7 +1730,6 @@ class KeyboardView(context: Context) : View(context) {
             rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
             keyPaint.color = keyCol(when {
                 isOn -> theme.onBg
-                iosRow -> theme.key
                 k.style == Style.GO -> theme.go
                 k.style == Style.DARK -> theme.keyDark
                 else -> theme.key
@@ -1573,8 +1774,6 @@ class KeyboardView(context: Context) : View(context) {
 
         val fg = when {
             isOn -> theme.onText
-            // the return key is no longer tinted, so its glyph cannot be either
-            iosRow -> theme.text
             k.style == Style.GO -> theme.goIcon
             else -> theme.text
         }
@@ -1735,6 +1934,24 @@ class KeyboardView(context: Context) : View(context) {
                 path.lineTo(cx - s * 0.78f, cy)
                 path.lineTo(cx - s * 0.10f, cy + s * 0.62f)
                 canvas.drawPath(path, icoPaint)
+            }
+            Ico.WAND -> {
+                // A four-pointed star, stroked at the same weight as its
+                // neighbours. It is drawn rather than tinted on purpose: a
+                // coloured button in a row of outlines reads as an advert.
+                fun star(ox: Float, oy: Float, r: Float) {
+                    val w = r * 0.30f
+                    path.reset()
+                    path.moveTo(ox, oy - r)
+                    path.cubicTo(ox + w, oy - w, ox + w, oy - w, ox + r, oy)
+                    path.cubicTo(ox + w, oy + w, ox + w, oy + w, ox, oy + r)
+                    path.cubicTo(ox - w, oy + w, ox - w, oy + w, ox - r, oy)
+                    path.cubicTo(ox - w, oy - w, ox - w, oy - w, ox, oy - r)
+                    path.close()
+                    canvas.drawPath(path, icoPaint)
+                }
+                star(cx - s * 0.16f, cy + s * 0.10f, s * 0.80f)
+                star(cx + s * 0.62f, cy - s * 0.60f, s * 0.34f)
             }
             Ico.SWAP -> {
                 canvas.drawLine(cx - s * 0.85f, cy - s * 0.38f, cx + s * 0.70f, cy - s * 0.38f, icoPaint)
@@ -2083,6 +2300,19 @@ class KeyboardView(context: Context) : View(context) {
                     return true
                 }
 
+                if (fixOn) {
+                    val was = fixPressed
+                    fixPressed = -99
+                    invalidate()
+                    when {
+                        was >= 0 && fixRects.getOrNull(was)?.contains(x, y) == true ->
+                            listener?.onFixPick(was)
+                        was == -50 && fixApplyRect.contains(x, y) -> listener?.onFixApply()
+                        was == -51 && fixCancelRect.contains(x, y) -> listener?.onFixClose()
+                    }
+                    return true
+                }
+
                 if (transClearDown) {
                     transClearDown = false
                     invalidate()
@@ -2149,8 +2379,7 @@ class KeyboardView(context: Context) : View(context) {
                     when {
                         z == -2 -> setToolsOpen(!toolsOpen)
                         z == -3 -> listener?.onClipTap()
-                        z == -15 -> listener?.onLang()
-                        z <= -4 && z >= -7 -> {
+                        z <= -4 && z >= -(3 + TOOL_ICONS.size) -> {
                             setToolsOpen(false)
                             listener?.onTool(-(z + 4))
                         }
@@ -2198,6 +2427,7 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                if (fixPressed != -99) { fixPressed = -99; invalidate() }
                 if (transBoxDown || transClearDown) {
                     transBoxDown = false
                     transClearDown = false
@@ -2409,10 +2639,7 @@ class KeyboardView(context: Context) : View(context) {
             }
             return -1
         }
-        if (clipOn && x < left + micEdge + micW * 1.1f) return -3
-        if (globeStripC >= 0f &&
-            x >= globeStripC - micW * 0.6f && x <= globeStripC + micW * 0.6f
-        ) return -15
+        if (clipOn && x < left + micEdge + micW * 1.25f) return -3
         return suggAt(x, width.toFloat())
     }
 

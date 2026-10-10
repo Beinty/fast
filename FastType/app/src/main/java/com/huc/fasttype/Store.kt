@@ -82,7 +82,6 @@ object Store {
     private const val K_KB_SHADE = "kb_shade"
     private const val K_KB_WARM = "kb_warm"
     private const val K_KB_ARFONT = "kb_ar_font"
-    private const val K_KB_IOSROW = "kb_ios_row"
     private const val K_KB_GLASS = "kb_glass"
     private const val K_KB_GLASS_P = "kb_glass_panel"
     private const val K_KB_GLASS_K = "kb_glass_key"
@@ -478,16 +477,6 @@ object Store {
         private set
 
     /**
-     * The iOS bottom row: 123, space, return, and nothing else.
-     *
-     * The language key moves up into the strip and the full stop goes, which is
-     * what leaves the space bar its width. Every key is drawn the same colour
-     * too — on iOS nothing on the keyboard is tinted, not even return.
-     */
-    @Volatile var kbIosRow: Boolean = true
-        private set
-
-    /**
      * Let the app behind show through the keyboard.
      *
      * Translucency only. The system's blur cannot be used here: it blurs
@@ -576,7 +565,6 @@ object Store {
         kbShade = p.getInt(K_KB_SHADE, 0).coerceIn(0, 60)
         kbWarm = p.getInt(K_KB_WARM, 0).coerceIn(0, 40)
         kbArFont = p.getBoolean(K_KB_ARFONT, false)
-        kbIosRow = p.getBoolean(K_KB_IOSROW, true)
         kbGlass = p.getBoolean(K_KB_GLASS, false)
         kbGlassPanel = p.getInt(K_KB_GLASS_P, 62).coerceIn(20, 100)
         kbGlassKey = p.getInt(K_KB_GLASS_K, 78).coerceIn(20, 100)
@@ -841,7 +829,6 @@ object Store {
             "pics" -> { kbPics = v; e.putBoolean(K_KB_PICS, v) }
             "peek" -> { kbPeek = v; e.putBoolean(K_KB_PEEK, v) }
             "arfont" -> { kbArFont = v; e.putBoolean(K_KB_ARFONT, v) }
-            "iosrow" -> { kbIosRow = v; e.putBoolean(K_KB_IOSROW, v) }
             "glass" -> { kbGlass = v; e.putBoolean(K_KB_GLASS, v) }
         }
         e.apply()
