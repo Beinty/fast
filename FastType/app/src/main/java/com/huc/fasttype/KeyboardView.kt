@@ -522,6 +522,18 @@ class KeyboardView(context: Context) : View(context) {
     private var rows: List<List<Key>> = emptyList()
     private var emojiKeys: List<Key> = emptyList()
     private var pressed: Key? = null
+
+    /** When the language last changed, for the space bar's label. */
+    private var langShownAt = 0L
+    private val LABEL_MS = 1400L
+    var spaceLabelFades = true
+
+    /** Called when the language changes, so the label comes back for a moment. */
+    fun flashLangLabel() {
+        langShownAt = android.os.SystemClock.uptimeMillis()
+        invalidate()
+        postDelayed({ invalidate() }, LABEL_MS + 60)
+    }
     /** The key that fired the instant the finger touched down. */
     private var firedKey: Key? = null
 
@@ -2065,12 +2077,19 @@ class KeyboardView(context: Context) : View(context) {
             // the return arrow sits on the widest key in the row and reads large
             // there at the size the rest of the icons want
             val size = if (k.icon == Ico.ENTER) keyH * 0.40f else keyH * 0.46f
+            if (k.icon == Ico.SEARCH) icoPaint.strokeWidth = dp(2f)
             drawIcon(canvas, k.icon, rf.centerX(), rf.centerY(), size)
             return
         }
 
         if (k.code == Code.SPACE) {
             if (k.label.isEmpty()) return
+            // The language name is an answer to "which keyboard am I on", and
+            // that question is only live right after it changed. iOS shows it
+            // for a moment and then leaves the bar empty; a permanent label is
+            // a word sitting on a key that does not type it.
+            val age = android.os.SystemClock.uptimeMillis() - langShownAt
+            if (spaceLabelFades && age > LABEL_MS) return
             txtPaint.typeface = arFont
             txtPaint.textSize = keyH * 0.3f
             txtPaint.color = theme.dim
@@ -2102,8 +2121,14 @@ class KeyboardView(context: Context) : View(context) {
                 path.lineTo(cx + s * 0.45f, cy)
                 path.lineTo(cx + s, cy)
                 path.close()
-                fillPaint.color = icoPaint.color
-                canvas.drawPath(path, fillPaint)
+                // Outlined while shift is off and solid once it is on, which is
+                // how iOS says it: the arrow filling in *is* the indicator.
+                if (shift > 0 || icon == Ico.CAPS) {
+                    fillPaint.color = icoPaint.color
+                    canvas.drawPath(path, fillPaint)
+                } else {
+                    canvas.drawPath(path, icoPaint)
+                }
                 if (icon == Ico.CAPS) {
                     canvas.drawLine(
                         cx - s * 0.45f, cy + s * 1.05f,
@@ -2133,6 +2158,12 @@ class KeyboardView(context: Context) : View(context) {
                 path.lineTo(cx - s * 0.75f, cy + s * 0.1f)
                 path.lineTo(cx - s * 0.1f, cy + s * 0.6f)
                 canvas.drawPath(path, icoPaint)
+            }
+            Ico.SEARCH -> {
+                canvas.drawCircle(cx - s * 0.12f, cy - s * 0.12f, s * 0.62f, icoPaint)
+                canvas.drawLine(
+                    cx + s * 0.33f, cy + s * 0.33f, cx + s * 0.82f, cy + s * 0.82f, icoPaint
+                )
             }
             Ico.SPACE -> {
                 path.moveTo(cx - s, cy - s * 0.25f)

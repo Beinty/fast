@@ -416,6 +416,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         pendingShortcut = null
         shift = 0
         page = Pages.LETTERS
+        // the blue key says what this field actually does
+        val act = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
+        KbLayout.actionIcon =
+            if (act == EditorInfo.IME_ACTION_SEARCH) Ico.SEARCH else Ico.ENTER
+        // and the language label gets its moment each time the keyboard opens
+        kv?.flashLangLabel()
         if (transOn) {
             transOn = false
             transLastSent = ""
@@ -1008,6 +1014,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             it.shift = 0
             it.suggText = ""
             it.rebuild()
+            it.flashLangLabel()
         }
     }
 

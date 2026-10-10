@@ -49,6 +49,9 @@ object Ico {
 
     /** The text-rewrite tool: a four-pointed star, drawn like the rest. */
     const val WAND = 15
+
+    /** The action key when the field is a search box, the way iOS does it. */
+    const val SEARCH = 16
 }
 
 class Key(
@@ -219,7 +222,17 @@ object KbLayout {
     var dotInRow = true
 
     private fun del() = Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
-    private fun enter() = Key(weight = W_GO, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
+    /**
+     * The icon on the blue key.
+     *
+     * iOS does not keep one symbol there: a search field gets a magnifier, a
+     * message field gets the return arrow. The field says which through its
+     * imeOptions, so the keyboard reads it rather than guessing.
+     */
+    @Volatile
+    var actionIcon = Ico.ENTER
+
+    private fun enter() = Key(weight = W_GO, style = Style.GO, code = Code.ENTER, icon = actionIcon)
     private fun globe() = Key(weight = W_EMOJI, style = Style.DARK, code = Code.LANG, icon = Ico.GLOBE)
     private fun pad() = Key(weight = W_ROW2_PAD, spacer = true)
 
@@ -431,7 +444,7 @@ object KbLayout {
                 r.add(
                     mutableListOf(
                         cycle(arabic, Pages.NPAD, 1f), Key(".", "."), dig(0),
-                        Key(weight = 2f, style = Style.GO, code = Code.ENTER, icon = Ico.ENTER)
+                        Key(weight = 2f, style = Style.GO, code = Code.ENTER, icon = actionIcon)
                     )
                 )
             }

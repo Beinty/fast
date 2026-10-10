@@ -189,7 +189,8 @@ class MainActivity : Activity() {
     private val pages = HashMap<String, View>()
 
     /** Pages where the live keyboard belongs on screen. */
-    private val previewPages = setOf("appear", "themes", "glass", "dims", "font", "strip", "touch")
+    private val previewPages =
+        setOf("appear", "themes", "apple", "glass", "dims", "font", "strip", "touch")
 
     private fun go(id: String) {
         stack.add(pageId)
@@ -230,6 +231,7 @@ class MainActivity : Activity() {
         "home" -> "كتابة سريعة"
         "appear" -> "المظهر"
         "themes" -> "الثيمات"
+        "apple" -> "تخطيط الآيفون"
         "glass" -> "الشفافية"
         "dims" -> "الأبعاد"
         "font" -> "الخط"
@@ -264,6 +266,7 @@ class MainActivity : Activity() {
         "appear" -> menu(
             listOf(
                 Item("الثيمات", Themes.byId(Store.kbTheme).name, "themes"),
+                Item("تخطيط الآيفون", "ثيم وقياسات وصف سفلي — بضغطة", "apple"),
                 Item("الشفافية", "صلابة اللوح والأزرار", "glass"),
                 Item("الأبعاد", "ارتفاع الزر · المسافات · الدوران", "dims"),
                 Item("الخط", "خط عربي خاص · حجم الحرف · الثقل", "font"),
@@ -271,6 +274,7 @@ class MainActivity : Activity() {
             )
         )
         "themes" -> pageThemes()
+        "apple" -> pageApple()
         "glass" -> pageGlass()
         "dims" -> pageDims()
         "font" -> pageFont()
@@ -1018,6 +1022,42 @@ class MainActivity : Activity() {
     // ---------- appearance ----------
 
     private val themeBtns = ArrayList<Button>()
+
+    /**
+     * Everything the iPhone layout is, in one tap.
+     *
+     * The theme carries colour and proportion, but three of the differences
+     * from a real iPhone keyboard are layout switches of his — the globe in the
+     * bottom row, the full stop beside it, and the label on the space bar. They
+     * are his to set, which is why they are switches, and setting three of them
+     * by hand to copy one keyboard is work the app should do.
+     */
+    private fun pageApple(): View {
+        val p = col()
+        p.addView(hint(
+            "تحط كل شي مرة وحدة: ثيم آيفون فاتح بقياساته، وزر اللغة ينتقل للشريط العلوي، " +
+                "وزر النقطة ينشال، فيبقى الصف السفلي ؟١٢٣ ومسطرة وزر الإجراء — مثل الآيفون بالضبط."
+        ))
+        val b = Button(this)
+        b.text = "طبّق تخطيط الآيفون"
+        b.isAllCaps = false
+        b.setTextColor(Color.WHITE)
+        b.background = round(ACC)
+        b.setOnClickListener {
+            Store.setKbTheme(this, "appleLight")
+            Store.setKbFlag(this, "globerow", true)
+            Store.setKbFlag(this, "dotkey", false)
+            if (Store.kbOuterH == 0) Store.setKbInt(this, "outer", 40)
+            syncPreview()
+            toast("انطبّق — شوف المعاينة تحت")
+        }
+        p.addView(b, lp(true, bottom = dp(10)))
+        p.addView(hint(
+            "كل واحد منهن يضل مفتاح تگدر ترجعه: زر اللغة من «الشريط العلوي»، " +
+                "والنقطة من «التصحيح والتنبؤ»، والقياسات من «الأبعاد»."
+        ))
+        return scroll(p)
+    }
 
     private fun pageThemes(): View {
         val p = col()
