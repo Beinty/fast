@@ -166,12 +166,12 @@ object KbLayout {
         "\u064E", "\u064F", "\u0650", "\u0652",
         "\u0651", "\u064B", "\u064C", "\u064D",
         "\u0654", "\u0655", "\u0653", "\u0670",
-        "\u0640", "\u060C", "\u061F", "!"
+        "\u0640", "\u060C", "\u061F", "!", "*"
     )
 
     val enMarks: List<String> = listOf(
         ",", "?", "!", ":", ";", "'", "\"", "-",
-        "_", "(", ")", "/", "@", "#", "&", "\u2026"
+        "_", "(", ")", "/", "@", "#", "&", "\u2026", "*"
     )
 
     /** The alternates for a key, or null when a long press should do nothing. */
@@ -390,7 +390,14 @@ object KbLayout {
                         arabic = arabic, smallText = true
                     )
                 )
-                row3.addAll(chars(if (arabic) "*\"':؛!؟" else "*\"':;!?", arabic))
+                // The full stop takes the first cell on this page.
+                //
+                // It used to live in the bottom row of the letters page, and the
+                // iPhone layout takes that row down to 123 · space · action — so
+                // the one mark he types more than any other had nowhere left to
+                // be. It sits here, and a hold on it still opens the marks, which
+                // is where the asterisk went: nothing was dropped to make room.
+                row3.addAll(chars(if (arabic) ".\"':؛!؟" else ".\"':;!?", arabic))
                 row3.add(del())
                 r.add(row3)
                 r.add(lastRow(arabic, Pages.SYM1))
