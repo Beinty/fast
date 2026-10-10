@@ -87,7 +87,9 @@ class KbTheme(
     /** A halo around the enter key. */
     val glow: Int = 0,
     /** Shown at the top of the list, under its own heading. */
-    val star: Boolean = false
+    val star: Boolean = false,
+    /** Glyph colour for the grey function keys, when it differs from [text]. */
+    val textOnDark: Int = 0
 )
 
 object Themes {
@@ -514,6 +516,21 @@ object Themes {
             keyTop = c("#FFFFFF"), keyBottom = c("#F6F7FA"),
             lift = c("#59000000"), sheen = c("#FFFFFFFF"),
             star = true
+        ),
+        KbTheme(
+            // Built to a written spec, value by value, not to taste: background
+            // D1D5DB, keys FFFFFF, letters 202124, function keys ADB5BF with
+            // white glyphs, action key 3478F6. Flat on purpose — the spec rules
+            // out gradients, sheen and glass, so this one theme carries none of
+            // the depth the others do, and that is the point of it.
+            "appleLight", "آيفون فاتح",
+            c("#D1D5DB"), c("#D1D5DB"), c("#D1D5DB"), c("#D1D5DB"),
+            c("#FFFFFF"), c("#DCE0E6"), c("#ADB5BF"),
+            c("#3478F6"), c("#FFFFFF"),
+            c("#202124"), c("#555B63"), c("#FFFFFF"), c("#202124"), c("#555B63"),
+            lightKeys = true, twin = "iosDark",
+            lift = c("#1F000000"),
+            star = true, textOnDark = c("#FFFFFF")
         ),
         KbTheme(
             // Night sky over water: indigo gathering at one corner, teal at the

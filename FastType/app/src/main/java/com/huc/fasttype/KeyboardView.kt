@@ -2055,6 +2055,7 @@ class KeyboardView(context: Context) : View(context) {
         val fg = when {
             isOn -> theme.onText
             k.style == Style.GO -> theme.goIcon
+            k.style == Style.DARK && theme.textOnDark != 0 -> theme.textOnDark
             else -> theme.text
         }
 
