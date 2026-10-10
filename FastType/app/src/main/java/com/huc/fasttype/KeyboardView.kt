@@ -5,10 +5,14 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
@@ -952,6 +956,48 @@ class KeyboardView(context: Context) : View(context) {
         }
     }
 
+    /**
+     * Everything a flat colour cannot say.
+     *
+     * The keyboard painted one solid colour per surface, so every theme was the
+     * same keyboard in another colour. Three things change that and none of them
+     * cost a frame: a gradient down the panel, one or two wide soft colour
+     * fields behind the keys, and a gradient inside the key itself. All three
+     * are built once per size and reused, because this runs forty times a frame.
+     */
+    private var gradId = ""
+    private var gradW = 0f
+    private var gradH = 0f
+    private var panelShader: LinearGradient? = null
+    private var auraA: RadialGradient? = null
+    private var auraB: RadialGradient? = null
+
+    private var keyShader: LinearGradient? = null
+    private var keyShaderH = 0f
+    private var keyShaderId = ""
+    private val keyMatrix = Matrix()
+
+    private fun ensureGradients(w: Float, top: Float, bottom: Float) {
+        val h = bottom - top
+        if (gradId == theme.id && gradW == w && gradH == h) return
+        gradId = theme.id; gradW = w; gradH = h
+        panelShader = if (theme.panelTop == 0) null else LinearGradient(
+            0f, top, 0f, bottom, theme.panelTop, theme.panelBottom, Shader.TileMode.CLAMP
+        )
+        auraA = aura(theme.aura1, theme.aura1x, theme.aura1y, theme.aura1r, w, top, h)
+        auraB = aura(theme.aura2, theme.aura2x, theme.aura2y, theme.aura2r, w, top, h)
+    }
+
+    private fun aura(
+        c: Int, fx: Float, fy: Float, fr: Float, w: Float, top: Float, h: Float
+    ): RadialGradient? {
+        if (c == 0 || fr <= 0f) return null
+        return RadialGradient(
+            w * fx, top + h * fy, max(1f, h * fr),
+            c, c and 0x00FFFFFF, Shader.TileMode.CLAMP
+        )
+    }
+
     override fun onDraw(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -961,12 +1007,35 @@ class KeyboardView(context: Context) : View(context) {
         val pTop = zonePad
         val pBottom = h - bottomPad - zonePad
         rf.set(zonePad, pTop, w - zonePad, pBottom)
+        ensureGradients(w, pTop, pBottom)
         bgPaint.color = panelCol()
+        if (panelShader != null) {
+            val a = Color.alpha(panelCol())
+            bgPaint.shader = panelShader
+            bgPaint.alpha = a
+        }
         canvas.drawRoundRect(rf, panelRad, panelRad, bgPaint)
         if (panelRad > 0f) {
             // square off the bottom; only the top two corners are rounded
             canvas.drawRect(rf.left, pTop + panelRad, rf.right, pBottom, bgPaint)
         }
+        // the colour fields, inside the panel's own corners
+        if (auraA != null || auraB != null) {
+            canvas.save()
+            path.reset()
+            path.addRoundRect(rf, panelRad, panelRad, Path.Direction.CW)
+            canvas.clipPath(path)
+            canvas.drawRect(rf.left, pTop, rf.right, pBottom, bgPaint)
+            for (sh in arrayOf(auraA, auraB)) {
+                if (sh == null) continue
+                bgPaint.shader = sh
+                bgPaint.alpha = Color.alpha(panelCol())
+                canvas.drawRect(rf.left, pTop, rf.right, pBottom, bgPaint)
+            }
+            canvas.restore()
+        }
+        bgPaint.shader = null
+        bgPaint.alpha = 255
         if (zonePad > 0.5f) {
             edgePaint.color = theme.panelEdge
             edgePaint.strokeWidth = dp(1f)
@@ -1845,6 +1914,24 @@ class KeyboardView(context: Context) : View(context) {
         )
         val r = rad
 
+        // The halo: the enter key is the one coloured thing on the board, so in
+        // a dark theme it gets to cast light. Three rings, widest and faintest
+        // first, which is a blur that costs three fills.
+        if (theme.glow != 0 && k.style == Style.GO) {
+            val base = Color.alpha(theme.glow)
+            for (i in 3 downTo 1) {
+                keyPaint.color = Color.argb(
+                    (base * (0.30f - 0.07f * i)).toInt().coerceIn(0, 255),
+                    Color.red(theme.glow), Color.green(theme.glow), Color.blue(theme.glow)
+                )
+                val sp = dp(i * 2.2f)
+                rf.set(k.x - sp, k.y - sp * 0.6f, k.x + k.w + sp, k.y + k.h + sp)
+                canvas.drawRoundRect(rf, r + sp, r + sp, keyPaint)
+            }
+            rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
+            keyPaint.color = keyCol(theme.go)
+        }
+
         // A white key on a white panel. The shadow is laid down first, in three
         // thin passes rather than one blurred one — a blur needs a software layer
         // and this is drawn forty times a frame, where three fills cost nothing.
@@ -1862,7 +1949,29 @@ class KeyboardView(context: Context) : View(context) {
             keyPaint.color = keyCol(restOrFading(k, rest))
         }
 
+        // A letter key with a gradient in it: lighter at the top, a shade deeper
+        // at the bottom. One shader for the key height, slid down to each key,
+        // rather than forty of them a frame.
+        val grad = theme.keyTop != 0 && k !== pressed && !isOn &&
+            k.style != Style.GO && k.style != Style.DARK
+        if (grad) {
+            if (keyShader == null || keyShaderH != k.h || keyShaderId != theme.id) {
+                keyShaderH = k.h
+                keyShaderId = theme.id
+                keyShader = LinearGradient(
+                    0f, 0f, 0f, k.h, theme.keyTop, theme.keyBottom, Shader.TileMode.CLAMP
+                )
+            }
+            keyMatrix.setTranslate(0f, k.y)
+            keyShader!!.setLocalMatrix(keyMatrix)
+            keyPaint.shader = keyShader
+            keyPaint.alpha = Color.alpha(keyCol(theme.key))
+        }
         canvas.drawRoundRect(rf, r, r, keyPaint)
+        if (grad) {
+            keyPaint.shader = null
+            keyPaint.alpha = 255
+        }
 
         // The carve: a dark line inside the top edge and a light one just under the
         // key. Without the light underneath the key only looks dirty along its top.

@@ -59,7 +59,35 @@ class KbTheme(
     /** How solid the keys are, 20..100. */
     val glassKey: Int = 0,
     /** The light along the top inside edge of every key. */
-    val sheen: Int = 0
+    val sheen: Int = 0,
+
+    // ---- depth ----
+    //
+    // A keyboard painted in flat colours is the same keyboard every time, and
+    // no amount of choosing nicer colours changes that. These four are what a
+    // surface actually has: a gradient down the panel, a gradient inside the
+    // key, soft fields of colour behind the keys, and a halo on the one key
+    // that is allowed to be bright.
+
+    /** A vertical gradient for the panel; it replaces the flat [panel]. */
+    val panelTop: Int = 0,
+    val panelBottom: Int = 0,
+    /** A vertical gradient inside every letter key. */
+    val keyTop: Int = 0,
+    val keyBottom: Int = 0,
+    /** Colour fields behind the keys: colour, then centre and radius as fractions. */
+    val aura1: Int = 0,
+    val aura1x: Float = 0f,
+    val aura1y: Float = 0f,
+    val aura1r: Float = 0f,
+    val aura2: Int = 0,
+    val aura2x: Float = 0f,
+    val aura2y: Float = 0f,
+    val aura2r: Float = 0f,
+    /** A halo around the enter key. */
+    val glow: Int = 0,
+    /** Shown at the top of the list, under its own heading. */
+    val star: Boolean = false
 )
 
 object Themes {
@@ -462,7 +490,96 @@ object Themes {
             c("#F2F2F7"), c("#9FA4B5"), c("#F2F2F7"), c("#15161F"), c("#C9CCD8"),
             dark = true, twin = "glassClear",
             lift = c("#50000000"), edge = c("#26FFFFFF"), sheen = c("#4DFFFFFF"),
-            glass = true, glassPanel = 56, glassKey = 64
+            glass = true, glassPanel = 56, glassKey = 64        ),
+
+        // ================= الخمسة =================
+        //
+        // iOS is not a palette, it is a set of proportions: the key is paler
+        // than the board, it carries one hard line under it rather than a soft
+        // shadow, and exactly one key is allowed to be a colour. Each of these
+        // keeps that and spends its invention on the board behind the keys,
+        // where a wrong decision costs nothing in reading.
+
+        KbTheme(
+            // iOS itself, measured rather than remembered: the board is a cool
+            // grey that darkens downward, the key is pure white, and under each
+            // key sits one hard line — not a blur. That line is the whole trick.
+            "iosTrue", "ضوء",
+            c("#D6D9E0"), c("#D6D9E0"), c("#C6CAD3"), c("#D6D9E0"),
+            c("#FFFFFF"), c("#E7E9EF"), c("#B9BEC9"),
+            c("#0A84FF"), c("#FFFFFF"),
+            c("#000000"), c("#6E7179"), c("#000000"), c("#FFFFFF"), c("#2A2C31"),
+            lightKeys = true, twin = "auroraNight",
+            panelTop = c("#DFE2E8"), panelBottom = c("#CDD1D9"),
+            keyTop = c("#FFFFFF"), keyBottom = c("#F6F7FA"),
+            lift = c("#59000000"), sheen = c("#FFFFFFFF"),
+            star = true
+        ),
+        KbTheme(
+            // Night sky over water: indigo gathering at one corner, teal at the
+            // far one, and the keys held back to almost nothing so the colour
+            // behind them is what you see.
+            "auroraNight", "شفق",
+            c("#070A16"), c("#070A16"), c("#1A2140"), c("#070A16"),
+            c("#272F4D"), c("#3A4470"), c("#1A2038"),
+            c("#5E5CE6"), c("#FFFFFF"),
+            c("#F3F4FB"), c("#9AA2C4"), c("#F3F4FB"), c("#0A0D1A"), c("#C9CEE6"),
+            dark = true, twin = "iosTrue",
+            panelTop = c("#0B1026"), panelBottom = c("#05070F"),
+            keyTop = c("#2E3759"), keyBottom = c("#222942"),
+            aura1 = c("#664C3BCF"), aura1x = 0.18f, aura1y = 0.10f, aura1r = 1.15f,
+            aura2 = c("#4D0E7C7B"), aura2x = 0.86f, aura2y = 0.92f, aura2r = 1.05f,
+            sheen = c("#59FFFFFF"), edge = c("#1FFFFFFF"), glow = c("#A65E5CE6"),
+            star = true
+        ),
+        KbTheme(
+            // Sunset on the Shatt: the board warms from peach down into rose,
+            // the keys stay white, and their shadow is warm rather than grey —
+            // a cool shadow on a warm board is the thing that looks wrong.
+            "sunsetBasra", "غروب",
+            c("#F3CFC2"), c("#F3CFC2"), c("#E3B3AC"), c("#F3CFC2"),
+            c("#FFFFFF"), c("#F7E6DF"), c("#EFCFC4"),
+            c("#D9553F"), c("#FFFFFF"),
+            c("#2B1A16"), c("#8A655C"), c("#2B1A16"), c("#FFFFFF"), c("#4A2E26"),
+            lightKeys = true, twin = "onyxViolet",
+            panelTop = c("#F8DCC9"), panelBottom = c("#EFC1C6"),
+            keyTop = c("#FFFFFF"), keyBottom = c("#FDF4EF"),
+            aura1 = c("#59F2A65C"), aura1x = 0.22f, aura1y = 0.08f, aura1r = 0.95f,
+            lift = c("#403A1C14"), sheen = c("#E6FFFFFF"),
+            star = true
+        ),
+        KbTheme(
+            // Mother of pearl: almost white, but rose leans in from one side and
+            // blue from the other, so the board shifts as your eye crosses it
+            // and never reads as grey.
+            "pearlShell", "لؤلؤ",
+            c("#F4F3F8"), c("#F4F3F8"), c("#E6E4EE"), c("#F4F3F8"),
+            c("#FFFFFF"), c("#EFEDF6"), c("#E2E0EC"),
+            c("#2E2C38"), c("#FFFFFF"),
+            c("#14131A"), c("#78757F"), c("#14131A"), c("#FFFFFF"), c("#2A2833"),
+            lightKeys = true, twin = "onyxViolet",
+            panelTop = c("#FAF8FC"), panelBottom = c("#EDEAF3"),
+            keyTop = c("#FFFFFF"), keyBottom = c("#F8F6FC"),
+            aura1 = c("#40E8A8C8"), aura1x = 0.14f, aura1y = 0.12f, aura1r = 0.9f,
+            aura2 = c("#3D8FB8E8"), aura2x = 0.88f, aura2y = 0.88f, aura2r = 0.9f,
+            lift = c("#2E1A1830"), sheen = c("#FFFFFFFF"), edge = c("#14000000"),
+            star = true
+        ),
+        KbTheme(
+            // Black stone with one violet vein: the board is nearly black, a
+            // single deep violet field sits under the middle rows, and the
+            // enter key is the only lit thing on the board.
+            "onyxViolet", "عقيق",
+            c("#08070C"), c("#08070C"), c("#1A1726"), c("#08070C"),
+            c("#1A1824"), c("#2B2740"), c("#131120"),
+            c("#7A5CFF"), c("#FFFFFF"),
+            c("#F2F0FA"), c("#908BA8"), c("#F2F0FA"), c("#0A0910"), c("#CFCBE0"),
+            dark = true, twin = "pearlShell",
+            panelTop = c("#0C0A14"), panelBottom = c("#050408"),
+            keyTop = c("#211E2E"), keyBottom = c("#171522"),
+            aura1 = c("#595B3BD6"), aura1x = 0.5f, aura1y = 0.55f, aura1r = 1.2f,
+            sheen = c("#4DFFFFFF"), edge = c("#1AFFFFFF"), glow = c("#B37A5CFF"),
+            star = true
         )
     )
 

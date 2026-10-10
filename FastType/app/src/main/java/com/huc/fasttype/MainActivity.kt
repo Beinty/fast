@@ -1058,12 +1058,17 @@ class MainActivity : Activity() {
         }
 
         family(
+            "مميزة",
+            "خمسة اشتغلت عليهن بتدرّجات وإضاءة — مو تبديل ألوان.",
+            Themes.all.filter { it.star }
+        )
+        family(
             "زجاج",
             "الزجاجية تشغّل الشفافية لحدها بالدرجة اللي تناسبها — وتگدر تعدّلها من «الشفافية».",
             Themes.all.filter { it.glass }
         )
-        family("نهاري", "", Themes.all.filter { !it.glass && !it.dark })
-        family("ليلي", "", Themes.all.filter { !it.glass && it.dark })
+        family("نهاري", "", Themes.all.filter { !it.glass && !it.star && !it.dark })
+        family("ليلي", "", Themes.all.filter { !it.glass && !it.star && it.dark })
 
         p.addView(
             switchRow(
