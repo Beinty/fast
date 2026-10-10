@@ -427,6 +427,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             it.page = page
             it.suggText = ""
             it.suggs = emptyList()
+            // before rebuild, so an address field opens with the key already there
+            KbLayout.dotNow = wantsDot()
             it.rebuild()
         }
         clearWindowBackground()
@@ -665,7 +667,33 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         return before[1] == ' ' && before[0].isLetterOrDigit()
     }
 
+    /**
+     * Is a full stop about to be wanted?
+     *
+     * Two cases, and only two. He has typed an @, so he is partway through an
+     * address and the dot is the next thing he needs. Or the field itself is
+     * for an address or a link, where a dot is wanted from the first letter.
+     *
+     * Everything else gets the space bar's full width instead, which is the
+     * point: the key earns its place rather than holding it.
+     */
+    private fun wantsDot(): Boolean {
+        if (page != Pages.LETTERS) return false
+        if (buffer.contains('@')) return true
+        val it = currentInputEditorInfo?.inputType ?: return false
+        if (it and android.text.InputType.TYPE_MASK_CLASS !=
+            android.text.InputType.TYPE_CLASS_TEXT
+        ) return false
+        return when (it and android.text.InputType.TYPE_MASK_VARIATION) {
+            android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS,
+            android.text.InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS,
+            android.text.InputType.TYPE_TEXT_VARIATION_URI -> true
+            else -> false
+        }
+    }
+
     private fun afterType() {
+        kv?.setDotNow(wantsDot())
         if (shift == 1 && !arabic && page == Pages.LETTERS) {
             shift = 0
             kv?.shift = 0
@@ -783,6 +811,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 eraseCount = 0
             }
         }
+        // the @ may have just gone, and with it the reason for the dot
+        kv?.setDotNow(wantsDot())
         feedback()
         scheduleSugg()
     }

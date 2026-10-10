@@ -276,6 +276,18 @@ class KeyboardView(context: Context) : View(context) {
     /** Centre of the language key in the strip, or -1 when it is not there. */
     private var globeStripC = -1f
 
+    /**
+     * Shows or hides the contextual full stop, rebuilding only on a change.
+     *
+     * Adding a key changes every width in the row, so this cannot run on each
+     * keystroke — it runs on the keystroke that flips it, and no other.
+     */
+    fun setDotNow(on: Boolean) {
+        if (on == KbLayout.dotNow) return
+        KbLayout.dotNow = on
+        rebuild()
+    }
+
     /** The long-press bubble: its options, where it sits, and which one is picked. */
     private var altKey: Key? = null
     private var altList: List<String> = emptyList()

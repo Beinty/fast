@@ -226,6 +226,17 @@ object KbLayout {
     @Volatile
     var dotInRow = true
 
+    /**
+     * A full stop the moment one is about to be needed.
+     *
+     * Set while he is writing something a dot belongs in — an address, a
+     * domain — and cleared when he is not. It overrides both the setting and
+     * the iOS row, because the whole point is that it appears where it
+     * otherwise would not.
+     */
+    @Volatile
+    var dotNow = false
+
     private fun del() = Key(weight = W_MOD, style = Style.DARK, code = Code.DEL, icon = Ico.DEL)
     private fun enter() =
         Key(weight = if (iosRow) W_IOS_GO else W_GO,
@@ -235,11 +246,14 @@ object KbLayout {
 
     private fun dot(ar: Boolean) = Key(label = ".", out = ".", weight = W_DOT, arabic = ar)
 
+    /** Whether the row has a full stop in it at this moment. */
+    private fun dotShown(): Boolean = dotNow || (dotInRow && !iosRow)
+
     private fun spaceWeight(): Float {
-        if (iosRow) return W_IOS_SPACE
-        var w = W_SPACE
-        if (!globeInRow) w += W_EMOJI
-        if (dotInRow) w -= W_DOT
+        // the space bar is what gives the dot its room and takes it back
+        var w = if (iosRow) W_IOS_SPACE else W_SPACE
+        if (!iosRow && !globeInRow) w += W_EMOJI
+        if (dotShown()) w -= W_DOT
         return w
     }
 
@@ -308,7 +322,7 @@ object KbLayout {
         // no full stop at all — three keys, and the space bar takes the room.
         if (globeInRow && !iosRow) out.add(globe())
         out.add(space(ar))
-        if (dotInRow && !iosRow) out.add(dot(ar))
+        if (dotShown()) out.add(dot(ar))
         out.add(enter())
         return out
     }
