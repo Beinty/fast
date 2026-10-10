@@ -269,6 +269,9 @@ object KbLayout {
      * remember the order — and it keeps the same cell on every page, bottom left of
      * the last row, because a key that moves is a key the thumb has to look for.
      */
+    /** The 123 key is wider on the iOS row, where it is one of only three. */
+    private fun symWeight(): Float = if (iosRow) W_IOS_SYM else W_SYM
+
     private fun cycle(ar: Boolean, page: Int, w: Float = symWeight()): Key {
         val to = nextPage(page)
         return when (to) {
