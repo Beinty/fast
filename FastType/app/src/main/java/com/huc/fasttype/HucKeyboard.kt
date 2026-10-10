@@ -1206,7 +1206,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (replyFirst && index == 0) {
             kv?.setFixBusy(index)
             val arabic = looksArabic(fixReplyTo)
-            Ai.ask(replyPrompt(arabic), listOf(Ai.Turn(false, fixReplyTo)), false) { r ->
+            Ai.ask(
+                replyPrompt(arabic), listOf(Ai.Turn(false, fixReplyTo)),
+                false, Ai.MODEL_GOOD
+            ) { r ->
                 ui.post {
                     if (kv?.fixOn != true) return@post
                     val lines = splitReplies(r.text ?: "")
@@ -1221,7 +1224,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val arabic = looksArabic(fixText)
         kv?.setFixBusy(index)
         val system = fixPrompt(index - shift, arabic)
-        Ai.ask(system, listOf(Ai.Turn(false, fixText)), false) { r ->
+        Ai.ask(system, listOf(Ai.Turn(false, fixText)), false, Ai.MODEL_GOOD) { r ->
             ui.post {
                 if (kv?.fixOn != true) return@post
                 val out = r.text?.let { cleanFix(it) }
@@ -1240,20 +1243,29 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      */
     private fun replyPrompt(arabic: Boolean): String =
         if (arabic)
-            "جاك النص التالي برسالة. اكتب ثلاث ردود مختلفة يگدر يرسلها صاحب الهاتف.\n" +
+            "جاك النص التالي برسالة. اكتب ثلاث ردود مختلفة يگدر يرسلها صاحب الهاتف.\n\n" +
                 "الردود تختلف بالموقف مو بالصياغة: الأول موافقة أو تنفيذ، " +
-                "الثاني تأجيل أو اعتذار، الثالث سؤال توضيحي.\n" +
-                "كل رد سطر واحد قصير بنفس لهجة الرسالة الواصلة.\n" +
+                "الثاني تأجيل أو اعتذار، الثالث سؤال توضيحي.\n\n" +
+                "اللغة:\n" +
+                "- اكتب بعربية فصيحة سليمة ومرتبة، حتى لو الرسالة الواصلة بالعامية.\n" +
+                "- بدون أي خطأ إملائي. انتبه للهمزات (أ إ آ ؤ ئ ء) والتاء المربوطة " +
+                "والألف المقصورة (ى / ي).\n" +
+                "- جملة تامة مفهومة، مو كلمات مرصوفة.\n" +
+                "- مهذّب وطبيعي، مو متكلّف ومو جامد.\n" +
+                "- كل رد سطر واحد قصير — جملة أو جملتين.\n\n" +
                 "رجّع ثلاثة أسطر فقط، كل رد بسطر، بدون ترقيم وبدون شرح وبدون علامات اقتباس. " +
                 "لا تستعمل الفاصلة المنقوطة (؛)."
         else
             "The following arrived as a message. Write three different replies the " +
-                "phone's owner could send.\nThey must differ in stance, not wording: " +
-                "first agree or commit, second defer or decline, third ask a " +
-                "clarifying question.\nEach reply is one short line in the same " +
-                "register as the message.\nReturn exactly three lines, one reply per " +
-                "line, with no numbering, no explanation and no quotes. Never use a " +
-                "semicolon."
+                "phone's owner could send.\n\nThey must differ in stance, not " +
+                "wording: first agree or commit, second defer or decline, third ask " +
+                "a clarifying question.\n\nLanguage:\n" +
+                "- Correct, well-formed English with no spelling or grammar " +
+                "mistakes.\n- Complete sentences, not fragments.\n" +
+                "- Polite and natural, not stiff.\n" +
+                "- One short line each, a sentence or two.\n\n" +
+                "Return exactly three lines, one reply per line, with no numbering, " +
+                "no explanation and no quotes. Never use a semicolon."
 
     /** Takes the model's three lines apart, forgiving the numbering it adds anyway. */
     private fun splitReplies(raw: String): List<String> =
@@ -1283,8 +1295,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             0 -> "صحّح الإملاء والهمزات والتاء المربوطة وعلامات الترقيم بهذا النص. " +
                 "خلّي اللهجة والأسلوب مثل ما هي بالضبط — لا تحوّلها لفصحى ولا تغيّر الكلمات " +
                 "إلا الغلط منها."
-            1 -> "أعد كتابة النص بعربية فصحى سليمة وواضحة. حافظ على المعنى كامل " +
-                "ولا تضيف معلومة مو موجودة."
+            1 -> "أعد كتابة النص بعربية فصيحة سليمة وواضحة ومرتبة. " +
+                "خلّي الأسلوب طبيعي ومفهوم مو متكلّف. " +
+                "حافظ على المعنى كامل ولا تضيف معلومة مو موجودة."
             2 -> "أعد كتابة النص بصيغة مخاطبة رسمية مناسبة لجهة حكومية أو إدارية. " +
                 "استعمل الصيغ المتعارف عليها وحافظ على المعنى كامل ولا تخترع تفاصيل."
             else -> "اختصر النص وخلّيه أوضح وأبسط، بنفس لغته وأسلوبه، " +
