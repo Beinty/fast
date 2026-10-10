@@ -148,6 +148,8 @@ object UserDict {
             Learn.loadFixes { k, g, u -> fixes[k] = g; fixUsed[k] = u }
             Learn.loadKeep { k -> keep.add(k) }
             Learn.loadRejects { k, n -> rejects[k] = n }
+            // small, and the whole point is that it survives a restart
+            Learn.loadTokens { k, n -> tokens[k] = n }
             tick = Learn.tick()
         }
         try {
@@ -229,6 +231,89 @@ object UserDict {
     }
 
     /** Counts one finished word. Cheap enough to call on every space. */
+    // ---- things that are not words -----------------------------------------
+    //
+    // An email address, a phone number, a handle, a domain. [isWordy] rejects
+    // every one of them — it only admits letters — so none of them was ever
+    // learnt, however many times he typed it. These are exactly the strings
+    // worth not retyping, so they get a store of their own: kept verbatim,
+    // never folded or corrected, and offered only once he has typed the same
+    // one twice, so a one-off address does not clutter the strip forever.
+
+    private val tokens = HashMap<String, Int>(128)
+
+    /** Typed this many times before it is worth offering back. */
+    private const val TOKEN_AFTER = 2
+
+    private const val TOKEN_MAX = 400
+
+    /**
+     * Is this worth keeping whole?
+     *
+     * It has to be something a person would hate to retype and would type the
+     * same way every time: an address, a number, a handle. Ordinary words are
+     * already handled, and anything with a space is not one token.
+     */
+    private fun isToken(s: String): Boolean {
+        if (s.length < 5 || s.length > 64) return false
+        var digits = 0
+        var letters = 0
+        var marks = 0
+        for (c in s) {
+            when {
+                c.isWhitespace() -> return false
+                c.isDigit() -> digits++
+                c.isLetter() -> letters++
+                c == '@' || c == '.' || c == '_' || c == '-' || c == '+' ||
+                    c == '/' || c == ':' -> marks++
+                else -> return false
+            }
+        }
+        // a plain word is not a token, and neither is punctuation on its own
+        if (marks == 0 && digits == 0) return false
+        if (letters == 0 && digits == 0) return false
+        // a bare short number is a quantity, not something to remember
+        if (letters == 0 && marks == 0 && digits < 6) return false
+        return true
+    }
+
+    fun seenToken(raw: String) {
+        val t = raw.trim().trimEnd('.', ',', '!', '?', ';', ':')
+        if (!isToken(t)) return
+        tokens[t] = (tokens[t] ?: 0) + 1
+        Learn.touchTok(t)
+        dirty = true
+        maybeFlush()
+        if (tokens.size > TOKEN_MAX) trimTokens()
+    }
+
+    private fun trimTokens() {
+        val keep = tokens.entries.sortedByDescending { it.value }.take(TOKEN_MAX * 3 / 4)
+        tokens.clear()
+        for (e in keep) tokens[e.key] = e.value
+    }
+
+    /**
+     * Completions for what he has started typing, best first.
+     *
+     * Matched case-insensitively but returned exactly as he wrote it, because
+     * half the point of remembering an address is remembering its spelling.
+     */
+    fun tokensFor(prefix: String, max: Int): List<String> {
+        if (prefix.length < 2 || tokens.isEmpty()) return emptyList()
+        val p = prefix.lowercase()
+        val hits = ArrayList<Pair<String, Int>>(4)
+        for ((k, n) in tokens) {
+            if (n < TOKEN_AFTER) continue
+            if (k.length <= prefix.length) continue
+            if (k.lowercase().startsWith(p)) hits.add(k to n)
+        }
+        if (hits.isEmpty()) return emptyList()
+        hits.sortWith(compareByDescending<Pair<String, Int>> { it.second }
+            .thenBy { it.first.length })
+        return hits.take(max).map { it.first }
+    }
+
     fun seen(word: String, arabic: Boolean) {
         if (word.length < 2 || word.length > 24) return
         if (!isWordy(word, arabic)) return
@@ -709,6 +794,7 @@ object UserDict {
             fixAt = { k -> fixes[k]?.let { it to (fixUsed[k] ?: 0) } },
             keepHas = { k -> keep.contains(k) },
             rejAt = { k -> rejects[k] },
+            tokAt = { k -> tokens[k] },
             tick = tick
         )
     }

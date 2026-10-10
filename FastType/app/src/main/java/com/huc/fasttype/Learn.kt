@@ -29,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap
 object Learn {
 
     private const val DB = "huc_learn.db"
-    private const val VERSION = 1
+    private const val VERSION = 2
 
     /** Table names kept to two letters: they appear in every statement below. */
     private const val T_WORD = "w"      // k, n (count), t (tick last seen)
@@ -39,6 +39,7 @@ object Learn {
     private const val T_KEEP = "kp"     // k = a spelling he insisted on
     private const val T_REJ = "rj"      // k, n = how often he put it back
     private const val T_META = "m"      // k, v
+    private const val T_TOK = "tk"      // k = verbatim, n = times typed
 
     private class Helper(c: Context) : SQLiteOpenHelper(c, DB, null, VERSION) {
         override fun onCreate(db: SQLiteDatabase) {
@@ -49,15 +50,21 @@ object Learn {
             db.execSQL("CREATE TABLE $T_KEEP (k TEXT PRIMARY KEY)")
             db.execSQL("CREATE TABLE $T_REJ  (k TEXT PRIMARY KEY, n INTEGER)")
             db.execSQL("CREATE TABLE $T_META (k TEXT PRIMARY KEY, v INTEGER)")
+            db.execSQL("CREATE TABLE $T_TOK  (k TEXT PRIMARY KEY, n INTEGER)")
             // the hot set is read back by score, so that read must not be a sort
             db.execSQL("CREATE INDEX w_n ON $T_WORD (n DESC)")
             db.execSQL("CREATE INDEX p_n ON $T_PAIR (n DESC)")
             db.execSQL("CREATE INDEX t3_n ON $T_TRI (n DESC)")
         }
 
-        override fun onUpgrade(db: SQLiteDatabase, old: Int, new: Int) {
-            // nothing to migrate yet; a future version adds columns here rather
-            // than dropping, because this file is the only copy of his writing
+        override fun onUpgrade(db: SQLiteDatabase, from: Int, to: Int) {
+            // Only ever add. This file is the only copy of what he has taught the
+            // keyboard, and dropping it to rebuild a schema would throw that away.
+            if (from < 2) {
+                try {
+                    db.execSQL("CREATE TABLE IF NOT EXISTS $T_TOK (k TEXT PRIMARY KEY, n INTEGER)")
+                } catch (_: Throwable) {}
+            }
         }
     }
 
@@ -86,6 +93,7 @@ object Learn {
     private val dirtyFix = ConcurrentHashMap.newKeySet<String>(32)
     private val dirtyKeep = ConcurrentHashMap.newKeySet<String>(32)
     private val dirtyRej = ConcurrentHashMap.newKeySet<String>(32)
+    private val dirtyTok = ConcurrentHashMap.newKeySet<String>(64)
 
     fun touchWord(k: String) { dirtyWord.add(k) }
     fun touchPair(k: String) { dirtyPair.add(k) }
@@ -93,10 +101,11 @@ object Learn {
     fun touchFix(k: String) { dirtyFix.add(k) }
     fun touchKeep(k: String) { dirtyKeep.add(k) }
     fun touchRej(k: String) { dirtyRej.add(k) }
+    fun touchTok(k: String) { dirtyTok.add(k) }
 
     val waiting: Int
         get() = dirtyWord.size + dirtyPair.size + dirtyTri.size +
-            dirtyFix.size + dirtyKeep.size + dirtyRej.size
+            dirtyFix.size + dirtyKeep.size + dirtyRej.size + dirtyTok.size
 
     /**
      * Writes everything waiting, in one transaction.
@@ -111,6 +120,7 @@ object Learn {
         fixAt: (String) -> Pair<String, Int>?, // what he meant, when last used
         keepHas: (String) -> Boolean,
         rejAt: (String) -> Int?,
+        tokAt: (String) -> Int?,
         tick: Int
     ) {
         val d = db() ?: return
@@ -120,8 +130,9 @@ object Learn {
         val f = drain(dirtyFix)
         val kp = drain(dirtyKeep)
         val rj = drain(dirtyRej)
+        val tk = drain(dirtyTok)
         if (w.isEmpty() && p.isEmpty() && t.isEmpty() && f.isEmpty() &&
-            kp.isEmpty() && rj.isEmpty()
+            kp.isEmpty() && rj.isEmpty() && tk.isEmpty()
         ) return
         try {
             d.beginTransaction()
@@ -160,6 +171,12 @@ object Learn {
                 if (v == null) { d.delete(T_REJ, "k=?", arrayOf(k)); continue }
                 cv.clear(); cv.put("k", k); cv.put("n", v)
                 d.insertWithOnConflict(T_REJ, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+            }
+            for (k in tk) {
+                val v = tokAt(k)
+                if (v == null) { d.delete(T_TOK, "k=?", arrayOf(k)); continue }
+                cv.clear(); cv.put("k", k); cv.put("n", v)
+                d.insertWithOnConflict(T_TOK, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
             }
             cv.clear(); cv.put("k", "tick"); cv.put("v", tick)
             d.insertWithOnConflict(T_META, null, cv, SQLiteDatabase.CONFLICT_REPLACE)
@@ -205,6 +222,9 @@ object Learn {
 
     fun loadKeep(into: (String) -> Unit): Int =
         rows("SELECT k FROM $T_KEEP") { c -> into(c.getString(0)) }
+
+    fun loadTokens(into: (String, Int) -> Unit): Int =
+        rows("SELECT k, n FROM $T_TOK") { c -> into(c.getString(0), c.getInt(1)) }
 
     fun loadRejects(into: (String, Int) -> Unit): Int =
         rows("SELECT k,n FROM $T_REJ") { c -> into(c.getString(0), c.getInt(1)) }
@@ -282,7 +302,7 @@ object Learn {
         snap = IntArray(4)
         try {
             d.beginTransaction()
-            for (t in arrayOf(T_WORD, T_PAIR, T_TRI, T_FIX, T_KEEP, T_REJ, T_META)) {
+            for (t in arrayOf(T_WORD, T_PAIR, T_TRI, T_FIX, T_KEEP, T_REJ, T_TOK, T_META)) {
                 d.execSQL("DELETE FROM $t")
             }
             d.setTransactionSuccessful()

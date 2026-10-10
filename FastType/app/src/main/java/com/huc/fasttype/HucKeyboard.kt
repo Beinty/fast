@@ -8,6 +8,7 @@ import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.util.Log
 import android.os.Handler
 import android.os.Looper
@@ -568,6 +569,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             // "his own spelling" and the keyboard stopped fixing it for good.
             val learnt = fixed ?: typed
             if (Store.kbLearn) {
+                // An address or a number never reaches seen(): it only admits
+                // letters. Those are the strings most worth not retyping.
+                //
+                // Read off the field rather than the buffer, because a dot is a
+                // word break here — the buffer has already cut
+                // hmzazne@gmail.com into "hmzazne@gmail" and "com", and neither
+                // half is worth keeping. Only on a space or a newline, which is
+                // where the whole thing has actually ended.
+                if (s == " " || s == "\n") learnTokenBeforeCursor(ic)
                 // A word we were about to correct and only held back on is not a
                 // word of his. Counting it here is how a slip the engine already
                 // had an answer for climbed into his vocabulary and put itself
@@ -1522,6 +1532,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
             // then every completion of the word being typed
             if (word.isNotEmpty()) {
+                // An address or number he has typed before, offered first: it is
+                // the longest thing on the strip and the one he would otherwise
+                // have to get exactly right by hand.
+                if (Store.kbLearn) {
+                    for (t in UserDict.tokensFor(word, 2)) {
+                        if (zones.size >= MAX_SUGG) break
+                        if (!zones.contains(t)) { zones.add(t); kinds.add(false) }
+                    }
+                }
                 // a line he writes often, offered whole rather than a word at a time
                 if (Store.kbLearn && zones.size < MAX_SUGG) {
                     UserDict.phrase(word, arabic)?.let {
@@ -1567,6 +1586,22 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private fun isMark(c: Char): Boolean =
         (c in '\u064B'..'\u0652') || c == '\u0670' || c == '\u0653' ||
             c == '\u0654' || c == '\u0655'
+
+    /**
+     * Takes the run of non-space characters just typed and offers it to the
+     * token store, which decides whether it is the kind of thing worth keeping.
+     */
+    private fun learnTokenBeforeCursor(ic: InputConnection) {
+        try {
+            val before = ic.getTextBeforeCursor(80, 0)?.toString() ?: return
+            if (before.isEmpty()) return
+            var i = before.length
+            while (i > 0 && !before[i - 1].isWhitespace()) i--
+            if (i >= before.length) return
+            UserDict.seenToken(before.substring(i))
+        } catch (_: Throwable) {
+        }
+    }
 
     private fun isWordBreak(c: Char): Boolean =
         c == ' ' || c == '\n' || c == '\t' || c == '.' || c == ',' || c == '!' ||
