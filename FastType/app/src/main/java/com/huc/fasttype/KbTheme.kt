@@ -89,7 +89,21 @@ class KbTheme(
     /** Shown at the top of the list, under its own heading. */
     val star: Boolean = false,
     /** Glyph colour for the grey function keys, when it differs from [text]. */
-    val textOnDark: Int = 0
+    val textOnDark: Int = 0,
+
+    // ---- geometry a theme insists on ----
+    //
+    // Colour is the theme's business and size is his, which holds right up
+    // until a theme is a reproduction of a particular keyboard. Then the
+    // proportions are the thing being reproduced and shipping the colours
+    // without them is shipping half of it. Only a theme that is a copy of
+    // something sets these; the rest leave them at -1 and never touch his
+    // sliders. They stay sliders afterwards either way.
+    val geoKeyH: Int = -1,
+    val geoGap: Int = -1,
+    val geoRadius: Int = -1,
+    val geoWeight: Int = -1,
+    val geoInset: Int = -1
 )
 
 object Themes {
@@ -530,7 +544,10 @@ object Themes {
             c("#202124"), c("#555B63"), c("#FFFFFF"), c("#202124"), c("#555B63"),
             lightKeys = true, twin = "iosDark",
             lift = c("#1F000000"),
-            star = true, textOnDark = c("#FFFFFF")
+            star = true, textOnDark = c("#FFFFFF"),
+            // the proportions off the same spec: 44 tall, 5 apart, 6 of corner,
+            // regular weight rather than semibold, and flush to the screen edge
+            geoKeyH = 44, geoGap = 5, geoRadius = 6, geoWeight = 400, geoInset = 0
         ),
         KbTheme(
             // Night sky over water: indigo gathering at one corner, teal at the

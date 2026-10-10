@@ -780,14 +780,16 @@ object Store {
     }
 
     /**
-     * Picks a theme, and lets a glass one bring its own settings with it.
+     * Picks a theme, and lets it bring whatever it cannot be without.
      *
      * A glass theme is not just colours: it needs transparency on and at a depth
      * that suits it — milky glass at 94 and clear glass at 74 are two different
-     * things, and neither is findable by dragging a slider blind. So picking one
-     * switches transparency on and sets its depth, and picking a solid theme
-     * afterwards switches it back off. Both stay editable: these are starting
-     * points, not locks.
+     * things, and neither is findable by dragging a slider blind. A theme that
+     * reproduces a particular keyboard carries its proportions the same way,
+     * because the proportions are half of what is being reproduced. Picking a
+     * plain theme afterwards switches transparency back off, and leaves the
+     * sizes where they are — he may have liked them. Everything here stays a
+     * slider afterwards: these are starting points, not locks.
      */
     fun setKbTheme(ctx: Context, v: String) {
         val was = Themes.byId(kbTheme).glass
@@ -803,7 +805,29 @@ object Store {
             if (t.glassKey > 0) {
                 kbGlassKey = t.glassKey.coerceIn(20, 100); e.putInt(K_KB_GLASS_K, kbGlassKey)
             }
-        } else if (was) {
+        }
+        // a theme that is a reproduction brings its proportions with it
+        if (t.geoKeyH >= 0) {
+            kbKeyHeight = t.geoKeyH.coerceIn(34, 58); e.putInt(K_KB_H, kbKeyHeight)
+        }
+        if (t.geoGap >= 0) {
+            kbGap = t.geoGap.coerceIn(2, 10); e.putInt(K_KB_GAP, kbGap)
+        }
+        if (t.geoRadius >= 0) {
+            kbRadius = t.geoRadius.coerceIn(2, 18); e.putInt(K_KB_RAD, kbRadius)
+        }
+        if (t.geoWeight >= 0) {
+            kbWeight = t.geoWeight.coerceIn(300, 700); e.putInt(K_KB_WEIGHT, kbWeight)
+        }
+        if (t.geoInset >= 0) {
+            kbInset = t.geoInset.coerceIn(0, 14); e.putInt(K_KB_INSET, kbInset)
+        }
+        if (t.geoKeyH >= 0) {
+            // the spec rules out tinting and dimming, and both are his settings
+            kbShade = 0; e.putInt(K_KB_SHADE, 0)
+            kbWarm = 0; e.putInt(K_KB_WARM, 0)
+        }
+        if (was && !t.glass) {
             // leaving glass behind: a solid theme under a half-transparent panel
             // looks like a bug, not a choice
             kbGlass = false
