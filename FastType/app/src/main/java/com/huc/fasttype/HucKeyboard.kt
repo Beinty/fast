@@ -1122,6 +1122,16 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private val FIX_EN = listOf("Fix", "Formal", "Casual", "Shorter")
 
     /**
+     * The message he copied, when the reply choice is on offer.
+     *
+     * A keyboard sees only the field it is typing into, so the other person's
+     * message cannot be read — it has to be copied over. Empty when there is
+     * nothing copied worth replying to, and the choice is then not offered at
+     * all rather than offered and failing.
+     */
+    private var fixReplyTo = ""
+
+    /**
      * Opens the rewrite panel on whatever he has selected, or on the whole field.
      *
      * The selection comes first because it is the explicit instruction; without
@@ -1143,13 +1153,39 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         } catch (_: Throwable) {
         }
         text = text.trim()
-        if (text.length < 3) {
-            showStrip("اكتب شي أول")
+        // An empty field is the normal state when the point is to reply to
+        // something copied, so it is openFixPanel that decides whether there is
+        // anything to offer — not this.
+        fixText = if (text.length < 3) "" else text
+        openFixPanel()
+    }
+
+    private fun openFixPanel() {
+        fixReplyTo = clipForReply()
+        val base = if (fixText.isEmpty()) emptyList()
+        else if (looksArabic(fixText)) FIX_AR else FIX_EN
+        val opts = if (fixReplyTo.isEmpty()) base else listOf(REPLY_LABEL) + base
+        if (opts.isEmpty()) {
+            showStrip("اكتب شي أو انسخ رسالة")
             return
         }
-        fixText = text
-        kv?.openFix(text, if (looksArabic(text)) FIX_AR else FIX_EN)
+        kv?.openFix(
+            if (fixText.isNotEmpty()) fixText else shortFor(fixReplyTo),
+            opts
+        )
     }
+
+    private val REPLY_LABEL = "رد"
+
+    /** What is on the clipboard, if it is worth replying to. */
+    private fun clipForReply(): String {
+        val t = Clip.latest()?.trim().orEmpty()
+        // one word is a password or a code, not a message
+        if (t.length < 8 || !t.contains(' ')) return ""
+        return t.take(1200)
+    }
+
+    private fun shortFor(t: String): String = "رد على: " + t
 
     private fun looksArabic(t: String): Boolean {
         var ar = 0
@@ -1163,11 +1199,28 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onFixPick(index: Int) {
         feedback()
-        val arabic = looksArabic(fixText)
-        val opts = if (arabic) FIX_AR else FIX_EN
+        val opts = kv?.fixOpts ?: return
         if (index !in opts.indices) return
+        val replyFirst = fixReplyTo.isNotEmpty()
+
+        if (replyFirst && index == 0) {
+            kv?.setFixBusy(index)
+            val arabic = looksArabic(fixReplyTo)
+            Ai.ask(replyPrompt(arabic), listOf(Ai.Turn(false, fixReplyTo)), false) { r ->
+                ui.post {
+                    if (kv?.fixOn != true) return@post
+                    val lines = splitReplies(r.text ?: "")
+                    if (lines.isEmpty()) kv?.setFixReplies(emptyList(), r.error ?: "ما طلعت ردود")
+                    else kv?.setFixReplies(lines, "")
+                }
+            }
+            return
+        }
+
+        val shift = if (replyFirst) 1 else 0
+        val arabic = looksArabic(fixText)
         kv?.setFixBusy(index)
-        val system = fixPrompt(index, arabic)
+        val system = fixPrompt(index - shift, arabic)
         Ai.ask(system, listOf(Ai.Turn(false, fixText)), false) { r ->
             ui.post {
                 if (kv?.fixOn != true) return@post
@@ -1177,6 +1230,40 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
         }
     }
+
+    /**
+     * Three replies that differ in what they commit to, not in wording.
+     *
+     * Asking for three phrasings of the same answer gives him nothing to
+     * choose between, so the prompt names the three stances: take it on, put
+     * it off, ask back.
+     */
+    private fun replyPrompt(arabic: Boolean): String =
+        if (arabic)
+            "جاك النص التالي برسالة. اكتب ثلاث ردود مختلفة يگدر يرسلها صاحب الهاتف.\n" +
+                "الردود تختلف بالموقف مو بالصياغة: الأول موافقة أو تنفيذ، " +
+                "الثاني تأجيل أو اعتذار، الثالث سؤال توضيحي.\n" +
+                "كل رد سطر واحد قصير بنفس لهجة الرسالة الواصلة.\n" +
+                "رجّع ثلاثة أسطر فقط، كل رد بسطر، بدون ترقيم وبدون شرح وبدون علامات اقتباس. " +
+                "لا تستعمل الفاصلة المنقوطة (؛)."
+        else
+            "The following arrived as a message. Write three different replies the " +
+                "phone's owner could send.\nThey must differ in stance, not wording: " +
+                "first agree or commit, second defer or decline, third ask a " +
+                "clarifying question.\nEach reply is one short line in the same " +
+                "register as the message.\nReturn exactly three lines, one reply per " +
+                "line, with no numbering, no explanation and no quotes. Never use a " +
+                "semicolon."
+
+    /** Takes the model's three lines apart, forgiving the numbering it adds anyway. */
+    private fun splitReplies(raw: String): List<String> =
+        raw.lineSequence()
+            .map { it.trim().removePrefix("-").removePrefix("•").trim() }
+            .map { it.replace(Regex("^[0-9\u0660-\u0669]+[.)\u061B:-]\\s*"), "") }
+            .map { cleanFix(it) }
+            .filter { it.length in 2..300 }
+            .take(3)
+            .toList()
 
     /**
      * What the model is told.
@@ -1252,6 +1339,20 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             ic.endBatchEdit()
         } catch (_: Throwable) {
         }
+        resetWord()
+        lastWord = ""
+        prevWord = ""
+        refreshSugg()
+    }
+
+    /** A reply was chosen: it goes in as new text, never over what he wrote. */
+    override fun onFixReply(index: Int) {
+        val list = kv?.fixReplies ?: return
+        val out = list.getOrNull(index) ?: return
+        feedback()
+        val ic = currentInputConnection
+        kv?.closeFix()
+        try { ic?.commitText(out, 1) } catch (_: Throwable) {}
         resetWord()
         lastWord = ""
         prevWord = ""

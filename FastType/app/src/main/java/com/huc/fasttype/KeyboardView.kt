@@ -59,6 +59,9 @@ class KeyboardView(context: Context) : View(context) {
         /** Put the finished rewrite into the field. */
         fun onFixApply()
 
+        /** One of the suggested replies was tapped. */
+        fun onFixReply(index: Int)
+
         /** Close the rewrite panel and change nothing. */
         fun onFixClose()
 
@@ -266,6 +269,12 @@ class KeyboardView(context: Context) : View(context) {
     var fixError = ""
         private set
 
+    /** The suggested replies, when the reply choice was the one taken. */
+    var fixReplies: List<String> = emptyList()
+        private set
+
+    private val fixReplyRects = ArrayList<RectF>(3)
+
     private val fixRects = ArrayList<RectF>(4)
     private val fixApplyRect = RectF()
     private val fixCancelRect = RectF()
@@ -280,6 +289,7 @@ class KeyboardView(context: Context) : View(context) {
         fixBusy = false
         fixResult = ""
         fixError = ""
+        fixReplies = emptyList()
         requestLayout()
         invalidate()
     }
@@ -289,6 +299,7 @@ class KeyboardView(context: Context) : View(context) {
         fixOn = false
         fixResult = ""
         fixError = ""
+        fixReplies = emptyList()
         fixChosen = -1
         fixBusy = false
         requestLayout()
@@ -300,12 +311,24 @@ class KeyboardView(context: Context) : View(context) {
         fixBusy = true
         fixResult = ""
         fixError = ""
+        fixReplies = emptyList()
+        requestLayout()
+        invalidate()
+    }
+
+    fun setFixReplies(list: List<String>, error: String) {
+        fixBusy = false
+        fixReplies = list
+        fixResult = ""
+        fixError = error
+        requestLayout()
         invalidate()
     }
 
     fun setFixResult(text: String, error: String) {
         fixBusy = false
         fixResult = text
+        fixReplies = emptyList()
         fixError = error
         requestLayout()
         invalidate()
@@ -745,6 +768,8 @@ class KeyboardView(context: Context) : View(context) {
         if (fixBusy) h += keyH * 0.85f
         if (fixError.isNotEmpty()) h += keyH * 0.90f
         if (fixResult.isNotEmpty()) h += keyH * 2.30f + keyH * 0.95f
+        // each reply is a row he taps, so they stand instead of a result box
+        if (fixReplies.isNotEmpty()) h += fixReplies.size * keyH * 1.25f
         return maxOf(h + vGap * 2, floor)
     }
 
@@ -1051,6 +1076,24 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawText(ellipsize(fixError, right - left - pad * 2), rf.centerX(),
                 rf.centerY() - (fm3.ascent + fm3.descent) / 2f, txtPaint)
             y += keyH * 0.90f
+        }
+
+        // ---- the suggested replies, each one a row that types itself ----
+        fixReplyRects.clear()
+        if (fixReplies.isNotEmpty()) {
+            txtPaint.textSize = keyH * 0.29f
+            for (r0 in fixReplies) {
+                val rowH = keyH * 1.25f - dp(6f)
+                rf.set(left, y, right, y + rowH)
+                fixReplyRects.add(RectF(rf))
+                bgPaint.color =
+                    if (fixPressed == -60 - (fixReplyRects.size - 1)) theme.keyDown
+                    else theme.key
+                canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
+                txtPaint.color = theme.text
+                wrapText(canvas, r0, left + pad, right - pad, y + dp(7f), 2)
+                y += keyH * 1.25f
+            }
         }
 
         if (fixResult.isNotEmpty()) {
@@ -2119,6 +2162,11 @@ class KeyboardView(context: Context) : View(context) {
                     for (i in fixRects.indices) {
                         if (fixRects[i].contains(x, y)) { fixPressed = i; break }
                     }
+                    if (fixPressed == -99) {
+                        for (i in fixReplyRects.indices) {
+                            if (fixReplyRects[i].contains(x, y)) { fixPressed = -60 - i; break }
+                        }
+                    }
                     if (fixPressed == -99 && !fixApplyRect.isEmpty &&
                         fixApplyRect.contains(x, y)) fixPressed = -50
                     if (fixPressed == -99 && !fixCancelRect.isEmpty &&
@@ -2323,6 +2371,8 @@ class KeyboardView(context: Context) : View(context) {
                     when {
                         was >= 0 && fixRects.getOrNull(was)?.contains(x, y) == true ->
                             listener?.onFixPick(was)
+                        was <= -60 && fixReplyRects.getOrNull(-60 - was)
+                            ?.contains(x, y) == true -> listener?.onFixReply(-60 - was)
                         was == -50 && fixApplyRect.contains(x, y) -> listener?.onFixApply()
                         was == -51 && fixCancelRect.contains(x, y) -> listener?.onFixClose()
                     }

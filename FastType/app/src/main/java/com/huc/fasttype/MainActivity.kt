@@ -1128,6 +1128,7 @@ class MainActivity : Activity() {
             override fun onTransPaste() {}
             override fun onFixPick(index: Int) {}
             override fun onFixApply() {}
+            override fun onFixReply(index: Int) {}
             override fun onFixClose() {}
             override fun onTransClear() {}
             override fun onLangPick(code: String) {}
