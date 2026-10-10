@@ -59,10 +59,7 @@ class KbTheme(
     /** How solid the keys are, 20..100. */
     val glassKey: Int = 0,
     /** The light along the top inside edge of every key. */
-    val sheen: Int = 0,
-    /** Panel inset and top radius this theme wants, when it is a floating one. */
-    val inset: Int = -1,
-    val panelRadius: Int = -1
+    val sheen: Int = 0
 )
 
 object Themes {
@@ -466,17 +463,6 @@ object Themes {
             dark = true, twin = "glassClear",
             lift = c("#50000000"), edge = c("#26FFFFFF"), sheen = c("#4DFFFFFF"),
             glass = true, glassPanel = 56, glassKey = 64
-        ),
-        KbTheme(
-            "glassFloat", "زجاج عائم",
-            c("#C8D1E2"), c("#D6DBE8"), c("#8CFFFFFF"), c("#D6DBE8"),
-            c("#FFFFFF"), c("#EDF0F8"), c("#E3E7F2"),
-            c("#20222E"), c("#FFFFFF"),
-            c("#0F0F16"), c("#5C6273"), c("#0F0F16"), c("#FFFFFF"), c("#2A2D3A"),
-            lightKeys = true, twin = "glassSmoke",
-            lift = c("#30141A33"), edge = c("#73FFFFFF"), sheen = c("#CCFFFFFF"),
-            glass = true, glassPanel = 48, glassKey = 76,
-            inset = 10, panelRadius = 28
         )
     )
 

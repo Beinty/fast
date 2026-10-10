@@ -565,6 +565,18 @@ object Store {
         kbShade = p.getInt(K_KB_SHADE, 0).coerceIn(0, 60)
         kbWarm = p.getInt(K_KB_WARM, 0).coerceIn(0, 40)
         kbArFont = p.getBoolean(K_KB_ARFONT, false)
+        // the floating glass theme is gone; anyone left on it keeps its colours
+        // but not its detached panel, which is the part he did not want
+        if (kbTheme == "glassFloat") {
+            kbTheme = "glassClear"
+            kbInset = 0
+            p.edit().putString(K_KB_THEME, kbTheme).putInt(K_KB_INSET, 0).apply()
+        } else if (kbInset > 0 && Themes.byId(kbTheme).glass) {
+            // it set the inset and he moved on to another glass theme, so the
+            // panel is still floating with nothing left to explain why
+            kbInset = 0
+            p.edit().putInt(K_KB_INSET, 0).apply()
+        }
         kbGlass = p.getBoolean(K_KB_GLASS, false)
         kbGlassPanel = p.getInt(K_KB_GLASS_P, 62).coerceIn(20, 100)
         kbGlassKey = p.getInt(K_KB_GLASS_K, 78).coerceIn(20, 100)
@@ -790,12 +802,6 @@ object Store {
             }
             if (t.glassKey > 0) {
                 kbGlassKey = t.glassKey.coerceIn(20, 100); e.putInt(K_KB_GLASS_K, kbGlassKey)
-            }
-            if (t.inset >= 0) {
-                kbInset = t.inset.coerceIn(0, 14); e.putInt(K_KB_INSET, kbInset)
-            }
-            if (t.panelRadius >= 0) {
-                kbPanelRadius = t.panelRadius.coerceIn(0, 44); e.putInt(K_KB_PRAD, kbPanelRadius)
             }
         } else if (was) {
             // leaving glass behind: a solid theme under a half-transparent panel

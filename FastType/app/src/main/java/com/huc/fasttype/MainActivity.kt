@@ -40,14 +40,19 @@ class MainActivity : Activity() {
         const val REQ_LOAD_LEARN = 4102
     }
 
-    private val BG = Color.parseColor("#0E0F11")
-    private val CARD = Color.parseColor("#17191C")
-    private val TXT = Color.parseColor("#FFFFFF")
-    private val MUT = Color.parseColor("#9AA0A6")
-    private val ACC = Color.parseColor("#1D9E75")
-    private val RED = Color.parseColor("#E24B4A")
-    private val WARN = Color.parseColor("#BA7517")
-    private val CHIP = Color.parseColor("#13241F")
+    // The app is light. Grey underneath and white cards on top of it, rather
+    // than white on white — a card needs something to sit on or the page is one
+    // undivided sheet and nothing groups. The accent, red and amber are darkened
+    // from their dark-theme values: the same green that reads clearly on black
+    // is too pale to read on white.
+    private val BG = Color.parseColor("#F2F2F6")
+    private val CARD = Color.parseColor("#FFFFFF")
+    private val TXT = Color.parseColor("#111114")
+    private val MUT = Color.parseColor("#80838C")
+    private val ACC = Color.parseColor("#12805D")
+    private val RED = Color.parseColor("#C8342F")
+    private val WARN = Color.parseColor("#9A5E0E")
+    private val CHIP = Color.parseColor("#E6F3EE")
 
     private val REQ_EXPORT = 11
     private val REQ_IMPORT = 12
@@ -87,6 +92,13 @@ class MainActivity : Activity() {
         UserDict.load(this)
         data = Store.items.toMutableList()
         if (Store.callerSpeak) Speaker.autoPickVoice(this)
+
+        // A light app under a dark status bar looks like two apps. The bars take
+        // the page's own colour, and their icons go dark to stay readable on it.
+        window.statusBarColor = BG
+        window.navigationBarColor = BG
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
