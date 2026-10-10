@@ -4,11 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.media.AudioManager
-import android.os.Build
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.View
-import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.util.Log
 import android.os.Handler
@@ -306,7 +304,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         v.applySettings()
         v.page = page
         v.rebuild()
-        v.post { clearWindowBackground(); applyBlur() }
+        v.post { clearWindowBackground() }
         return v
     }
 
@@ -315,63 +313,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      * see-through — otherwise the corners show the IME window's own background instead
      * of the app, which is what iOS shows there.
      */
-    /**
-     * Blurs the app behind the keyboard, where the system allows it.
-     *
-     * Translucency on its own reads as an unfinished keyboard — text and buttons
-     * showing through between the keys. The blur is what turns it into glass, so
-     * when it is unavailable the panel is painted more solid instead of being
-     * left see-through over a sharp picture.
-     *
-     * Available from Android 12, and even there the system withdraws it at
-     * runtime: battery saver, some video playback, a ROM that turns it off, a
-     * GPU that cannot afford it. So it is asked for, checked, and the answer is
-     * handed to the view rather than assumed — and a listener catches the
-     * moment it changes while the keyboard is open.
-     */
-    private fun applyBlur() {
-        if (Build.VERSION.SDK_INT < 31) { kv?.setBlurReady(false); return }
-        blur31()
-    }
-
-    /**
-     * The Android 12 calls, split out so the version check guards one place.
-     * Only [applyBlur] may call this, and only above API 31.
-     */
-    private fun blur31() {
-        try {
-            val w = window?.window ?: return
-            if (!Store.kbGlass) {
-                w.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                w.attributes = w.attributes.apply { blurBehindRadius = 0 }
-                kv?.setBlurReady(false)
-                return
-            }
-            val wm = getSystemService(WindowManager::class.java)
-            val on = wm?.isCrossWindowBlurEnabled == true
-            if (on) {
-                w.addFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-                w.attributes = w.attributes.apply {
-                    blurBehindRadius = (resources.displayMetrics.density *
-                        Store.kbGlassBlur).toInt()
-                }
-            } else {
-                w.clearFlags(WindowManager.LayoutParams.FLAG_BLUR_BEHIND)
-            }
-            kv?.setBlurReady(on)
-
-            if (!blurListening) {
-                blurListening = true
-                wm?.addCrossWindowBlurEnabledListener(mainExecutor) { enabled ->
-                    kv?.setBlurReady(enabled && Store.kbGlass)
-                }
-            }
-        } catch (_: Throwable) {
-            kv?.setBlurReady(false)
-        }
-    }
-
-    private var blurListening = false
 
     private fun clearWindowBackground() {
         try {
@@ -403,7 +344,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onWindowShown() {
         super.onWindowShown()
-        applyBlur()
         watchGallery()
         syncPics()
         clearWindowBackground()

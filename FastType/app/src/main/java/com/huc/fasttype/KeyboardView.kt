@@ -187,25 +187,14 @@ class KeyboardView(context: Context) : View(context) {
     private var glassKey = 78
 
     /**
-     * Whether the system is actually blurring behind the window right now.
+     * There is no blur behind this translucency, and there cannot be.
      *
-     * Without the blur, translucency is just a keyboard you can see the app
-     * through — harder to read, and it looks broken rather than deliberate. So
-     * when the blur is not there the glass is pulled most of the way back
-     * towards solid instead of being switched off outright, which would make
-     * the keyboard flicker between two looks as the system changes its mind.
+     * FLAG_BLUR_BEHIND blurs everything behind the window, and an IME's window
+     * spans the whole screen with the keyboard drawn at its foot — so asking
+     * for it blurred the entire app, not the strip behind the keys. Nothing in
+     * the API scopes it to a region, so the flag is gone and what is left is
+     * plain translucency.
      */
-    private var blurReady = false
-
-    fun setBlurReady(on: Boolean) {
-        if (on == blurReady) return
-        blurReady = on
-        invalidate()
-    }
-
-    /** How much of the chosen translucency survives without a blur behind it. */
-    private fun glassMix(pct: Int): Int =
-        if (blurReady) pct else (pct + (100 - pct) * 72 / 100)
 
     /** How far the whole keyboard is veiled, 0-60. */
     private var shadePct = 0
@@ -576,7 +565,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun panelCol(c: Int = theme.panel): Int =
         if (!glassOn) c
         else Color.argb(
-            (Color.alpha(c) * glassMix(glassPanel) / 100f).toInt().coerceIn(0, 255),
+            (Color.alpha(c) * glassPanel / 100f).toInt().coerceIn(0, 255),
             Color.red(c), Color.green(c), Color.blue(c)
         )
 
@@ -584,7 +573,7 @@ class KeyboardView(context: Context) : View(context) {
     private fun keyCol(c: Int): Int =
         if (!glassOn) c
         else Color.argb(
-            (Color.alpha(c) * glassMix(glassKey) / 100f).toInt().coerceIn(0, 255),
+            (Color.alpha(c) * glassKey / 100f).toInt().coerceIn(0, 255),
             Color.red(c), Color.green(c), Color.blue(c)
         )
 
