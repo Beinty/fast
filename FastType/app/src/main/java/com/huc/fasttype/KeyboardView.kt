@@ -977,6 +977,10 @@ class KeyboardView(context: Context) : View(context) {
     private var keyShaderId = ""
     private val keyMatrix = Matrix()
 
+    private var sheenShader: LinearGradient? = null
+    private var sheenW = 0f
+    private var sheenId = ""
+
     private fun ensureGradients(w: Float, top: Float, bottom: Float) {
         val h = bottom - top
         if (gradId == theme.id && gradW == w && gradH == h) return
@@ -1042,7 +1046,12 @@ class KeyboardView(context: Context) : View(context) {
             canvas.drawRoundRect(rf, panelRad, panelRad, edgePaint)
         }
         if (bottomPad > 0f && !clearBottom) {
-            bgPaint.color = panelCol()
+            // The strip under the keys is the panel continued, so on a theme with
+            // a gradient it has to take the colour the gradient ended on. Painting
+            // it the flat panel colour drew a visible seam across the bottom.
+            bgPaint.color = panelCol(
+                if (theme.panelBottom != 0) theme.panelBottom else theme.panel
+            )
             canvas.drawRect(zonePad, pBottom, w - zonePad, h, bgPaint)
         }
 
@@ -1999,17 +2008,35 @@ class KeyboardView(context: Context) : View(context) {
         // light actually catches an edge. This single line is what reads as
         // glass — the transparency on its own just looks faded.
         if (theme.sheen != 0 && k !== pressed) {
-            canvas.save()
-            path.reset()
-            path.addRoundRect(rf, r, r, Path.Direction.CW)
-            canvas.clipPath(path)
-            edgePaint.style = Paint.Style.STROKE
-            edgePaint.strokeWidth = dp(1.2f)
-            edgePaint.color = theme.sheen
-            canvas.drawLine(
-                k.x + r * 0.5f, k.y + dp(0.7f), k.x + k.w - r * 0.5f, k.y + dp(0.7f), edgePaint
-            )
-            canvas.restore()
+            // It sat on the key's top edge at full strength from end to end,
+            // which does not read as light on an edge — it reads as a white bar
+            // laid across the key. Light does not stop dead at a corner: it is
+            // brightest in the middle and gone by the ends. So the line moved
+            // down off the edge, pulled in past the rounding, and now fades out
+            // at both ends.
+            val inset = r * 0.9f + dp(1f)
+            if (k.w > inset * 2f + dp(6f)) {
+                if (sheenShader == null || sheenW != k.w || sheenId != theme.id) {
+                    sheenW = k.w
+                    sheenId = theme.id
+                    val clear = theme.sheen and 0x00FFFFFF
+                    sheenShader = LinearGradient(
+                        0f, 0f, k.w, 0f,
+                        intArrayOf(clear, theme.sheen, theme.sheen, clear),
+                        floatArrayOf(0f, 0.3f, 0.7f, 1f), Shader.TileMode.CLAMP
+                    )
+                }
+                keyMatrix.setTranslate(k.x, 0f)
+                sheenShader!!.setLocalMatrix(keyMatrix)
+                edgePaint.style = Paint.Style.STROKE
+                edgePaint.strokeWidth = dp(1.1f)
+                edgePaint.shader = sheenShader
+                edgePaint.alpha = Color.alpha(keyCol(theme.key))
+                val y = k.y + dp(1.8f)
+                canvas.drawLine(k.x + inset, y, k.x + k.w - inset, y, edgePaint)
+                edgePaint.shader = null
+                edgePaint.alpha = 255
+            }
         }
 
         if (theme.edge != 0) {

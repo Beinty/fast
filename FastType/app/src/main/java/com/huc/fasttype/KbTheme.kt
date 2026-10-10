@@ -541,11 +541,30 @@ object Themes {
             c("#FFFFFF"), c("#F7E6DF"), c("#EFCFC4"),
             c("#D9553F"), c("#FFFFFF"),
             c("#2B1A16"), c("#8A655C"), c("#2B1A16"), c("#FFFFFF"), c("#4A2E26"),
-            lightKeys = true, twin = "onyxViolet",
+            lightKeys = true, twin = "sunsetDusk",
             panelTop = c("#F8DCC9"), panelBottom = c("#EFC1C6"),
             keyTop = c("#FFFFFF"), keyBottom = c("#FDF4EF"),
             aura1 = c("#59F2A65C"), aura1x = 0.22f, aura1y = 0.08f, aura1r = 0.95f,
             lift = c("#403A1C14"), sheen = c("#E6FFFFFF"),
+            star = true
+        ),
+        KbTheme(
+            // The same evening an hour later. Not the sunset turned dark — the
+            // sky after the sun is gone: plum overhead, the last of the heat
+            // still sitting low on the water, and the keys warm grey rather
+            // than blue grey, because a cool key under a warm sky is the thing
+            // that makes a dark theme look assembled instead of designed.
+            "sunsetDusk", "غروب ليلي",
+            c("#15101A"), c("#15101A"), c("#2A2130"), c("#15101A"),
+            c("#2A2028"), c("#3B2F38"), c("#1C1620"),
+            c("#E0603F"), c("#FFF6F2"),
+            c("#F7EDE8"), c("#A4909B"), c("#F7EDE8"), c("#15101A"), c("#D8C7C0"),
+            dark = true, twin = "sunsetBasra",
+            panelTop = c("#1E1626"), panelBottom = c("#0C0910"),
+            keyTop = c("#312533"), keyBottom = c("#241B28"),
+            aura1 = c("#59C25A2E"), aura1x = 0.50f, aura1y = 1.02f, aura1r = 1.00f,
+            aura2 = c("#3D7A4BB8"), aura2x = 0.16f, aura2y = 0.04f, aura2r = 0.85f,
+            sheen = c("#52FFFFFF"), edge = c("#1AFFFFFF"), glow = c("#99E0603F"),
             star = true
         ),
         KbTheme(
