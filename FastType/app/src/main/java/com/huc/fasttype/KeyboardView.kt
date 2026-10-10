@@ -42,6 +42,10 @@ class KeyboardView(context: Context) : View(context) {
         fun onClipTap()
         fun onClipHold()
         fun onClipPick(index: Int)
+        /** The search glyph on the clipboard page was tapped. */
+        fun onClipSearch()
+        /** One extracted piece of a clipping was tapped. */
+        fun onClipBit(text: String)
         fun onClipClose()
         fun onDeleteWord()
         fun onRepeatState(active: Boolean)
@@ -166,7 +170,7 @@ class KeyboardView(context: Context) : View(context) {
     /** The strip is also the language bar, so translate mode keeps it even if off. */
     // The faces page keeps the strip: it is the one place that has nothing to
     // suggest, and the one place he most needs a way back out.
-    private val stripVisible get() = showSugg || transOn || page == Pages.EMOJI
+    private val stripVisible get() = showSugg || transOn || clipSearchOn || page == Pages.EMOJI
     /** Height of the translate box row. */
     private val transH get() = suggH * 1.18f
     private var suggRad = dp(12f)
@@ -465,6 +469,149 @@ class KeyboardView(context: Context) : View(context) {
     private var clipDownY = 0f
     private var clipScroll0 = 0f
     private var clipScrolling = false
+
+    // ---- the clipboard, narrowed ----
+    //
+    // A history is only worth having if reaching one clipping is faster than
+    // copying it again. Three things do that and they stack: the chips cut the
+    // list by what a clipping is, the search cuts it by what is in it, and a pin
+    // keeps the handful he uses daily out of the way of both.
+    /** -1 all · -2 pinned · otherwise one of Clip's kinds. */
+    var clipFilter = -1
+        private set
+    var clipQuery = ""
+        private set
+    /** Tapping a row queues it instead of pasting it. */
+    var clipQueueMode = false
+        private set
+    private var clipBitsFor = -1
+    private val clipChipRects = ArrayList<RectF>(6)
+    private val clipChipKeys = ArrayList<Int>(6)
+    private val clipRowRects = ArrayList<RectF>(12)
+    private val clipRowIdx = ArrayList<Int>(12)
+    private val clipPinRects = ArrayList<RectF>(12)
+    private val clipDelRects = ArrayList<RectF>(12)
+    private val clipCutRects = ArrayList<RectF>(12)
+    private val clipBitRects = ArrayList<RectF>(6)
+    private val clipBitText = ArrayList<String>(6)
+    private val clipSearchRect = RectF()
+    private val clipQueueRect = RectF()
+    /** Momentum, so the list keeps going when his thumb leaves it. */
+    private var clipFling = 0f
+    private var clipLastY = 0f
+    private var clipLastT = 0L
+
+    fun setClipFilter(f: Int) {
+        clipFilter = f
+        clipBitsFor = -1
+        clipScroll = 0f
+        invalidate()
+    }
+
+    fun setClipQuery(q: String) {
+        clipQuery = q
+        clipBitsFor = -1
+        clipScroll = 0f
+        invalidate()
+    }
+
+    /**
+     * Searching the clipboard with the keyboard still on screen.
+     *
+     * The clipboard page has no keys on it, so a search box there would have
+     * nothing to type with. This borrows the shape the translation box already
+     * uses: a line for what he is typing and the matches under it, with the
+     * letters where they always are. Typing goes to the search, not the field.
+     */
+    var clipSearchOn = false
+        private set
+    private val clipSearchH get() = suggH * 2.5f
+    private val clipHitRects = ArrayList<RectF>(3)
+    private val clipHitIdx = ArrayList<Int>(3)
+    private val clipSearchClose = RectF()
+
+    fun setClipSearch(on: Boolean) {
+        if (clipSearchOn == on) return
+        clipSearchOn = on
+        clipQuery = ""
+        clipBitsFor = -1
+        requestLayout()
+        invalidate()
+    }
+
+    private fun drawClipSearch(canvas: Canvas, w: Float) {
+        val left = zonePad + sideMargin
+        val right = w - zonePad - sideMargin
+        val top = zonePad + panelPadTop
+        val rowH = clipSearchH / 2.5f
+
+        // the line he is typing
+        rf.set(left, top, right, top + rowH - dp(4f))
+        bgPaint.color = theme.key
+        canvas.drawRoundRect(rf, rad * 1.4f, rad * 1.4f, bgPaint)
+        txtPaint.typeface = arFont
+        txtPaint.textSize = keyH * 0.30f
+        val fm = txtPaint.fontMetrics
+        val cy = rf.centerY() - (fm.ascent + fm.descent) / 2f
+        icoPaint.color = theme.dim
+        icoPaint.strokeWidth = dp(1.8f)
+        drawIcon(canvas, Ico.SEARCH, right - dp(20f), rf.centerY(), keyH * 0.28f)
+        txtPaint.color = if (clipQuery.isEmpty()) theme.dim else theme.text
+        txtPaint.textAlign = Paint.Align.RIGHT
+        canvas.drawText(
+            if (clipQuery.isEmpty()) "دور بالمنسوخ…" else ellipsize(clipQuery, right - left - dp(84f)),
+            right - dp(38f), cy, txtPaint
+        )
+        txtPaint.textAlign = Paint.Align.CENTER
+        txtPaint.color = theme.go
+        canvas.drawText("تم", left + dp(18f), cy, txtPaint)
+        clipSearchClose.set(left, rf.top, left + dp(44f), rf.bottom)
+
+        // the first matches, tappable
+        clipHitRects.clear(); clipHitIdx.clear()
+        val view = Clip.view(-1, clipQuery)
+        var y = top + rowH
+        if (view.isEmpty()) {
+            txtPaint.textSize = keyH * 0.26f
+            txtPaint.color = theme.dim
+            canvas.drawText(
+                if (clipQuery.isEmpty()) "اكتب حرفين" else "ماكو شي يطابق",
+                (left + right) / 2f, y + rowH * 0.75f, txtPaint
+            )
+            return
+        }
+        for (idx in view.take(3)) {
+            rf.set(left, y + dp(2f), right, y + rowH * 0.72f)
+            bgPaint.color = theme.key
+            canvas.drawRoundRect(rf, rad * 1.3f, rad * 1.3f, bgPaint)
+            clipHitRects.add(RectF(rf)); clipHitIdx.add(idx)
+            txtPaint.textSize = keyH * 0.27f
+            txtPaint.color = theme.text
+            txtPaint.textAlign = Paint.Align.RIGHT
+            val fm2 = txtPaint.fontMetrics
+            canvas.drawText(
+                ellipsize(Clip.all[idx].text.replace('\n', ' ').trim(), right - left - dp(22f)),
+                right - dp(11f), rf.centerY() - (fm2.ascent + fm2.descent) / 2f, txtPaint
+            )
+            txtPaint.textAlign = Paint.Align.CENTER
+            y += rowH * 0.75f
+        }
+    }
+
+    fun setClipQueueOff() {
+        clipQueueMode = false
+        invalidate()
+    }
+
+    fun resetClipView() {
+        clipFilter = -1
+        clipQuery = ""
+        clipQueueMode = false
+        clipBitsFor = -1
+        clipScroll = 0f
+        clipFling = 0f
+        Clip.queue.clear()
+    }
     private val clipDoneRect = RectF()
     private var stripDownX = 0f
     private var stripScroll0 = 0f
@@ -862,6 +1009,7 @@ class KeyboardView(context: Context) : View(context) {
         var h = zonePad * 2 + panelPadTop + panelPadBottom
         if (stripVisible) h += suggH + vGap
         if (transOn && page != Pages.EMOJI) h += transH + vGap
+        if (clipSearchOn && page != Pages.EMOJI) h += clipSearchH + vGap
         if (page == Pages.EMOJI) {
             h += catH + gap
             h += keyH * 4 + gap * 3
@@ -891,6 +1039,7 @@ class KeyboardView(context: Context) : View(context) {
         var y = zonePad + panelPadTop
         if (stripVisible) y += suggH + vGap
         if (transOn && page != Pages.EMOJI) y += transH + vGap
+        if (clipSearchOn && page != Pages.EMOJI) y += clipSearchH + vGap
 
         if (page == Pages.EMOJI) {
             catRects.clear()
@@ -1068,9 +1217,23 @@ class KeyboardView(context: Context) : View(context) {
         }
 
         if (fixOn) { drawStrip(canvas, w); drawFix(canvas, w); return }
-        if (page == Pages.CLIP) { drawClipPage(canvas, w, h); return }
+        if (page == Pages.CLIP) {
+            if (clipFling != 0f) {
+                clipScroll = (clipScroll + clipFling).coerceIn(0f, clipMaxScroll)
+                clipFling *= 0.92f
+                if (Math.abs(clipFling) < 0.4f || clipScroll <= 0f || clipScroll >= clipMaxScroll) {
+                    clipFling = 0f
+                } else {
+                    postInvalidateOnAnimation()
+                }
+            }
+            drawClipPage(canvas, w, h)
+            return
+        }
         if (page == Pages.LANGS) { drawLangPage(canvas, w, h); return }
-        if (transOn) {
+        if (clipSearchOn) {
+            drawClipSearch(canvas, w)
+        } else if (transOn) {
             drawTransBar(canvas, w)
             drawTransBox(canvas, w)
         } else if (stripVisible && !blank) {
@@ -1679,30 +1842,77 @@ class KeyboardView(context: Context) : View(context) {
     }
 
     /** Rows of what was copied lately, newest first. */
+    /**
+     * The clipboard page.
+     *
+     * Header, then chips, then the clippings. The chips carry their counts so a
+     * glance says whether the filter is worth tapping, and the row he is after
+     * is usually one tap away rather than a scroll.
+     */
     private fun drawClipPage(canvas: Canvas, w: Float, h: Float) {
         val left = zonePad + sideMargin
         val right = w - zonePad - sideMargin
         val top = zonePad + panelPadTop
+        val pad = dp(11f)
 
-        // header: a title and a way out
         txtPaint.typeface = arFont
         txtPaint.textSize = keyH * 0.33f
         txtPaint.color = theme.dim
         val fmH = txtPaint.fontMetrics
         val hCy = top + clipHeadH / 2f
-        canvas.drawText("الحافظة", left + dp(40f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint)
+        val base = hCy - (fmH.ascent + fmH.descent) / 2f
+        canvas.drawText("الحافظة", left + dp(34f), base, txtPaint)
+
+        // search and queue, as two plain glyphs rather than buttons
+        val icR = keyH * 0.34f
+        clipSearchRect.set(right - dp(150f), top, right - dp(100f), top + clipHeadH)
+        clipQueueRect.set(right - dp(100f), top, right - dp(56f), top + clipHeadH)
+        icoPaint.color = if (clipQuery.isNotEmpty()) theme.go else theme.dim
+        icoPaint.strokeWidth = dp(1.8f)
+        drawIcon(canvas, Ico.SEARCH, clipSearchRect.centerX(), hCy, icR)
+        icoPaint.color = if (clipQueueMode || Clip.queue.isNotEmpty()) theme.go else theme.dim
+        drawIcon(canvas, Ico.QUEUE, clipQueueRect.centerX(), hCy, icR)
+
         txtPaint.color = theme.go
-        canvas.drawText("تم", right - dp(22f), hCy - (fmH.ascent + fmH.descent) / 2f, txtPaint)
+        canvas.drawText("تم", right - dp(22f), base, txtPaint)
         clipDoneRect.set(right - dp(56f), top, right, top + clipHeadH)
 
         var listTop = top + clipHeadH
+
+        // ---- the chips ----
+        clipChipRects.clear(); clipChipKeys.clear()
+        val chips = listOf(
+            -1 to "الكل", -2 to "مثبّت", Clip.LINK to "روابط",
+            Clip.NUM to "أرقام", Clip.CODE to "أكواد", Clip.TEXT to "نصوص"
+        )
+        val chipH = keyH * 0.72f
+        txtPaint.textSize = keyH * 0.26f
+        var cx = right
+        for ((k, label) in chips) {
+            val n = Clip.countOf(k)
+            if (n == 0 && k != -1) continue
+            val text = "$label $n"
+            val cw = txtPaint.measureText(text) + dp(22f)
+            if (cx - cw < left) break
+            rf.set(cx - cw, listTop + dp(2f), cx, listTop + chipH - dp(4f))
+            clipChipRects.add(RectF(rf)); clipChipKeys.add(k)
+            val on = clipFilter == k
+            bgPaint.color = if (on) theme.go else theme.key
+            canvas.drawRoundRect(rf, rf.height() / 2f, rf.height() / 2f, bgPaint)
+            txtPaint.color = if (on) theme.goIcon else theme.text
+            val fmC = txtPaint.fontMetrics
+            canvas.drawText(text, rf.centerX(), rf.centerY() - (fmC.ascent + fmC.descent) / 2f, txtPaint)
+            cx -= cw + dp(5f)
+        }
+        listTop += chipH
+
         val listBottom = h - bottomPad - zonePad - panelPadBottom
 
-        // the pictures ride above the copied text, as one scrolling row
+        // ---- the pictures, as before ----
         shelfRects.clear()
         val shelf = picShelf
-        if (shelf.isNotEmpty()) {
-            val thH = clipRowH * 1.5f
+        if (shelf.isNotEmpty() && clipFilter == -1 && clipQuery.isEmpty()) {
+            val thH = clipRowH * 1.3f
             val thW = thH * 0.62f
             var x = left
             canvas.save()
@@ -1731,45 +1941,124 @@ class KeyboardView(context: Context) : View(context) {
         clipListTop = listTop
         clipListBottom = listBottom
 
+        val view = Clip.view(clipFilter, clipQuery)
         val items = Clip.all
-        val visible = max(clipRowH, listBottom - listTop)
-        clipMaxScroll = max(0f, items.size * clipRowH - visible)
-        clipScroll = clipScroll.coerceIn(0f, clipMaxScroll)
 
-        if (items.isEmpty()) {
-            if (shelf.isEmpty()) {
-                txtPaint.color = theme.dim
-                canvas.drawText("ماكو شي منسوخ بعد",
-                    (left + right) / 2f, (listTop + listBottom) / 2f, txtPaint)
-            }
+        clipRowRects.clear(); clipRowIdx.clear()
+        clipPinRects.clear(); clipDelRects.clear(); clipCutRects.clear()
+        clipBitRects.clear(); clipBitText.clear()
+
+        if (view.isEmpty()) {
+            txtPaint.textSize = keyH * 0.30f
+            txtPaint.color = theme.dim
+            canvas.drawText(
+                if (clipQuery.isNotEmpty()) "ماكو شي يطابق «$clipQuery»" else "ماكو شي هنا",
+                (left + right) / 2f, (listTop + listBottom) / 2f, txtPaint
+            )
+            clipMaxScroll = 0f
             return
         }
 
+        // every row is one line tall, and the one with its pieces open is two
+        val bitsH = keyH * 0.70f
+        var total = view.size * clipRowH
+        if (clipBitsFor >= 0 && view.contains(clipBitsFor)) total += bitsH
+        val visible = max(clipRowH, listBottom - listTop)
+        clipMaxScroll = max(0f, total - visible)
+        clipScroll = clipScroll.coerceIn(0f, clipMaxScroll)
+
         canvas.save()
         canvas.clipRect(left, listTop, right, listBottom)
-        for (i in items.indices) {
-            val y = listTop + i * clipRowH - clipScroll
-            if (y > listBottom || y + clipRowH < listTop) continue
-            rf.set(left, y + dp(3f), right, y + clipRowH - dp(3f))
-            bgPaint.color = if (i == clipPressed) theme.keyDown else theme.key
-            canvas.drawRoundRect(rf, rad * 1.6f, rad * 1.6f, bgPaint)
+        var y = listTop - clipScroll
+        for (idx in view) {
+            val e = items[idx]
+            if (y + clipRowH >= listTop && y <= listBottom) {
+                rf.set(left, y + dp(3f), right, y + clipRowH - dp(3f))
+                clipRowRects.add(RectF(rf)); clipRowIdx.add(idx)
+                val qn = Clip.queue.indexOf(idx)
+                bgPaint.color = when {
+                    idx == clipPressed -> theme.keyDown
+                    qn >= 0 -> theme.onBg
+                    else -> theme.key
+                }
+                canvas.drawRoundRect(rf, rad * 1.6f, rad * 1.6f, bgPaint)
+                if (e.pinned) {
+                    bgPaint.color = theme.go
+                    canvas.drawRoundRect(
+                        RectF(right - dp(3f), rf.top, right, rf.bottom),
+                        dp(2f), dp(2f), bgPaint
+                    )
+                }
 
-            val e = items[i]
-            txtPaint.textSize = keyH * 0.31f
-            txtPaint.color = theme.text
-            val fm = txtPaint.fontMetrics
-            val oneLine = e.text.replace('\n', ' ').trim()
-            canvas.drawText(
-                ellipsize(oneLine, right - left - dp(78f)),
-                (left + right) / 2f, y + clipRowH * 0.42f - (fm.ascent + fm.descent) / 2f,
-                txtPaint
-            )
-            txtPaint.textSize = keyH * 0.24f
-            txtPaint.color = theme.dim
-            canvas.drawText(
-                if (e.pinned) "مثبّت · " + Clip.ago(e.at) else Clip.ago(e.at),
-                (left + right) / 2f, y + clipRowH * 0.76f, txtPaint
-            )
+                // the three actions, at the far end of the row
+                val aR = keyH * 0.28f
+                var ax = left + dp(20f)
+                icoPaint.strokeWidth = dp(1.6f)
+                icoPaint.color = if (e.pinned) theme.go else theme.dim
+                drawIcon(canvas, Ico.PIN, ax, rf.centerY(), aR)
+                clipPinRects.add(RectF(ax - aR, rf.top, ax + aR, rf.bottom))
+                ax += dp(30f)
+                val bits = Clip.bits(e.text)
+                if (bits.isNotEmpty()) {
+                    icoPaint.color = if (clipBitsFor == idx) theme.go else theme.dim
+                    drawIcon(canvas, Ico.CUT, ax, rf.centerY(), aR)
+                    clipCutRects.add(RectF(ax - aR, rf.top, ax + aR, rf.bottom))
+                    clipRowIdx.let { }
+                    ax += dp(30f)
+                } else {
+                    clipCutRects.add(RectF())
+                }
+                icoPaint.color = theme.dim
+                drawIcon(canvas, Ico.CLOSE, ax, rf.centerY(), aR * 0.85f)
+                clipDelRects.add(RectF(ax - aR, rf.top, ax + aR, rf.bottom))
+
+                val textRight = right - dp(10f)
+                val textLeft = ax + dp(22f)
+                txtPaint.textSize = keyH * 0.30f
+                txtPaint.color = theme.text
+                val fm = txtPaint.fontMetrics
+                val oneLine = e.text.replace('\n', ' ').trim()
+                txtPaint.textAlign = Paint.Align.RIGHT
+                canvas.drawText(
+                    ellipsize(oneLine, textRight - textLeft),
+                    textRight, y + clipRowH * 0.44f - (fm.ascent + fm.descent) / 2f, txtPaint
+                )
+                txtPaint.textSize = keyH * 0.23f
+                txtPaint.color = theme.dim
+                val tag = when (Clip.kindOf(e.text)) {
+                    Clip.LINK -> "رابط"
+                    Clip.NUM -> "أرقام"
+                    Clip.CODE -> "كود"
+                    else -> "نص"
+                }
+                val meta = StringBuilder(tag).append(" · ").append(Clip.ago(e.at))
+                if (qn >= 0) meta.append(" · بالدور ").append(qn + 1)
+                canvas.drawText(meta.toString(), textRight, y + clipRowH * 0.80f, txtPaint)
+                txtPaint.textAlign = Paint.Align.CENTER
+            } else {
+                clipPinRects.add(RectF()); clipDelRects.add(RectF()); clipCutRects.add(RectF())
+                clipRowRects.add(RectF()); clipRowIdx.add(idx)
+            }
+            y += clipRowH
+
+            if (clipBitsFor == idx) {
+                val bits = Clip.bits(e.text)
+                var bx = right
+                txtPaint.textSize = keyH * 0.26f
+                for (b in bits) {
+                    val bw = txtPaint.measureText(b) + dp(20f)
+                    if (bx - bw < left) break
+                    rf.set(bx - bw, y + dp(2f), bx, y + bitsH - dp(8f))
+                    bgPaint.color = theme.onBg
+                    canvas.drawRoundRect(rf, rf.height() / 2f, rf.height() / 2f, bgPaint)
+                    txtPaint.color = theme.onText
+                    val fmB = txtPaint.fontMetrics
+                    canvas.drawText(b, rf.centerX(), rf.centerY() - (fmB.ascent + fmB.descent) / 2f, txtPaint)
+                    clipBitRects.add(RectF(rf)); clipBitText.add(b)
+                    bx -= bw + dp(5f)
+                }
+                y += bitsH
+            }
         }
         canvas.restore()
     }
@@ -2159,6 +2448,39 @@ class KeyboardView(context: Context) : View(context) {
                 path.lineTo(cx - s * 0.1f, cy + s * 0.6f)
                 canvas.drawPath(path, icoPaint)
             }
+            Ico.PIN -> {
+                // a pin seen from the side: head, shaft, point
+                canvas.drawLine(cx, cy + s * 0.15f, cx, cy + s, icoPaint)
+                path.moveTo(cx - s * 0.62f, cy + s * 0.15f)
+                path.lineTo(cx + s * 0.62f, cy + s * 0.15f)
+                path.lineTo(cx + s * 0.34f, cy - s * 0.25f)
+                path.lineTo(cx + s * 0.44f, cy - s * 0.8f)
+                path.lineTo(cx - s * 0.44f, cy - s * 0.8f)
+                path.lineTo(cx - s * 0.34f, cy - s * 0.25f)
+                path.close()
+                canvas.drawPath(path, icoPaint)
+            }
+            Ico.CUT -> {
+                canvas.drawCircle(cx - s * 0.45f, cy + s * 0.55f, s * 0.3f, icoPaint)
+                canvas.drawCircle(cx + s * 0.45f, cy + s * 0.55f, s * 0.3f, icoPaint)
+                canvas.drawLine(cx - s * 0.3f, cy + s * 0.3f, cx + s * 0.6f, cy - s * 0.85f, icoPaint)
+                canvas.drawLine(cx + s * 0.3f, cy + s * 0.3f, cx - s * 0.6f, cy - s * 0.85f, icoPaint)
+            }
+            Ico.CLOSE -> {
+                canvas.drawLine(cx - s * 0.7f, cy - s * 0.7f, cx + s * 0.7f, cy + s * 0.7f, icoPaint)
+                canvas.drawLine(cx + s * 0.7f, cy - s * 0.7f, cx - s * 0.7f, cy + s * 0.7f, icoPaint)
+            }
+            Ico.QUEUE -> {
+                // three lines and an arrow down: one after another
+                canvas.drawLine(cx - s * 0.9f, cy - s * 0.7f, cx + s * 0.3f, cy - s * 0.7f, icoPaint)
+                canvas.drawLine(cx - s * 0.9f, cy, cx + s * 0.1f, cy, icoPaint)
+                canvas.drawLine(cx - s * 0.9f, cy + s * 0.7f, cx - s * 0.1f, cy + s * 0.7f, icoPaint)
+                canvas.drawLine(cx + s * 0.6f, cy - s * 0.5f, cx + s * 0.6f, cy + s * 0.75f, icoPaint)
+                path.moveTo(cx + s * 0.25f, cy + s * 0.35f)
+                path.lineTo(cx + s * 0.6f, cy + s * 0.8f)
+                path.lineTo(cx + s * 0.95f, cy + s * 0.35f)
+                canvas.drawPath(path, icoPaint)
+            }
             Ico.SEARCH -> {
                 canvas.drawCircle(cx - s * 0.12f, cy - s * 0.12f, s * 0.62f, icoPaint)
                 canvas.drawLine(
@@ -2369,11 +2691,15 @@ class KeyboardView(context: Context) : View(context) {
                     clipDownY = y
                     clipScroll0 = clipScroll
                     clipScrolling = false
-                    clipPressed =
-                        if (y in clipListTop..clipListBottom)
-                            ((y - clipListTop + clipScroll) / clipRowH).toInt()
-                                .takeIf { it in Clip.all.indices } ?: -1
-                        else -1
+                    clipFling = 0f
+                    clipLastY = y
+                    clipLastT = android.os.SystemClock.uptimeMillis()
+                    clipPressed = -1
+                    if (y in clipListTop..clipListBottom) {
+                        for (i in clipRowRects.indices) {
+                            if (clipRowRects[i].contains(x, y)) { clipPressed = clipRowIdx[i]; break }
+                        }
+                    }
                     invalidate()
                     return true
                 }
@@ -2448,6 +2774,14 @@ class KeyboardView(context: Context) : View(context) {
 
                 // the translate line is not a key and not the strip; without this
                 // a tap on it fell through to the nearest letter
+                if (clipSearchOn) {
+                    if (clipSearchClose.contains(x, y)) { listener?.onClipSearch(); return true }
+                    for (hi in clipHitRects.indices) {
+                        if (clipHitRects[hi].contains(x, y)) {
+                            listener?.onClipPick(clipHitIdx[hi]); return true
+                        }
+                    }
+                }
                 if (transOn && trBoxRect.contains(x, y)) {
                     if (!trClearRect.isEmpty && trClearRect.contains(x, y)) {
                         transClearDown = true
@@ -2538,6 +2872,12 @@ class KeyboardView(context: Context) : View(context) {
                     }
                     if (clipScrolling) {
                         clipScroll = (clipScroll0 - dy).coerceIn(0f, clipMaxScroll)
+                        val now = android.os.SystemClock.uptimeMillis()
+                        val dt = (now - clipLastT).coerceAtLeast(1L)
+                        // pixels per frame, smoothed, so one jittery sample cannot throw it
+                        clipFling = clipFling * 0.4f + ((clipLastY - y) / dt * 16f) * 0.6f
+                        clipLastY = y
+                        clipLastT = now
                         invalidate()
                     }
                     return true
@@ -2607,13 +2947,49 @@ class KeyboardView(context: Context) : View(context) {
                     val dragged = clipScrolling
                     clipPressed = -1
                     clipScrolling = false
+                    if (dragged) {
+                        // let it carry on and settle instead of stopping dead
+                        if (Math.abs(clipFling) > 1.2f) postInvalidateOnAnimation() else clipFling = 0f
+                        invalidate()
+                        return true
+                    }
+                    clipFling = 0f
                     invalidate()
-                    if (dragged) return true
                     if (clipDoneRect.contains(x, y)) { listener?.onClipClose(); return true }
+                    if (clipSearchRect.contains(x, y)) { listener?.onClipSearch(); return true }
+                    if (clipQueueRect.contains(x, y)) {
+                        clipQueueMode = !clipQueueMode
+                        if (!clipQueueMode) Clip.queue.clear()
+                        invalidate(); return true
+                    }
+                    for (ci in clipChipRects.indices) {
+                        if (clipChipRects[ci].contains(x, y)) { setClipFilter(clipChipKeys[ci]); return true }
+                    }
+                    for (bi in clipBitRects.indices) {
+                        if (clipBitRects[bi].contains(x, y)) {
+                            listener?.onClipBit(clipBitText[bi]); return true
+                        }
+                    }
                     for (si in shelfRects.indices) {
                         if (shelfRects[si].contains(x, y)) { listener?.onPicPick(si); return true }
                     }
-                    if (i >= 0) listener?.onClipPick(i)
+                    for (ri in clipRowRects.indices) {
+                        val idx = clipRowIdx[ri]
+                        if (clipPinRects.getOrNull(ri)?.contains(x, y) == true) {
+                            Clip.togglePin(idx); clipBitsFor = -1; invalidate(); return true
+                        }
+                        if (clipCutRects.getOrNull(ri)?.contains(x, y) == true) {
+                            clipBitsFor = if (clipBitsFor == idx) -1 else idx
+                            invalidate(); return true
+                        }
+                        if (clipDelRects.getOrNull(ri)?.contains(x, y) == true) {
+                            Clip.remove(idx); clipBitsFor = -1; invalidate(); return true
+                        }
+                    }
+                    if (i >= 0) {
+                        if (clipQueueMode) { Clip.queueToggle(i); invalidate() }
+                        else listener?.onClipPick(i)
+                    }
                     return true
                 }
 

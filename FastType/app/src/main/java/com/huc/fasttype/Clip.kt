@@ -20,7 +20,7 @@ object Clip {
 
     private const val PREF = "huc_clip"
     private const val K_ITEMS = "items"
-    private const val MAX = 40
+    private const val MAX = 90
     private const val MAX_LEN = 5000
 
     class Entry(val text: String, val at: Long, var pinned: Boolean)
@@ -66,9 +66,12 @@ object Clip {
         if (items.size != before) save()
     }
 
+    /** Set while the field on screen is a password or code box. */
+    @Volatile var blocked = false
+
     /** Reads whatever is on the clipboard right now and files it. */
     fun capture(c: Context) {
-        if (!Store.kbClip) return
+        if (!Store.kbClip || blocked) return
         try {
             val cm = c.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 ?: return
@@ -97,6 +100,86 @@ object Clip {
         }
         fresh = true
         save()
+    }
+
+    // ---- what a clipping is ----
+    //
+    // Forty clippings in one list is a list nobody reads: he scrolls it looking
+    // for the one he wants, which is the thing he was trying to avoid by having
+    // a history at all. Sorting them by what they are costs nothing — the text
+    // already says which it is — and turns the scroll into one tap.
+
+    const val TEXT = 0
+    const val LINK = 1
+    const val NUM = 2
+    const val CODE = 3
+
+    private val reUrl = Regex("""(https?://|www\.)[^\s]+""")
+    private val reMail = Regex("""[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}""")
+    private val reNum = Regex("""[0-9\u0660-\u0669][0-9\u0660-\u0669 \-]{4,}""")
+
+    fun kindOf(t: String): Int {
+        val s = t.trim()
+        if (reUrl.containsMatchIn(s) || reMail.containsMatchIn(s)) return LINK
+        // a line of code: brackets, slashes and no Arabic in it
+        if (s.none { it in '\u0600'..'\u06FF' } &&
+            (s.contains('{') || s.contains('(') || s.contains(';') ||
+                s.contains("&&") || s.contains("/") && s.contains(" "))
+        ) return CODE
+        val digits = s.count { it.isDigit() || it in '\u0660'..'\u0669' }
+        if (digits >= 4 && digits >= s.length / 2) return NUM
+        return TEXT
+    }
+
+    /**
+     * The useful pieces inside a clipping.
+     *
+     * He copies a whole message to get one number out of it, pastes the lot and
+     * deletes the rest. These are the parts worth pasting on their own; a piece
+     * that is the whole clipping is not one.
+     */
+    fun bits(t: String): List<String> {
+        val out = LinkedHashSet<String>()
+        for (m in reUrl.findAll(t)) out.add(m.value.trim('.', '،', ')', '('))
+        for (m in reMail.findAll(t)) out.add(m.value)
+        for (m in reNum.findAll(t)) {
+            val v = m.value.trim()
+            if (v.replace(" ", "").replace("-", "").length >= 5) out.add(v)
+        }
+        val whole = t.trim()
+        return out.filter { it != whole }.take(6)
+    }
+
+    /** Indices into [all], pinned first, narrowed by a kind and a search. */
+    fun view(filter: Int, query: String): List<Int> {
+        val q = query.trim()
+        val idx = items.indices.filter { i ->
+            val e = items[i]
+            val okKind = when (filter) {
+                -1 -> true
+                -2 -> e.pinned
+                else -> kindOf(e.text) == filter
+            }
+            okKind && (q.isEmpty() || e.text.contains(q, ignoreCase = true))
+        }
+        return idx.sortedByDescending { items[it].pinned }
+    }
+
+    fun countOf(filter: Int): Int = view(filter, "").size
+
+    /** The queued clippings, pasted one per tap of the clipboard key. */
+    val queue = ArrayList<Int>(6)
+
+    fun queueToggle(i: Int) {
+        if (!queue.remove(i)) queue.add(i)
+    }
+
+    fun queueNext(): String? {
+        while (queue.isNotEmpty()) {
+            val i = queue.removeAt(0)
+            if (i in items.indices) return items[i].text
+        }
+        return null
     }
 
     fun latest(): String? = items.firstOrNull()?.text

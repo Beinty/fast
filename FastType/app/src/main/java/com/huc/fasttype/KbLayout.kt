@@ -52,6 +52,12 @@ object Ico {
 
     /** The action key when the field is a search box, the way iOS does it. */
     const val SEARCH = 16
+
+    // the clipboard's own: pin, cut into pieces, remove, and queue
+    const val PIN = 17
+    const val CUT = 18
+    const val CLOSE = 19
+    const val QUEUE = 20
 }
 
 class Key(

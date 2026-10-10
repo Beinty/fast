@@ -1539,6 +1539,8 @@ class MainActivity : Activity() {
             override fun onClipTap() {}
             override fun onClipHold() {}
             override fun onClipPick(index: Int) {}
+            override fun onClipSearch() {}
+            override fun onClipBit(text: String) {}
             override fun onClipClose() {}
             override fun onDeleteWord() {}
             override fun onRepeatState(active: Boolean) {}

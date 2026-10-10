@@ -417,6 +417,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         shift = 0
         page = Pages.LETTERS
         // the blue key says what this field actually does
+        // a password or a one-time code is the one thing a clipboard history
+        // must not keep: it outlives its use by hours and sits in a list
+        Clip.blocked = isSecretField(info)
         val act = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
         KbLayout.actionIcon =
             if (act == EditorInfo.IME_ACTION_SEARCH) Ico.SEARCH else Ico.ENTER
@@ -491,6 +494,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // field changes, and only there.
         val s = if (arabic) westernIfNumberField(raw) else raw
 
+        if (kv?.clipSearchOn == true) {
+            kv?.setClipQuery((kv?.clipQuery ?: "") + s)
+            return
+        }
         if (transOn) {
             transBuf.append(s)
             // a space ends a word, and that is the moment a translation is worth having
@@ -723,6 +730,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onDelete() {
+        if (kv?.clipSearchOn == true) {
+            val q = kv?.clipQuery ?: ""
+            if (q.isEmpty()) onClipSearch() else kv?.setClipQuery(q.dropLast(1))
+            return
+        }
         if (transOn) {
             if (transBuf.isNotEmpty()) transBuf.setLength(transBuf.length - 1)
             afterTransEdit(false)
@@ -815,6 +827,16 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
         val ic = currentInputConnection ?: return
         Clip.capture(this)
+        // anything he queued goes out in the order he queued it, one per tap
+        val queued = Clip.queueNext()
+        if (queued != null) {
+            releaseComposing(ic)
+            ic.commitText(queued, 1)
+            feedback()
+            if (Clip.queue.isEmpty()) kv?.setClipQueueOff()
+            refreshSugg()
+            return
+        }
         val t = Clip.latest()
         if (t.isNullOrEmpty()) {
             showStrip("الحافظة فارغة")
@@ -847,6 +869,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val ic = currentInputConnection
         page = Pages.LETTERS
         kv?.page = page
+        kv?.setClipSearch(false)
+        kv?.resetClipView()
         kv?.rebuild()
         if (ic != null) {
             releaseComposing(ic)
@@ -943,7 +967,61 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onClipClose() {
         page = Pages.LETTERS
         kv?.page = page
+        kv?.resetClipView()
         kv?.rebuild()
+        refreshSugg()
+    }
+
+    /**
+     * Search opens with the letters under it, so he can type into it.
+     *
+     * The clipboard page has no keys of its own; this leaves that page, turns
+     * the strip into a search line, and routes what he types there instead of
+     * into the field. Tapping it again puts everything back.
+     */
+    /** Password, PIN and one-time-code fields, by what the app declares them to be. */
+    private fun isSecretField(info: EditorInfo?): Boolean {
+        val it0 = info?.inputType ?: return false
+        val cls = it0 and android.text.InputType.TYPE_MASK_CLASS
+        val v = it0 and android.text.InputType.TYPE_MASK_VARIATION
+        if (cls == android.text.InputType.TYPE_CLASS_TEXT) {
+            if (v == android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                v == android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                v == android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            ) return true
+        }
+        if (cls == android.text.InputType.TYPE_CLASS_NUMBER &&
+            v == android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
+        ) return true
+        return false
+    }
+
+    override fun onClipSearch() {
+        feedback()
+        val on = kv?.clipSearchOn != true
+        page = Pages.LETTERS
+        kv?.page = page
+        kv?.setClipSearch(on)
+        kv?.rebuild()
+        if (!on) refreshSugg()
+    }
+
+    /** One piece out of a clipping — a number, a link — goes in on its own. */
+    override fun onClipBit(text: String) {
+        feedback()
+        val ic = currentInputConnection
+        page = Pages.LETTERS
+        kv?.page = page
+        kv?.resetClipView()
+        kv?.rebuild()
+        if (ic != null) {
+            releaseComposing(ic)
+            ic.commitText(text, 1)
+        }
+        Clip.used()
+        resetWord()
+        lastWord = ""
+        prevWord = ""
         refreshSugg()
     }
 
