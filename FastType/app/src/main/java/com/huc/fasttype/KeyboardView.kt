@@ -736,14 +736,16 @@ class KeyboardView(context: Context) : View(context) {
      * back yet and may not.
      */
     private fun fixHeight(): Float {
-        var h = keyH * 0.95f                      // the choices
-        h += keyH * 0.62f                         // what he wrote
-        if (fixBusy) h += keyH * 0.80f
-        if (fixResult.isNotEmpty() || fixError.isNotEmpty()) {
-            h += keyH * (if (fixError.isNotEmpty()) 0.85f else 1.75f)
-            if (fixResult.isNotEmpty()) h += keyH * 0.90f  // apply / cancel
-        }
-        return h + vGap * 2
+        // The panel has to stand as tall as the keys it replaces, or the whole
+        // window shrinks under the field and the chat jumps up and back down
+        // around it. Below that floor it grows with the exchange.
+        val floor = keyH * 4 + vGap * 3
+        var h = keyH * 1.05f                      // the choices
+        h += keyH * 0.95f                         // what he wrote, over two lines
+        if (fixBusy) h += keyH * 0.85f
+        if (fixError.isNotEmpty()) h += keyH * 0.90f
+        if (fixResult.isNotEmpty()) h += keyH * 2.30f + keyH * 0.95f
+        return maxOf(h + vGap * 2, floor)
     }
 
     private fun contentHeight(): Float {
@@ -994,7 +996,7 @@ class KeyboardView(context: Context) : View(context) {
         val pad = dp(12f)
 
         // ---- the choices ----
-        val chH = keyH * 0.95f - dp(5f)
+        val chH = keyH * 1.05f - dp(6f)
         fixRects.clear()
         if (fixOpts.isNotEmpty()) {
             val gapN = dp(5f)
@@ -1024,15 +1026,11 @@ class KeyboardView(context: Context) : View(context) {
         // ---- what he wrote, so the two can be compared ----
         txtPaint.textSize = keyH * 0.26f
         txtPaint.color = theme.dim
-        val fm1 = txtPaint.fontMetrics
-        canvas.drawText(
-            ellipsize(fixSource, right - left - pad * 2),
-            (left + right) / 2f, y + keyH * 0.40f - (fm1.ascent + fm1.descent) / 2f, txtPaint
-        )
-        y += keyH * 0.62f
+        wrapText(canvas, fixSource, left + pad, right - pad, y + dp(2f), 2)
+        y += keyH * 0.95f
 
         if (fixBusy) {
-            rf.set(left, y, right, y + keyH * 0.80f - dp(6f))
+            rf.set(left, y, right, y + keyH * 0.85f - dp(6f))
             bgPaint.color = theme.key
             canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
             txtPaint.textSize = keyH * 0.30f
@@ -1040,11 +1038,11 @@ class KeyboardView(context: Context) : View(context) {
             val fm2 = txtPaint.fontMetrics
             canvas.drawText("يشتغل…", rf.centerX(),
                 rf.centerY() - (fm2.ascent + fm2.descent) / 2f, txtPaint)
-            y += keyH * 0.80f
+            y += keyH * 0.85f
         }
 
         if (fixError.isNotEmpty()) {
-            rf.set(left, y, right, y + keyH * 0.85f - dp(6f))
+            rf.set(left, y, right, y + keyH * 0.90f - dp(6f))
             bgPaint.color = theme.key
             canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
             txtPaint.textSize = keyH * 0.28f
@@ -1052,21 +1050,21 @@ class KeyboardView(context: Context) : View(context) {
             val fm3 = txtPaint.fontMetrics
             canvas.drawText(ellipsize(fixError, right - left - pad * 2), rf.centerX(),
                 rf.centerY() - (fm3.ascent + fm3.descent) / 2f, txtPaint)
-            y += keyH * 0.85f
+            y += keyH * 0.90f
         }
 
         if (fixResult.isNotEmpty()) {
-            val boxH = keyH * 1.75f - dp(6f)
+            val boxH = keyH * 2.30f - dp(6f)
             rf.set(left, y, right, y + boxH)
             bgPaint.color = theme.key
             canvas.drawRoundRect(rf, dp(10f), dp(10f), bgPaint)
             txtPaint.textSize = keyH * 0.30f
             txtPaint.color = theme.text
-            wrapText(canvas, fixResult, left + pad, right - pad, y + dp(9f), 3)
+            wrapText(canvas, fixResult, left + pad, right - pad, y + dp(9f), 4)
             y += boxH + dp(6f)
 
             // ---- apply / cancel ----
-            val bh = keyH * 0.90f - dp(6f)
+            val bh = keyH * 0.95f - dp(8f)
             val half = (right - left - dp(6f)) / 2f
             fixApplyRect.set(left, y, left + half, y + bh)
             fixCancelRect.set(right - half, y, right, y + bh)
@@ -2113,6 +2111,22 @@ class KeyboardView(context: Context) : View(context) {
 
                 if (toolsOpen) setToolsOpen(false)
 
+                // The rewrite panel stands where the keys do. Without this a tap
+                // on one of its choices fell through to find(), which has a
+                // nearest-key fallback and so always answers with a letter.
+                if (fixOn) {
+                    fixPressed = -99
+                    for (i in fixRects.indices) {
+                        if (fixRects[i].contains(x, y)) { fixPressed = i; break }
+                    }
+                    if (fixPressed == -99 && !fixApplyRect.isEmpty &&
+                        fixApplyRect.contains(x, y)) fixPressed = -50
+                    if (fixPressed == -99 && !fixCancelRect.isEmpty &&
+                        fixCancelRect.contains(x, y)) fixPressed = -51
+                    invalidate()
+                    return true
+                }
+
                 // the translate line is not a key and not the strip; without this
                 // a tap on it fell through to the nearest letter
                 if (transOn && trBoxRect.contains(x, y)) {
@@ -2173,6 +2187,7 @@ class KeyboardView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
+                if (fixOn) return true
                 // A second finger landing while the first is still down is what fast
                 // typing looks like. Handling only the first pointer meant every such
                 // letter was silently lost.
@@ -2195,6 +2210,7 @@ class KeyboardView(context: Context) : View(context) {
             MotionEvent.ACTION_POINTER_UP -> return true
 
             MotionEvent.ACTION_MOVE -> {
+                if (fixOn) return true
                 if (page == Pages.CLIP) {
                     val dy = y - clipDownY
                     if (!clipScrolling && Math.abs(dy) > dp(8f)) {
