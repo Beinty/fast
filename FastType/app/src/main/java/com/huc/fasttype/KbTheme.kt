@@ -41,7 +41,28 @@ class KbTheme(
     /** A line inside the top of every key: the keys look pressed into the panel. */
     val carve: Int = 0,
     /** The light along the bottom of a carved key, which is what sells it. */
-    val carveLight: Int = 0
+    val carveLight: Int = 0,
+
+    // ---- glass ----
+    //
+    // Glass is not a colour, it is three things together: the app showing
+    // through, a bright line catching the light along the top of every key, and
+    // a soft shadow under it. A theme that sets these turns transparency on by
+    // itself when it is picked, at the depth that suits it — a milky theme wants
+    // far less of it than a clear one, and asking him to find that number with a
+    // slider every time is how the settings got into the state they are in.
+
+    /** This theme is glass: picking it switches transparency on. */
+    val glass: Boolean = false,
+    /** How solid the panel is, 20..100. Zero leaves his own setting alone. */
+    val glassPanel: Int = 0,
+    /** How solid the keys are, 20..100. */
+    val glassKey: Int = 0,
+    /** The light along the top inside edge of every key. */
+    val sheen: Int = 0,
+    /** Panel inset and top radius this theme wants, when it is a floating one. */
+    val inset: Int = -1,
+    val panelRadius: Int = -1
 )
 
 object Themes {
@@ -397,6 +418,65 @@ object Themes {
             c("#6B61E8"), c("#FFFFFF"),
             c("#FFFFFF"), c("#9AA0A6"), c("#FFFFFF"), c("#000000"), c("#E3E3E3"),
             dark = true, twin = "nebulaDay"
+        ),
+
+        // ================= زجاج =================
+        //
+        // Five of one idea, separated by how much light each one lets through.
+        // The sheen is what makes the difference read as glass rather than as a
+        // pale key: a single bright line along the top inside edge, the way light
+        // catches a real edge. Without it transparency just looks washed out.
+
+        KbTheme(
+            "glassClear", "زجاج صافي",
+            c("#D3D8E4"), c("#D3D8E4"), c("#C6CCDA"), c("#D3D8E4"),
+            c("#FFFFFF"), c("#EDF0F7"), c("#E4E8F1"),
+            c("#20222E"), c("#FFFFFF"),
+            c("#0F0F16"), c("#5C6273"), c("#0F0F16"), c("#FFFFFF"), c("#2A2D3A"),
+            lightKeys = true, twin = "glassSmoke",
+            lift = c("#2814182C"), edge = c("#66FFFFFF"), sheen = c("#D9FFFFFF"),
+            glass = true, glassPanel = 46, glassKey = 74
+        ),
+        KbTheme(
+            "glassMilk", "زجاج حليبي",
+            c("#E6E9F1"), c("#E6E9F1"), c("#DCE0EA"), c("#E6E9F1"),
+            c("#FFFFFF"), c("#F4F5FA"), c("#EDEFF6"),
+            c("#636780"), c("#FFFFFF"),
+            c("#2A2A35"), c("#777C8C"), c("#2A2A35"), c("#FFFFFF"), c("#3A3D4C"),
+            lightKeys = true, twin = "glassSmoke",
+            lift = c("#1E1C2040"), sheen = c("#A6FFFFFF"),
+            glass = true, glassPanel = 82, glassKey = 94
+        ),
+        KbTheme(
+            "glassDrop", "زجاج قطرة",
+            c("#CBD5E6"), c("#CBD5E6"), c("#BCC7DC"), c("#CBD5E6"),
+            c("#FFFFFF"), c("#E6EBF6"), c("#DCE3F0"),
+            c("#333750"), c("#FFFFFF"),
+            c("#0D0D14"), c("#565C70"), c("#0D0D14"), c("#FFFFFF"), c("#272B3C"),
+            lightKeys = true, twin = "glassSmoke",
+            lift = c("#38141A33"), edge = c("#8CFFFFFF"), sheen = c("#FFFFFFFF"),
+            glass = true, glassPanel = 40, glassKey = 86
+        ),
+        KbTheme(
+            "glassSmoke", "زجاج دخاني",
+            c("#101119"), c("#101119"), c("#1C1E2A"), c("#101119"),
+            c("#2B2E3C"), c("#3E4254"), c("#22242F"),
+            c("#EDEEF5"), c("#15161F"),
+            c("#F2F2F7"), c("#9FA4B5"), c("#F2F2F7"), c("#15161F"), c("#C9CCD8"),
+            dark = true, twin = "glassClear",
+            lift = c("#50000000"), edge = c("#26FFFFFF"), sheen = c("#4DFFFFFF"),
+            glass = true, glassPanel = 56, glassKey = 64
+        ),
+        KbTheme(
+            "glassFloat", "زجاج عائم",
+            c("#C8D1E2"), c("#D6DBE8"), c("#8CFFFFFF"), c("#D6DBE8"),
+            c("#FFFFFF"), c("#EDF0F8"), c("#E3E7F2"),
+            c("#20222E"), c("#FFFFFF"),
+            c("#0F0F16"), c("#5C6273"), c("#0F0F16"), c("#FFFFFF"), c("#2A2D3A"),
+            lightKeys = true, twin = "glassSmoke",
+            lift = c("#30141A33"), edge = c("#73FFFFFF"), sheen = c("#CCFFFFFF"),
+            glass = true, glassPanel = 48, glassKey = 76,
+            inset = 10, panelRadius = 28
         )
     )
 

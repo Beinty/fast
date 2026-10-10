@@ -1804,17 +1804,45 @@ class KeyboardView(context: Context) : View(context) {
         canvas.restore()
     }
 
+    /**
+     * [rest] for a key at rest, or the pressed colour on its way back to it for
+     * the one just released. Eased out, so it leaves quickly and lands softly
+     * rather than sliding at one speed.
+     */
+    private fun restOrFading(k: Key, rest: Int): Int {
+        if (k !== fadeKey) return rest
+        val dt = android.os.SystemClock.uptimeMillis() - fadeAt
+        if (dt >= FADE_MS) { fadeKey = null; return rest }
+        val t = dt / FADE_MS.toFloat()
+        val e = 1f - (1f - t) * (1f - t)        // ease-out
+        postInvalidateOnAnimation(
+            (k.x - 2f).toInt(), (k.y - 2f).toInt(),
+            (k.x + k.w + 2f).toInt(), (k.y + k.h + 2f).toInt()
+        )
+        return mix(theme.keyDown, rest, e)
+    }
+
+    /** [a] towards [b] by [t]. */
+    private fun mix(a: Int, b: Int, t: Float): Int = Color.argb(
+        (Color.alpha(a) + (Color.alpha(b) - Color.alpha(a)) * t).toInt().coerceIn(0, 255),
+        (Color.red(a) + (Color.red(b) - Color.red(a)) * t).toInt().coerceIn(0, 255),
+        (Color.green(a) + (Color.green(b) - Color.green(a)) * t).toInt().coerceIn(0, 255),
+        (Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t).toInt().coerceIn(0, 255)
+    )
+
     private fun drawKey(canvas: Canvas, k: Key) {
         rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
 
         val isOn = k.code == Code.SHIFT && shift > 0
-        keyPaint.color = keyCol(when {
-            k === pressed -> theme.keyDown
+        val rest = when {
             isOn -> theme.onBg
             k.style == Style.GO -> theme.go
             k.style == Style.DARK -> theme.keyDark
             else -> theme.key
-        })
+        }
+        keyPaint.color = keyCol(
+            if (k === pressed) theme.keyDown else restOrFading(k, rest)
+        )
         val r = rad
 
         // A white key on a white panel. The shadow is laid down first, in three
@@ -1831,12 +1859,7 @@ class KeyboardView(context: Context) : View(context) {
                 canvas.drawRoundRect(rf, r, r, keyPaint)
             }
             rf.set(k.x, k.y, k.x + k.w, k.y + k.h)
-            keyPaint.color = keyCol(when {
-                isOn -> theme.onBg
-                k.style == Style.GO -> theme.go
-                k.style == Style.DARK -> theme.keyDark
-                else -> theme.key
-            })
+            keyPaint.color = keyCol(restOrFading(k, rest))
         }
 
         canvas.drawRoundRect(rf, r, r, keyPaint)
@@ -1860,6 +1883,24 @@ class KeyboardView(context: Context) : View(context) {
                     edgePaint
                 )
             }
+        }
+
+        // The glass sheen: one bright line along the top inside edge, clipped to
+        // the key's own corners so it stops where the rounding starts, the way
+        // light actually catches an edge. This single line is what reads as
+        // glass — the transparency on its own just looks faded.
+        if (theme.sheen != 0 && k !== pressed) {
+            canvas.save()
+            path.reset()
+            path.addRoundRect(rf, r, r, Path.Direction.CW)
+            canvas.clipPath(path)
+            edgePaint.style = Paint.Style.STROKE
+            edgePaint.strokeWidth = dp(1.2f)
+            edgePaint.color = theme.sheen
+            canvas.drawLine(
+                k.x + r * 0.5f, k.y + dp(0.7f), k.x + k.w - r * 0.5f, k.y + dp(0.7f), edgePaint
+            )
+            canvas.restore()
         }
 
         if (theme.edge != 0) {
@@ -2771,7 +2812,24 @@ class KeyboardView(context: Context) : View(context) {
         return suggAt(x, width.toFloat())
     }
 
+    /**
+     * The key that was just let go, and when.
+     *
+     * The press itself stays instant — he asked for that and was right. It is
+     * the release that used to snap: the grey vanished in one frame and the
+     * whole keyboard felt like a row of light switches. Letting the pressed
+     * colour fade out over a tenth of a second costs nothing, changes no
+     * timing, and is most of what "smooth" actually means.
+     */
+    private var fadeKey: Key? = null
+    private var fadeAt = 0L
+    private val FADE_MS = 110L
+
     private fun invalidateKey(k: Key?) {
+        if (k != null && k !== pressed && pressFx) {
+            fadeKey = k
+            fadeAt = android.os.SystemClock.uptimeMillis()
+        }
         if (k == null) { invalidate(); return }
         // The preview bubble is drawn above the key and wider than it, so the
         // repainted area has to cover where it lands or it leaves a trail.

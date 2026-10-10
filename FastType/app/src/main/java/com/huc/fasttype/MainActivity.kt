@@ -67,14 +67,6 @@ class MainActivity : Activity() {
     private lateinit var list: ListView
     private lateinit var adapter: Adapter
 
-    private lateinit var tabShortcuts: TextView
-    private lateinit var tabCaller: TextView
-    private lateinit var panelShortcuts: LinearLayout
-    private lateinit var panelCaller: ScrollView
-    private lateinit var tabKb: TextView
-    private lateinit var panelKb: LinearLayout
-    private lateinit var tabReply: TextView
-    private lateinit var panelReply: ScrollView
     private var arBanner: TextView? = null
     private var arLogBox: LinearLayout? = null
     private var kbPreview: KeyboardView? = null
@@ -88,7 +80,6 @@ class MainActivity : Activity() {
     private lateinit var eventView: TextView
 
     private var data: MutableList<Shortcut> = mutableListOf()
-    private var tab = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,43 +114,187 @@ class MainActivity : Activity() {
         sub.setPadding(0, dp(2), 0, dp(14))
         root.addView(sub)
 
-        val tabs = LinearLayout(this)
-        tabs.orientation = LinearLayout.HORIZONTAL
-        tabShortcuts = makeTab("الاختصارات") { showTab(0) }
-        tabCaller = makeTab("نطق المتصل") { showTab(1) }
-        tabKb = makeTab("الكيبورد") { showTab(2) }
-        tabReply = makeTab("الرد") { showTab(3) }
-        val tp1 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        tp1.marginEnd = dp(4)
-        val tp2 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        tp2.marginStart = dp(4)
-        val tp3 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        tp3.marginStart = dp(4)
-        val tp4 = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        tp4.marginStart = dp(4)
-        tabs.addView(tabShortcuts, tp1)
-        tabs.addView(tabCaller, tp2)
-        tabs.addView(tabKb, tp3)
-        tabs.addView(tabReply, tp4)
-        root.addView(tabs, lp(true, bottom = dp(14)))
+        // ---- the bar that says where you are and takes you back ----
+        //
+        // What replaced the four tabs. Tabs put everything one tap away, which
+        // sounds like a virtue until one of them holds forty switches and the
+        // answer to "where is the theme" is "scroll". Four doors, each with its
+        // own pages, means nothing is more than two taps deep and every screen
+        // is short enough to read.
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
 
-        val content = FrameLayout(this)
-        panelShortcuts = buildShortcutsPanel()
-        panelCaller = buildCallerPanel()
-        panelKb = buildKbPanel()
-        panelReply = buildReplyPanel()
-        content.addView(panelShortcuts)
-        content.addView(panelCaller)
-        content.addView(panelKb)
-        content.addView(panelReply)
-        root.addView(
-            content,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
-        )
+        navBack = TextView(this)
+        navBack.text = "→"
+        navBack.setTextColor(TXT)
+        navBack.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
+        navBack.gravity = Gravity.CENTER
+        navBack.background = round(CARD)
+        navBack.setPadding(dp(13), dp(7), dp(13), dp(9))
+        navBack.setOnClickListener { back() }
+        bar.addView(navBack)
+
+        navTitle = TextView(this)
+        navTitle.setTextColor(TXT)
+        navTitle.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        val ntp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        ntp.marginStart = dp(10)
+        bar.addView(navTitle, ntp)
+
+        navSub = TextView(this)
+        navSub.setTextColor(MUT)
+        navSub.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        bar.addView(navSub)
+
+        root.addView(bar, lp(true, bottom = dp(12)))
+
+        host = FrameLayout(this)
+        root.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+
+        // One preview for the whole app, pinned under everything. The appearance
+        // pages show it and the rest hide it, so a slider and the thing it moves
+        // are never on two different screens.
+        previewWrap = buildPreview()
+        previewWrap.visibility = View.GONE
+        root.addView(previewWrap, lp(true, top = dp(8)))
 
         setContentView(root)
-        showTab(0)
+        show("home")
         refreshCount()
+    }
+
+    // ---------- navigation ----------
+
+    private lateinit var navTitle: TextView
+    private lateinit var navSub: TextView
+    private lateinit var navBack: TextView
+    private lateinit var host: FrameLayout
+    private lateinit var previewWrap: LinearLayout
+
+    private val stack = ArrayList<String>()
+    private var pageId = "home"
+    private val pages = HashMap<String, View>()
+
+    /** Pages where the live keyboard belongs on screen. */
+    private val previewPages = setOf("appear", "themes", "glass", "dims", "font", "strip", "touch")
+
+    private fun go(id: String) {
+        stack.add(pageId)
+        show(id)
+    }
+
+    private fun back() {
+        if (stack.isEmpty()) { finish(); return }
+        show(stack.removeAt(stack.size - 1))
+    }
+
+    override fun onBackPressed() {
+        if (stack.isEmpty()) super.onBackPressed() else back()
+    }
+
+    private fun show(id: String) {
+        pageId = id
+        val v = if (id == "short" || id == "caller") pages.getOrPut(id) { buildPage(id) }
+                else buildPage(id)
+        host.removeAllViews()
+        host.addView(
+            v, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        navTitle.text = pageTitle(id)
+        navSub.text = pageSub(id)
+        navBack.visibility = if (stack.isEmpty()) View.INVISIBLE else View.VISIBLE
+        previewWrap.visibility = if (id in previewPages) View.VISIBLE else View.GONE
+        if (id in previewPages) syncPreview()
+        if (id == "home") refreshKbBanner()
+        if (id == "caller") refreshPermBanner()
+        if (id == "short") { refreshStatus(); refreshCount() }
+        if (id == "themes") refreshThemes()
+    }
+
+    private fun pageTitle(id: String): String = when (id) {
+        "home" -> "كتابة سريعة"
+        "appear" -> "المظهر"
+        "themes" -> "الثيمات"
+        "glass" -> "الشفافية"
+        "dims" -> "الأبعاد"
+        "font" -> "الخط"
+        "strip" -> "الشريط العلوي"
+        "write" -> "الكتابة"
+        "corr" -> "التصحيح والتنبؤ"
+        "touch" -> "اللمس"
+        "snd" -> "الصوت والاهتزاز"
+        "learn" -> "ما تعلّمه"
+        "tools" -> "الأدوات"
+        "short" -> "الاختصارات"
+        "clip" -> "الحافظة"
+        "ai" -> "أدوات النص"
+        "adv" -> "متقدم"
+        "caller" -> "نطق المتصل"
+        "mic" -> "المايك"
+        else -> "عن التطبيق"
+    }
+
+    private fun pageSub(id: String): String = when (id) {
+        "home" -> "HUC " + try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+        "themes" -> "${Themes.all.size} ثيم"
+        "short" -> "${data.size} اختصار"
+        "ai" -> "✦"
+        else -> ""
+    }
+
+    private fun buildPage(id: String): View = when (id) {
+        "home" -> pageHome()
+        "appear" -> menu(
+            listOf(
+                Item("الثيمات", Themes.byId(Store.kbTheme).name, "themes"),
+                Item("الشفافية", "صلابة اللوح والأزرار", "glass"),
+                Item("الأبعاد", "ارتفاع الزر · المسافات · الدوران", "dims"),
+                Item("الخط", "خط عربي خاص · حجم الحرف · الثقل", "font"),
+                Item("الشريط العلوي", "الارتفاع · الخطوط الفاصلة · المايك", "strip")
+            )
+        )
+        "themes" -> pageThemes()
+        "glass" -> pageGlass()
+        "dims" -> pageDims()
+        "font" -> pageFont()
+        "strip" -> pageStrip()
+        "write" -> menu(
+            listOf(
+                Item("التصحيح والتنبؤ", "التنبؤات · التصحيح التلقائي", "corr"),
+                Item("اللمس", "انحراف الإصبع · لمسة فورية · فقاعة الحرف", "touch"),
+                Item("الصوت والاهتزاز", "", "snd"),
+                Item("ما تعلّمه", "تنظيف · مسح · نسخة احتياطية", "learn")
+            )
+        )
+        "corr" -> pageCorr()
+        "touch" -> pageTouch()
+        "snd" -> pageSound()
+        "learn" -> pageLearn()
+        "tools" -> menu(
+            listOf(
+                Item("الاختصارات", "${data.size} اختصار", "short"),
+                Item("الحافظة", "الزر · الصور · المسح التلقائي", "clip"),
+                Item("أدوات النص ✦", "تصحيح · فصحى · رسمي · رد مقترح", "ai")
+            )
+        )
+        "short" -> buildShortcutsPanel()
+        "clip" -> pageClip()
+        "ai" -> pageAi()
+        "adv" -> menu(
+            listOf(
+                Item("نطق المتصل", "ينطق اسم المتصل", "caller"),
+                Item("المايك", "فحص الإدخال الصوتي", "mic"),
+                Item("عن التطبيق", "النسخة · ملاحظات", "about")
+            )
+        )
+        "caller" -> buildCallerPanel()
+        "mic" -> pageMic()
+        else -> pageAbout()
     }
 
     // ---------- tab 1 : shortcuts ----------
@@ -186,7 +321,23 @@ class MainActivity : Activity() {
                 "مطفي = يتبدل بعد المسافة أو الانتر",
                 Store.instant
             ) { Store.setInstant(this, it) },
-            lp(true, bottom = dp(14))
+            lp(true, bottom = dp(8))
+        )
+        // These two used to sit at the bottom of the keyboard settings, three
+        // screens away from the shortcuts they govern.
+        p.addView(
+            switchRow(
+                "الاختصارات داخل الكيبورد", "بدون خدمة إمكانية الوصول", Store.kbExpand
+            ) {
+                Store.setKbFlag(this, "expand", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "تبديل فوري داخل الكيبورد", "مطفي = يتبدل بعد المسافة", Store.kbExpandInstant
+            ) {
+                Store.setKbFlag(this, "inst", it); syncPreview()
+            }, lp(true, bottom = dp(14))
         )
 
         val bar = LinearLayout(this)
@@ -450,20 +601,6 @@ class MainActivity : Activity() {
         return sv
     }
 
-    private fun showTab(which: Int) {
-        tab = which
-        panelShortcuts.visibility = if (which == 0) View.VISIBLE else View.GONE
-        panelCaller.visibility = if (which == 1) View.VISIBLE else View.GONE
-        panelKb.visibility = if (which == 2) View.VISIBLE else View.GONE
-        panelReply.visibility = if (which == 3) View.VISIBLE else View.GONE
-        styleTab(tabShortcuts, which == 0)
-        styleTab(tabCaller, which == 1)
-        styleTab(tabKb, which == 2)
-        styleTab(tabReply, which == 3)
-        if (which == 1) refreshPermBanner()
-        if (which == 2) refreshKbBanner()
-        if (which == 3) refreshReply()
-    }
 
     private fun refreshPermBanner() {
         if (!::permBanner.isInitialized) return
@@ -523,16 +660,20 @@ class MainActivity : Activity() {
         Hush.recover(this)
         // he may have just come back from granting it
         refreshHushNote()
+        refreshStatus()
+        if (pageId == "caller") refreshPermBanner()
+        if (pageId == "home") refreshKbBanner()
+    }
+
+    /** The accessibility banner on the shortcuts page, which is built lazily now. */
+    private fun refreshStatus() {
+        if (!::status.isInitialized) return
         val on = isServiceOn()
         status.text = if (on)
             "الخدمة شغالة — الاستبدال فعّال"
         else
             "الخدمة متوقفة — اضغط هنا لتفعيل إمكانية الوصول"
         status.setTextColor(if (on) ACC else RED)
-        if (tab == 1) refreshPermBanner()
-        if (tab == 2) refreshKbBanner()
-        // he may have just come back from the notification access screen
-        if (tab == 3) refreshReply()
     }
 
     private fun isServiceOn(): Boolean {
@@ -612,6 +753,7 @@ class MainActivity : Activity() {
     }
 
     private fun refreshCount() {
+        if (!::countView.isInitialized) return
         countView.text = "الاختصارات (${data.size})"
     }
 
@@ -724,17 +866,98 @@ class MainActivity : Activity() {
 
     private lateinit var kbBanner: TextView
 
-    private fun buildKbPanel(): LinearLayout {
-        val wrap = LinearLayout(this)
-        wrap.orientation = LinearLayout.VERTICAL
-        wrap.layoutDirection = View.LAYOUT_DIRECTION_RTL
+    // ================= the pages =================
+    //
+    // Every page is the same two lines of scaffolding and then its own rows, so
+    // adding a setting later means choosing which page it belongs on rather
+    // than appending it to a list of forty.
 
-        val sv = ScrollView(this)
-        sv.layoutDirection = View.LAYOUT_DIRECTION_RTL
+    private class Item(val title: String, val sub: String, val go: String)
 
+    private fun col(): LinearLayout {
         val p = LinearLayout(this)
         p.orientation = LinearLayout.VERTICAL
         p.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        return p
+    }
+
+    private fun scroll(p: LinearLayout): ScrollView {
+        val sv = ScrollView(this)
+        sv.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        sv.isFillViewport = true
+        sv.addView(
+            p, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        return sv
+    }
+
+    private fun section(t: String): TextView {
+        val v = TextView(this)
+        v.text = t
+        v.setTextColor(MUT)
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        v.setPadding(dp(4), dp(6), dp(4), dp(6))
+        return v
+    }
+
+    private fun hint(t: String): TextView {
+        val v = TextView(this)
+        v.text = t
+        v.setTextColor(MUT)
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+        v.setLineSpacing(dp(3).toFloat(), 1f)
+        v.setPadding(dp(4), dp(4), dp(4), dp(10))
+        return v
+    }
+
+    /** A row that leads somewhere: title, a line about it, and the chevron. */
+    private fun navRow(title: String, sub: String, value: String, cb: () -> Unit): View {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.background = round(CARD)
+        row.setPadding(dp(13), dp(13), dp(13), dp(13))
+        row.setOnClickListener { cb() }
+
+        val tx = LinearLayout(this)
+        tx.orientation = LinearLayout.VERTICAL
+        val t = TextView(this)
+        t.text = title
+        t.setTextColor(TXT)
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
+        tx.addView(t)
+        if (sub.isNotEmpty()) {
+            val s = TextView(this)
+            s.text = sub
+            s.setTextColor(MUT)
+            s.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            s.setPadding(0, dp(2), 0, 0)
+            tx.addView(s)
+        }
+        row.addView(tx, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val v = TextView(this)
+        v.text = value
+        v.setTextColor(MUT)
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        row.addView(v)
+        return row
+    }
+
+    private fun menu(items: List<Item>): View {
+        val p = col()
+        for (m in items) {
+            p.addView(navRow(m.title, m.sub, "›") { go(m.go) }, lp(true, bottom = dp(8)))
+        }
+        return scroll(p)
+    }
+
+    // ---------- home ----------
+
+    private fun pageHome(): View {
+        val p = col()
 
         kbBanner = TextView(this)
         kbBanner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
@@ -745,6 +968,7 @@ class MainActivity : Activity() {
 
         val pick = Button(this)
         pick.text = "اختيار الكيبورد الافتراضي"
+        pick.isAllCaps = false
         pick.setTextColor(Color.WHITE)
         pick.background = round(ACC)
         pick.setOnClickListener {
@@ -755,9 +979,421 @@ class MainActivity : Activity() {
                 toast("ما كدرت أفتح القائمة")
             }
         }
-        p.addView(pick, lp(true, bottom = dp(14)))
+        p.addView(pick, lp(true, bottom = dp(6)))
 
-        // ---- voice diagnostics, shown here because ColorOS hides app logs ----
+        p.addView(section("الأبواب"))
+        p.addView(
+            navRow("المظهر", "الثيمات · الأبعاد · الخط · الشريط العلوي", "›") { go("appear") },
+            lp(true, bottom = dp(8))
+        )
+        p.addView(
+            navRow("الكتابة", "التصحيح · اللمس · الصوت · ما تعلّمه", "›") { go("write") },
+            lp(true, bottom = dp(8))
+        )
+        p.addView(
+            navRow("الأدوات", "الاختصارات · الحافظة · أدوات النص ✦", "›") { go("tools") },
+            lp(true, bottom = dp(8))
+        )
+        p.addView(
+            navRow("متقدم", "نطق المتصل · المايك · عن التطبيق", "›") { go("adv") },
+            lp(true, bottom = dp(8))
+        )
+
+        refreshKbBanner()
+        return scroll(p)
+    }
+
+    // ---------- appearance ----------
+
+    private val themeBtns = ArrayList<Button>()
+
+    private fun pageThemes(): View {
+        val p = col()
+        themeBtns.clear()
+
+        fun family(title: String, note: String, list: List<KbTheme>) {
+            if (list.isEmpty()) return
+            p.addView(section(title))
+            if (note.isNotEmpty()) p.addView(hint(note))
+            var rowBox: LinearLayout? = null
+            list.forEachIndexed { i, t ->
+                if (i % 2 == 0) {
+                    rowBox = LinearLayout(this)
+                    rowBox!!.orientation = LinearLayout.HORIZONTAL
+                    val rp = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    rp.bottomMargin = dp(6)
+                    p.addView(rowBox, rp)
+                }
+                val b = Button(this)
+                b.text = t.name
+                b.isAllCaps = false
+                b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+                b.tag = t.id
+                b.setOnClickListener {
+                    Store.setKbTheme(this, t.id)
+                    refreshThemes()
+                    syncPreview()
+                    // a glass theme brings its own transparency, so say so once
+                    toast(if (t.glass) "${t.name} — الشفافية انشغّلت" else t.name)
+                }
+                themeBtns.add(b)
+                val bp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                if (i % 2 == 0) bp.marginEnd = dp(3) else bp.marginStart = dp(3)
+                rowBox!!.addView(b, bp)
+            }
+        }
+
+        family(
+            "زجاج",
+            "الزجاجية تشغّل الشفافية لحدها بالدرجة اللي تناسبها — وتگدر تعدّلها من «الشفافية».",
+            Themes.all.filter { it.glass }
+        )
+        family("نهاري", "", Themes.all.filter { !it.glass && !it.dark })
+        family("ليلي", "", Themes.all.filter { !it.glass && it.dark })
+
+        p.addView(
+            switchRow(
+                "يتبع ثيم الجهاز",
+                "التليفون ليلي؟ الكيبورد ليلي. نهاري؟ نهاري — بنفس الثيم اللي اخترته",
+                Store.kbFollowSystem
+            ) {
+                Store.setKbFlag(this, "follow", it); syncPreview()
+            }, lp(true, top = dp(8), bottom = dp(8))
+        )
+
+        refreshThemes()
+        return scroll(p)
+    }
+
+    private fun refreshThemes() {
+        for (b in themeBtns) {
+            val on = b.tag == Store.kbTheme
+            b.setTextColor(if (on) Color.WHITE else TXT)
+            b.background = round(if (on) ACC else CARD)
+        }
+    }
+
+    private fun pageGlass(): View {
+        val p = col()
+        p.addView(
+            switchRow(
+                "كيبورد شفاف", "يبيّن التطبيق خلف الكيبورد — بدون ضبابية", Store.kbGlass
+            ) {
+                Store.setKbFlag(this, "glass", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(sliderRow("صلابة اللوح", Store.kbGlassPanel, 20, 100) {
+            Store.setKbInt(this, "glassp", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("صلابة الأزرار", Store.kbGlassKey, 20, 100) {
+            Store.setKbInt(this, "glassk", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(
+            hint(
+                "اللي يبين ورا الكيبورد يعتمد على التطبيق: بعضها تشوف منه المحادثة، " +
+                    "وبعضها تشوف لون خلفيته بس. كل ما نزّلت الصلابة زاد اللي يبين، " +
+                    "وصارت قراءة الحروف أصعب — وقّف على الدرجة اللي تريحك."
+            )
+        )
+        return scroll(p)
+    }
+
+    private fun pageDims(): View {
+        val p = col()
+        p.addView(sliderRow("ارتفاع الزر", Store.kbKeyHeight, 34, 58) {
+            Store.setKbInt(this, "h", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("المسافة بين الأزرار", Store.kbGap, 2, 10) {
+            Store.setKbInt(this, "gap", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دوران زوايا الأزرار", Store.kbRadius, 2, 18) {
+            Store.setKbInt(this, "rad", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("إطار اللوحة (صفر = لحافة الشاشة)", Store.kbInset, 0, 14) {
+            Store.setKbInt(this, "inset", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("انحناء أعلى اللوحة", Store.kbPanelRadius, 0, 44) {
+            Store.setKbInt(this, "prad", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("المسافة من أسفل الشاشة", Store.kbBottomPad, 0, 48) {
+            Store.setKbInt(this, "bottom", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("تخفيف الإضاءة", Store.kbShade, 0, 60) {
+            Store.setKbInt(this, "shade", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دفء اللون", Store.kbWarm, 0, 40) {
+            Store.setKbInt(this, "warm", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(
+            switchRow(
+                "المسافة السفلية شفافة", "مطفي = المسافة تحت الأزرار بلون الكيبورد",
+                Store.kbClearBottom
+            ) {
+                Store.setKbFlag(this, "clear", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        return scroll(p)
+    }
+
+    private fun pageFont(): View {
+        val p = col()
+        p.addView(
+            switchRow(
+                "خط عربي خاص", "للحروف العربية فقط — الإنكليزي والإيموجي ما يتغيرون",
+                Store.kbArFont
+            ) {
+                Store.setKbFlag(this, "arfont", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(sliderRow("حجم الحرف", Store.kbLetter, 40, 58) {
+            Store.setKbInt(this, "letter", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("ثقل خط الأزرار", Store.kbWeight, 300, 700, 50) {
+            Store.setKbInt(this, "weight", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        return scroll(p)
+    }
+
+    private fun pageStrip(): View {
+        val p = col()
+        p.addView(
+            switchRow("شريط الاقتراحات", "يعرض الاختصار قبل التبديل", Store.kbSuggBar) {
+                Store.setKbFlag(this, "sugg", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(sliderRow("ارتفاع شريط الاقتراحات", Store.kbSuggH, 22, 60) {
+            Store.setKbInt(this, "sh", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("دوران شريط الاقتراحات (صفر = مسطّح)", Store.kbSuggRad, 0, 22) {
+            Store.setKbInt(this, "srad", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(
+            switchRow(
+                "الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون", Store.kbHair
+            ) {
+                Store.setKbFlag(this, "hair", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(sliderRow("طول الخط الفاصل", Store.kbHairH, 20, 90) {
+            Store.setKbInt(this, "hairh", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(sliderRow("سماكة الخط الفاصل", Store.kbHairW, 1, 4) {
+            Store.setKbInt(this, "hairw", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(
+            switchRow("المايك بالشريط العلوي", "بدل الشريط السفلي", Store.kbMicStrip) {
+                Store.setKbFlag(this, "micstrip", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+
+        val outerRow = sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
+            Store.setKbInt(this, "outer", it); syncPreview()
+        }
+        outerRow.visibility = if (Store.kbGlobeRow) View.GONE else View.VISIBLE
+        kbOuterRow = outerRow
+
+        p.addView(
+            switchRow(
+                "زر اللغة جنب الإيموجي", "ينشال الشريط السفلي ويقصر الكيبورد", Store.kbGlobeRow
+            ) {
+                Store.setKbFlag(this, "globerow", it)
+                if (!it && Store.kbOuterH == 0) Store.setKbInt(this, "outer", 40)
+                kbOuterRow?.visibility = if (it) View.GONE else View.VISIBLE
+                syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(outerRow, lp(true, bottom = dp(8)))
+        p.addView(
+            switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
+                Store.setKbFlag(this, "num", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        return scroll(p)
+    }
+
+    // ---------- typing ----------
+
+    private fun pageCorr(): View {
+        val p = col()
+        p.addView(
+            switchRow("التنبؤات", "يقترح كلمات وأنت تكتب، ودوس عليها لتنكتب", Store.kbPredict) {
+                Store.setKbFlag(this, "predict", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "التصحيح التلقائي", "يصحّح الكلمة الغلط عند المسافة — ورجعة وحدة تلغيه",
+                Store.kbCorrect
+            ) {
+                Store.setKbFlag(this, "correct", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "مسافتين = نقطة", "ضغطتين سريعتين على المسافة تحطّ نقطة ومسافة",
+                Store.kbDoubleSpace
+            ) {
+                Store.setKbFlag(this, "dots", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "بدائل الحروف بضغطة مطوّلة", "اهبط على ا تطلع أ إ آ — وعلى ج تطلع چ. اسحب وارفع",
+                Store.kbAlts
+            ) {
+                Store.setKbFlag(this, "alts", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "زر النقطة",
+                "بين المسطرة والانتر — وضغطة طويلة عليه تفتح التشكيل وعلامات الترقيم",
+                Store.kbDotKey
+            ) {
+                Store.setKbFlag(this, "dotkey", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow("يبدي بالعربي", "لغة الكيبورد عند الفتح", Store.kbArabicFirst) {
+                Store.setKbFlag(this, "arfirst", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        return scroll(p)
+    }
+
+    private fun pageTouch(): View {
+        val p = col()
+        p.addView(sliderRow("تصحيح انحراف الإصبع", Store.kbFingerY, 0, 30) {
+            Store.setKbInt(this, "fingery", it)
+        }, lp(true, bottom = dp(8)))
+        p.addView(
+            switchRow("لمسة فورية", "الحرف ينكتب لحظة اللمس مو عند الرفع", Store.kbFast) {
+                Store.setKbFlag(this, "fast", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow("تظليل الزر عند الضغط", "طفّيه لأسرع استجابة ممكنة", Store.kbPressFx) {
+                Store.setKbFlag(this, "pressfx", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow("رفع الحرف فوق الإصبع", "تشوف شنو ضغطت قبل ما ترفع إصبعك", Store.kbPeek) {
+                Store.setKbFlag(this, "peek", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "إخفاء الحروف بضغطة مطوّلة",
+                "دوس مطوّلاً على المسافة تختفي الحروف — وترجع بأي ضغطة",
+                Store.kbBlankHold
+            ) {
+                Store.setKbFlag(this, "blank", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        return scroll(p)
+    }
+
+    private fun pageSound(): View {
+        val p = col()
+        p.addView(switchRow("صوت الضغط", null, Store.kbSound) {
+            Store.setKbFlag(this, "sound", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        p.addView(switchRow("اهتزاز الضغط", null, Store.kbVibrate) {
+            Store.setKbFlag(this, "vib", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
+        return scroll(p)
+    }
+
+    private fun pageLearn(): View {
+        val p = col()
+        val s = UserDict.sizes()
+        p.addView(
+            switchRow(
+                "يتعلّم من كتابتك",
+                "يحفظ كلماتك ويقدّمها، ويصحّح حسب اللي تكتبه عادةً بهذا المكان\n" +
+                    "محفوظ: ${s[0]} كلمة · ${s[1]} ثنائية · ${s[2]} ثلاثية · " +
+                    "${s[3]} تصحيح — بلا حد أعلى",
+                Store.kbLearn
+            ) {
+                Store.setKbFlag(this, "learn", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            navRow("تنظيف الأخطاء المحفوظة", "", "نظّف ›") { cleanSlips() },
+            lp(true, bottom = dp(8))
+        )
+        p.addView(
+            navRow("نسخة احتياطية لتعلّمك", "", "حفظ / استرجاع ›") { learnBackup() },
+            lp(true, bottom = dp(8))
+        )
+        p.addView(
+            navRow("امسح كل ما تعلّمه", "ما ترجع", "امسح ›") { wipeLearning() },
+            lp(true, bottom = dp(8))
+        )
+        return scroll(p)
+    }
+
+    // ---------- tools ----------
+
+    private fun pageClip(): View {
+        val p = col()
+        p.addView(
+            switchRow(
+                "زر الحافظة", "ضغطة تلصق آخر نسخة، وضغطة مطوّلة تفتح كل اللي نسخته",
+                Store.kbClip
+            ) {
+                Store.setKbFlag(this, "clip", it); syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            switchRow(
+                "الصور بالحافظة",
+                "آخر لقطة شاشة أو صورة نسختها تقعد بزر الحافظة — ضغطة وحدة تدزّها. " +
+                    "يحتاج إذن قراءة الصور مرّة وحدة",
+                Store.kbPics
+            ) {
+                Store.setKbFlag(this, "pics", it)
+                if (it && !picsOk()) requestPermissions(arrayOf(Pics.permission()), REQ_PICS)
+                syncPreview()
+            }, lp(true, bottom = dp(8))
+        )
+        p.addView(
+            sliderRow("مسح الحافظة بعد (دقيقة، صفر = تبقى)", Store.kbClipExpire, 0, 720) {
+                Store.setKbInt(this, "clipexp", it)
+            }, lp(true, bottom = dp(8))
+        )
+        return scroll(p)
+    }
+
+    private fun pageAi(): View {
+        val p = col()
+        val ok = Ai.configured()
+        val b = TextView(this)
+        b.text = if (ok)
+            "المفتاح موجود — أدوات النص شغّالة"
+        else
+            "ماكو مفتاح Gemini بهذي النسخة — ضيف GEMINI_KEY بأسرار الريبو وأعد البناء"
+        b.setTextColor(if (ok) ACC else WARN)
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+        b.setPadding(dp(12), dp(12), dp(12), dp(12))
+        b.background = round(CARD)
+        p.addView(b, lp(true, bottom = dp(10)))
+        p.addView(
+            hint(
+                "زر ✦ بالشريط العلوي ياخذ اللي كتبته ويعيد كتابته: تصحيح · فصحى · رسمي · تبسيط. " +
+                    "وإذا كان بالحافظة رسالة، يطلع خيار «رد» يجهّز لك ثلاث ردود تختار منها.\n\n" +
+                    "يحتاج نت، وياخذ ثانية أو ثنتين. النص ما ينحفظ بأي مكان."
+            )
+        )
+        return scroll(p)
+    }
+
+    // ---------- advanced ----------
+
+    private fun pageMic(): View {
+        val p = col()
         val vd = TextView(this)
         vd.setTextColor(MUT)
         vd.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
@@ -789,314 +1425,44 @@ class MainActivity : Activity() {
         gb.visibility = if (Voice(this).hasRealEngine()) View.GONE else View.VISIBLE
         googleBtn = gb
         gb.setOnClickListener { openStore(Voice.GOOGLE) }
-        p.addView(gb, lp(true, bottom = dp(14)))
+        p.addView(gb, lp(true, bottom = dp(8)))
+        return scroll(p)
+    }
 
-        val tl = TextView(this)
-        tl.text = "الثيم"
-        tl.setTextColor(MUT)
-        tl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        tl.setPadding(dp(4), 0, dp(4), dp(6))
-        p.addView(tl)
-
-        val grid = LinearLayout(this)
-        grid.orientation = LinearLayout.VERTICAL
-        var rowBox: LinearLayout? = null
-        Themes.all.forEachIndexed { i, t ->
-            if (i % 2 == 0) {
-                rowBox = LinearLayout(this)
-                rowBox!!.orientation = LinearLayout.HORIZONTAL
-                val rp = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                )
-                rp.bottomMargin = dp(6)
-                grid.addView(rowBox, rp)
-            }
-            val b = Button(this)
-            b.text = t.name
-            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            b.setTextColor(if (Store.kbTheme == t.id) Color.WHITE else TXT)
-            b.background = round(if (Store.kbTheme == t.id) ACC else CARD)
-            b.setOnClickListener {
-                Store.setKbTheme(this, t.id)
-                refreshThemeButtons(grid)
-                syncPreview()
-                toast("تم اختيار: ${t.name}")
-            }
-            b.tag = t.id
-            val bp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            if (i % 2 == 0) bp.marginEnd = dp(3) else bp.marginStart = dp(3)
-            rowBox!!.addView(b, bp)
-        }
-        p.addView(grid, lp(true, bottom = dp(14)))
-
-        p.addView(sliderRow("ارتفاع الزر", Store.kbKeyHeight, 34, 58) {
-            Store.setKbInt(this, "h", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        // the finger lands below where it aims; 0 reads the tap exactly as it fell
-        p.addView(sliderRow("تصحيح انحراف الإصبع", Store.kbFingerY, 0, 30) {
-            Store.setKbInt(this, "fingery", it)
-        }, lp(true, bottom = dp(8)))
-        // the glare is how much light the panel puts out, not which white it is
-        p.addView(sliderRow("تخفيف الإضاءة", Store.kbShade, 0, 60) {
-            Store.setKbInt(this, "shade", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("دفء اللون", Store.kbWarm, 0, 40) {
-            Store.setKbInt(this, "warm", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("المسافة بين الأزرار", Store.kbGap, 2, 10) {
-            Store.setKbInt(this, "gap", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("دوران زوايا الأزرار", Store.kbRadius, 2, 18) {
-            Store.setKbInt(this, "rad", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        // 400 is where it was, and why its letters looked lighter than an iPhone's
-        p.addView(sliderRow("ثقل خط الأزرار", Store.kbWeight, 300, 700, 50) {
-            Store.setKbInt(this, "weight", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("إطار اللوحة (صفر = لحافة الشاشة)", Store.kbInset, 0, 14) {
-            Store.setKbInt(this, "inset", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("انحناء أعلى اللوحة", Store.kbPanelRadius, 0, 44) {
-            Store.setKbInt(this, "prad", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("دوران شريط الاقتراحات (صفر = مسطّح)", Store.kbSuggRad, 0, 22) {
-            Store.setKbInt(this, "srad", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("ارتفاع شريط الاقتراحات", Store.kbSuggH, 22, 60) {
-            Store.setKbInt(this, "sh", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("طول الخط الفاصل", Store.kbHairH, 20, 90) {
-            Store.setKbInt(this, "hairh", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("سماكة الخط الفاصل", Store.kbHairW, 1, 4) {
-            Store.setKbInt(this, "hairw", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("حجم الحرف", Store.kbLetter, 40, 58) {
-            Store.setKbInt(this, "letter", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        val outerRow = sliderRow("ارتفاع الشريط السفلي", Store.kbOuterH, 0, 60) {
-            Store.setKbInt(this, "outer", it); syncPreview()
-        }
-        outerRow.visibility = if (Store.kbGlobeRow) View.GONE else View.VISIBLE
-        kbOuterRow = outerRow
-        p.addView(outerRow, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("المسافة من أسفل الشاشة", Store.kbBottomPad, 0, 48) {
-            Store.setKbInt(this, "bottom", it); syncPreview()
-        }, lp(true, bottom = dp(14)))
-
-        p.addView(switchRow("التنبؤات", "يقترح كلمات وأنت تكتب، ودوس عليها لتنكتب",
-            Store.kbPredict) {
-            Store.setKbFlag(this, "predict", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("التصحيح التلقائي", "يصحّح الكلمة الغلط عند المسافة — ورجعة وحدة تلغيه",
-            Store.kbCorrect) {
-            Store.setKbFlag(this, "correct", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        // The four numbers, because "it learns" is a claim and these are the
-        // evidence — and because he should be able to watch them climb past the
-        // four thousand the old version stopped at.
-        val s = UserDict.sizes()
-        p.addView(switchRow(
-            "يتعلّم من كتابتك",
-            "يحفظ كلماتك ويقدّمها، ويصحّح حسب اللي تكتبه عادةً بهذا المكان\n" +
-                "محفوظ: ${s[0]} كلمة · ${s[1]} ثنائية · ${s[2]} ثلاثية · " +
-                "${s[3]} تصحيح — بلا حد أعلى",
-            Store.kbLearn
-        ) {
-            Store.setKbFlag(this, "learn", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-
-        val fixRow = LinearLayout(this)
-        fixRow.orientation = LinearLayout.HORIZONTAL
-        fixRow.gravity = Gravity.CENTER_VERTICAL
-        fixRow.background = round(CARD)
-        fixRow.setPadding(dp(12), dp(12), dp(12), dp(12))
-        val fixLabel = TextView(this)
-        fixLabel.text = "تنظيف الأخطاء المحفوظة"
-        fixLabel.setTextColor(TXT)
-        fixLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        fixRow.addView(
-            fixLabel,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+    private fun pageAbout(): View {
+        val p = col()
+        val v = TextView(this)
+        v.text = "كتابة سريعة — HUC\n" + try {
+            "النسخة " + packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (_: Exception) { "" }
+        v.setTextColor(TXT)
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        v.setPadding(dp(12), dp(12), dp(12), dp(12))
+        v.background = round(CARD)
+        v.setLineSpacing(dp(4).toFloat(), 1f)
+        p.addView(v, lp(true, bottom = dp(10)))
+        p.addView(
+            hint(
+                "لما تستخدم كيبورد HUC، الاختصارات تشتغل من داخله مباشرة — " +
+                    "وما تحتاج خدمة إمكانية الوصول أبداً. خدمة إمكانية الوصول تبقى " +
+                    "للاختصارات مع الكيبوردات الثانية ولنطق المتصل."
+            )
         )
-        val fixArrow = TextView(this)
-        fixArrow.text = "نظّف ›"
-        fixArrow.setTextColor(ACC)
-        fixArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        fixRow.addView(fixArrow)
-        fixRow.setOnClickListener { cleanSlips() }
-        p.addView(fixRow, lp(true, bottom = dp(8)))
+        return scroll(p)
+    }
 
-        val wipeRow = LinearLayout(this)
-        wipeRow.orientation = LinearLayout.HORIZONTAL
-        wipeRow.gravity = Gravity.CENTER_VERTICAL
-        wipeRow.background = round(CARD)
-        wipeRow.setPadding(dp(12), dp(12), dp(12), dp(12))
-        val wipeLabel = TextView(this)
-        wipeLabel.text = "امسح كل ما تعلّمه"
-        wipeLabel.setTextColor(TXT)
-        wipeLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        wipeRow.addView(
-            wipeLabel,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        val wipeArrow = TextView(this)
-        wipeArrow.text = "امسح ›"
-        wipeArrow.setTextColor(0xFFE0443E.toInt())
-        wipeArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        wipeRow.addView(wipeArrow)
-        wipeRow.setOnClickListener { wipeLearning() }
-        p.addView(wipeRow, lp(true, bottom = dp(8)))
+    // ---------- the live preview, built once for the whole app ----------
 
-        val learnRow = LinearLayout(this)
-        learnRow.orientation = LinearLayout.HORIZONTAL
-        learnRow.gravity = Gravity.CENTER_VERTICAL
-        learnRow.background = round(CARD)
-        learnRow.setPadding(dp(12), dp(12), dp(12), dp(12))
-        val learnLabel = TextView(this)
-        learnLabel.text = "نسخة احتياطية لتعلّمك"
-        learnLabel.setTextColor(TXT)
-        learnLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        learnRow.addView(
-            learnLabel,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        )
-        val learnArrow = TextView(this)
-        learnArrow.text = "حفظ / استرجاع ›"
-        learnArrow.setTextColor(ACC)
-        learnArrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-        learnRow.addView(learnArrow)
-        learnRow.setOnClickListener { learnBackup() }
-        p.addView(learnRow, lp(true, bottom = dp(8)))
-        p.addView(switchRow(
-            "زر النقطة",
-            "بين المسطرة والانتر — وضغطة طويلة عليه تفتح التشكيل وعلامات الترقيم",
-            Store.kbDotKey
-        ) {
-            Store.setKbFlag(this, "dotkey", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("الخطان الفاصلان", "يقسّمان الشريط ثلاث خانات مثل الآيفون",
-            Store.kbHair) {
-            Store.setKbFlag(this, "hair", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("المايك بالشريط العلوي", "بدل الشريط السفلي", Store.kbMicStrip) {
-            Store.setKbFlag(this, "micstrip", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("زر اللغة جنب الإيموجي", "ينشال الشريط السفلي ويقصر الكيبورد",
-            Store.kbGlobeRow) {
-            Store.setKbFlag(this, "globerow", it)
-            if (!it && Store.kbOuterH == 0) Store.setKbInt(this, "outer", 40)
-            kbOuterRow?.visibility = if (it) View.GONE else View.VISIBLE
-            syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("المسافة السفلية شفافة",
-            "مطفي = المسافة تحت الأزرار بلون الكيبورد",
-            Store.kbClearBottom) {
-            Store.setKbFlag(this, "clear", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("بدائل الحروف بضغطة مطوّلة",
-            "اهبط على ا تطلع أ إ آ — وعلى ج تطلع چ. اسحب وارفع",
-            Store.kbAlts) {
-            Store.setKbFlag(this, "alts", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("مسافتين = نقطة",
-            "ضغطتين سريعتين على المسافة تحطّ نقطة ومسافة",
-            Store.kbDoubleSpace) {
-            Store.setKbFlag(this, "dots", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("زر الحافظة",
-            "ضغطة تلصق آخر نسخة، وضغطة مطوّلة تفتح كل اللي نسخته",
-            Store.kbClip) {
-            Store.setKbFlag(this, "clip", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("الصور بالحافظة",
-            "آخر لقطة شاشة أو صورة نسختها تقعد بزر الحافظة — ضغطة وحدة تدزّها. يحتاج إذن قراءة الصور مرّة وحدة",
-            Store.kbPics) {
-            Store.setKbFlag(this, "pics", it)
-            if (it && !picsOk()) requestPermissions(arrayOf(Pics.permission()), REQ_PICS)
-            syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("مسح الحافظة بعد (دقيقة، صفر = تبقى)",
-            Store.kbClipExpire, 0, 720) {
-            Store.setKbInt(this, "clipexp", it)
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("يتبع ثيم الجهاز",
-            "التليفون ليلي؟ الكيبورد ليلي. نهاري؟ نهاري — بنفس الثيم اللي اخترته",
-            Store.kbFollowSystem) {
-            Store.setKbFlag(this, "follow", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("إخفاء الحروف بضغطة مطوّلة",
-            "دوس مطوّلاً على المسافة تختفي الحروف — وترجع بأي ضغطة",
-            Store.kbBlankHold) {
-            Store.setKbFlag(this, "blank", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("تظليل الزر عند الضغط", "طفّيه لأسرع استجابة ممكنة",
-            Store.kbPressFx) {
-            Store.setKbFlag(this, "pressfx", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("رفع الحرف فوق الإصبع", "تشوف شنو ضغطت قبل ما ترفع إصبعك",
-            Store.kbPeek) {
-            Store.setKbFlag(this, "peek", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        // the bundled file has Arabic glyphs only, so it is offered as such
-        p.addView(switchRow("خط عربي خاص", "للحروف العربية فقط — الإنكليزي والإيموجي ما يتغيرون",
-            Store.kbArFont) {
-            Store.setKbFlag(this, "arfont", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("كيبورد شفاف", "يبيّن التطبيق خلف الكيبورد — بدون ضبابية",
-            Store.kbGlass) {
-            Store.setKbFlag(this, "glass", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("صلابة اللوح", Store.kbGlassPanel, 20, 100) {
-            Store.setKbInt(this, "glassp", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(sliderRow("صلابة الأزرار", Store.kbGlassKey, 20, 100) {
-            Store.setKbInt(this, "glassk", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("صف الأرقام", "صف فوق الحروف", Store.kbNumberRow) {
-            Store.setKbFlag(this, "num", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("شريط الاقتراحات", "يعرض الاختصار قبل التبديل", Store.kbSuggBar) {
-            Store.setKbFlag(this, "sugg", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("يبدي بالعربي", "لغة الكيبورد عند الفتح", Store.kbArabicFirst) {
-            Store.setKbFlag(this, "arfirst", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("صوت الضغط", null, Store.kbSound) {
-            Store.setKbFlag(this, "sound", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("اهتزاز الضغط", null, Store.kbVibrate) {
-            Store.setKbFlag(this, "vib", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("لمسة فورية", "الحرف ينكتب لحظة اللمس مو عند الرفع", Store.kbFast) {
-            Store.setKbFlag(this, "fast", it); syncPreview()
-        }, lp(true, bottom = dp(14)))
-
-        p.addView(switchRow("الاختصارات داخل الكيبورد", "بدون خدمة إمكانية الوصول", Store.kbExpand) {
-            Store.setKbFlag(this, "expand", it); syncPreview()
-        }, lp(true, bottom = dp(8)))
-        p.addView(switchRow("تبديل فوري", "مطفي = يتبدل بعد المسافة", Store.kbExpandInstant) {
-            Store.setKbFlag(this, "inst", it); syncPreview()
-        }, lp(true, bottom = dp(16)))
-
-        val note = TextView(this)
-        note.text = "لما تستخدم كيبورد HUC، الاختصارات تشتغل من داخله مباشرة — " +
-            "وما تحتاج خدمة إمكانية الوصول أبداً. خدمة إمكانية الوصول تبقى " +
-            "للاختصارات مع الكيبوردات الثانية ولنطق المتصل."
-        note.setTextColor(MUT)
-        note.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        note.setPadding(dp(4), 0, dp(4), dp(16))
-        p.addView(note, lp(true))
-
-        sv.addView(p)
-        wrap.addView(sv, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+    private fun buildPreview(): LinearLayout {
+        val wrap = LinearLayout(this)
+        wrap.orientation = LinearLayout.VERTICAL
+        wrap.layoutDirection = View.LAYOUT_DIRECTION_RTL
 
         val pvLabel = TextView(this)
         pvLabel.text = "معاينة حية — نفس الكيبورد الحقيقي"
         pvLabel.setTextColor(MUT)
         pvLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-        pvLabel.setPadding(dp(4), dp(8), dp(4), dp(6))
+        pvLabel.setPadding(dp(4), dp(4), dp(4), dp(6))
         wrap.addView(pvLabel, lp(true))
 
         val pv = KeyboardView(this)
@@ -1137,17 +1503,19 @@ class MainActivity : Activity() {
         }
         pv.arabic = Store.kbArabicFirst
         pv.suggText = "ببب  ←  بسم الله الرحمن الرحيم"
-        pv.suggs = listOf("\u201Cببب\u201D", "بسم الله الرحمن الرحيم", "بسم")
+        pv.suggs = listOf("“ببب”", "بسم الله الرحمن الرحيم", "بسم")
         pv.applySettings()
         pv.rebuild()
         kbPreview = pv
-        wrap.addView(pv, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
+        wrap.addView(
+            pv, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
         return wrap
     }
 
-    /** Re-reads the saved settings into the preview so every change shows at once. */
+
     /** Re-reads what the phone offers for voice input and shows it plainly. */
     private fun refreshVoiceReport() {
         val t = voiceReport ?: return
@@ -1192,17 +1560,6 @@ class MainActivity : Activity() {
         pv.rebuild()
     }
 
-    private fun refreshThemeButtons(grid: LinearLayout) {
-        for (i in 0 until grid.childCount) {
-            val row = grid.getChildAt(i) as? LinearLayout ?: continue
-            for (j in 0 until row.childCount) {
-                val b = row.getChildAt(j) as? Button ?: continue
-                val on = b.tag == Store.kbTheme
-                b.setTextColor(if (on) Color.WHITE else TXT)
-                b.background = round(if (on) ACC else CARD)
-            }
-        }
-    }
 
     private fun refreshKbBanner() {
         if (!::kbBanner.isInitialized) return
@@ -1843,20 +2200,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun makeTab(label: String, cb: () -> Unit): TextView {
-        val t = TextView(this)
-        t.text = label
-        t.gravity = Gravity.CENTER
-        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-        t.setPadding(0, dp(10), 0, dp(10))
-        t.setOnClickListener { cb() }
-        return t
-    }
 
-    private fun styleTab(t: TextView, active: Boolean) {
-        t.background = round(if (active) ACC else CARD)
-        t.setTextColor(if (active) Color.WHITE else MUT)
-    }
 
     private fun switchRow(
         label: String,

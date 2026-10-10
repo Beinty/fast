@@ -767,8 +767,43 @@ object Store {
         prefs(ctx).edit().putFloat(K_PITCH, callerPitch).apply()
     }
 
+    /**
+     * Picks a theme, and lets a glass one bring its own settings with it.
+     *
+     * A glass theme is not just colours: it needs transparency on and at a depth
+     * that suits it — milky glass at 94 and clear glass at 74 are two different
+     * things, and neither is findable by dragging a slider blind. So picking one
+     * switches transparency on and sets its depth, and picking a solid theme
+     * afterwards switches it back off. Both stay editable: these are starting
+     * points, not locks.
+     */
     fun setKbTheme(ctx: Context, v: String) {
-        kbTheme = v; prefs(ctx).edit().putString(K_KB_THEME, v).apply()
+        val was = Themes.byId(kbTheme).glass
+        kbTheme = v
+        val t = Themes.byId(v)
+        val e = prefs(ctx).edit().putString(K_KB_THEME, v)
+        if (t.glass) {
+            kbGlass = true
+            e.putBoolean(K_KB_GLASS, true)
+            if (t.glassPanel > 0) {
+                kbGlassPanel = t.glassPanel.coerceIn(20, 100); e.putInt(K_KB_GLASS_P, kbGlassPanel)
+            }
+            if (t.glassKey > 0) {
+                kbGlassKey = t.glassKey.coerceIn(20, 100); e.putInt(K_KB_GLASS_K, kbGlassKey)
+            }
+            if (t.inset >= 0) {
+                kbInset = t.inset.coerceIn(0, 14); e.putInt(K_KB_INSET, kbInset)
+            }
+            if (t.panelRadius >= 0) {
+                kbPanelRadius = t.panelRadius.coerceIn(0, 44); e.putInt(K_KB_PRAD, kbPanelRadius)
+            }
+        } else if (was) {
+            // leaving glass behind: a solid theme under a half-transparent panel
+            // looks like a bug, not a choice
+            kbGlass = false
+            e.putBoolean(K_KB_GLASS, false)
+        }
+        e.apply()
     }
 
     fun setTrLang(ctx: Context, dst: Boolean, code: String) {
