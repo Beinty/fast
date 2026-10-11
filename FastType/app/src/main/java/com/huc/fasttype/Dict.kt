@@ -61,9 +61,13 @@ object Dict {
 
     /** Kicks off loading and returns at once. Safe to call repeatedly. */
     fun warm(ctx: Context) {
+        val app0 = ctx.applicationContext
+        // the big Arabic tables load on their own thread and answer nothing
+        // until they are mapped, so this can start first and finish last
+        Ctx.load(app0)
         if (loading || (en != null && ar != null)) return
         loading = true
-        val app = ctx.applicationContext
+        val app = app0
         Thread {
             try {
                 if (en == null) en = read(app, "dict_en")
@@ -137,8 +141,13 @@ object Dict {
     /** Words that commonly follow [prev]. Empty when nothing is known about it. */
     fun nextWords(prev: String, arabic: Boolean, n: Int = 3): List<String> {
         if (prev.isEmpty()) return emptyList()
+        val f = fold(prev, arabic)
+        if (arabic) {
+            val big = Ctx.after(f)
+            if (big.isNotEmpty()) return big.take(n)
+        }
         val m = if (arabic) nextAr else nextEn
-        return m[fold(prev, arabic)]?.take(n) ?: emptyList()
+        return m[f]?.take(n) ?: emptyList()
     }
 
     /**
@@ -151,6 +160,21 @@ object Dict {
     fun nextAfter(prev2: String, prev: String, arabic: Boolean, n: Int): List<String> {
         if (prev.isEmpty()) return emptyList()
         val out = ArrayList<String>(n)
+        if (arabic) {
+            // the pair first: "كل عام" knows "وأنتم" in a way "عام" alone cannot
+            val f1 = fold(prev, arabic)
+            if (prev2.isNotEmpty()) {
+                for (w in Ctx.after2(fold(prev2, arabic), f1)) {
+                    if (out.size >= n) break
+                    if (!out.contains(w)) out.add(w)
+                }
+            }
+            for (w in Ctx.after(f1)) {
+                if (out.size >= n) break
+                if (!out.contains(w)) out.add(w)
+            }
+            if (out.size >= n) return out
+        }
         if (prev2.isNotEmpty()) {
             val t = if (arabic) triAr else triEn
             t[fold(prev2, arabic) + "\u0000" + fold(prev, arabic)]?.let { hits ->
@@ -188,6 +212,16 @@ object Dict {
         val p = fold(prefix, arabic)
         if (p.isEmpty()) return emptyList()
         val out = ArrayList<String>(n)
+        if (arabic) {
+            val f1 = fold(prev, arabic)
+            val big = (if (prev2.isNotEmpty()) Ctx.after2(fold(prev2, arabic), f1) else emptyList()) +
+                Ctx.after(f1)
+            for (w in big) {
+                if (out.size >= n) break
+                if (fold(w, arabic).startsWith(p) && !out.contains(w)) out.add(w)
+            }
+            if (out.size >= n) return out
+        }
         if (prev2.isNotEmpty()) {
             val t = if (arabic) triAr else triEn
             t[fold(prev2, arabic) + "\u0000" + fold(prev, arabic)]?.let { hits ->
