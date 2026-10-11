@@ -91,17 +91,44 @@ object Ctx {
         }
     }
 
+    /**
+     * The last few answers, because the question barely changes.
+     *
+     * Every keystroke rebuilds the suggestion strip, and while a word is being
+     * typed the word before it does not move — so the same lookup was being
+     * run against ten megabytes on every letter. A binary search there is
+     * twenty-odd probes into pages that may each have to come off the flash,
+     * on the thread that draws the keys. Holding the last few answers turns
+     * all but the first letter of each word into a map lookup.
+     */
+    private const val CACHE = 96
+    private val cache = object : LinkedHashMap<String, List<String>>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>) =
+            size > CACHE
+    }
+
+    @Synchronized
+    private fun cached(buf: MappedByteBuffer, key: String): List<String> {
+        cache[key]?.let { return it }
+        val v = look(buf, key)
+        cache[key] = v
+        return v
+    }
+
     /** Words that usually follow [prev]. [prev] is already folded. */
     fun after(prev: String): List<String> {
         val b = m2 ?: return emptyList()
-        return look(b, prev)
+        if (prev.isEmpty()) return emptyList()
+        return cached(b, prev)
     }
 
     /** Words that usually follow the pair [prev2] [prev], both folded. */
     fun after2(prev2: String, prev: String): List<String> {
         val b = m3 ?: return emptyList()
-        return look(b, "$prev2 $prev")
+        if (prev.isEmpty() || prev2.isEmpty()) return emptyList()
+        return cached(b, "$prev2 $prev")
     }
+
 
     // ---- the search -------------------------------------------------------
 

@@ -1042,7 +1042,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         lastWord = ""
         prevWord = ""
         offered = null
-        refreshSugg()
+        // through the same 24ms gate the letters use: a held delete fires this
+        // many times a second and each one was rebuilding the strip in full
+        scheduleSugg()
     }
 
     override fun onRepeatState(active: Boolean) {
