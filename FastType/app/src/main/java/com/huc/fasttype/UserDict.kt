@@ -277,7 +277,17 @@ object UserDict {
         return true
     }
 
+    /**
+     * Set while a password, PIN or code field is on screen.
+     *
+     * Nothing typed there may be learned. A password learned once becomes a
+     * suggestion offered for years, in front of anyone who borrows the phone —
+     * and the keyboard cannot tell afterwards which of its words that was.
+     */
+    @Volatile var blocked = false
+
     fun seenToken(raw: String) {
+        if (blocked) return
         val t = raw.trim().trimEnd('.', ',', '!', '?', ';', ':')
         if (!isToken(t)) return
         tokens[t] = (tokens[t] ?: 0) + 1
@@ -315,6 +325,7 @@ object UserDict {
     }
 
     fun seen(word: String, arabic: Boolean) {
+        if (blocked) return
         if (word.length < 2 || word.length > 24) return
         if (!isWordy(word, arabic)) return
         val k = Dict.fold(word, arabic)
@@ -352,6 +363,7 @@ object UserDict {
 
     /** Records that [next] followed [prev] in this person's own writing. */
     fun seenPair(prev: String, next: String, arabic: Boolean) {
+        if (blocked) return
         if (prev.length < 2 || next.length < 2) return
         if (!isWordy(prev, arabic) || !isWordy(next, arabic)) return
         val a = Dict.fold(prev, arabic)
@@ -367,6 +379,7 @@ object UserDict {
 
     /** Records that [c] followed [a] then [b]. */
     fun seenTri(a: String, b: String, c: String, arabic: Boolean) {
+        if (blocked) return
         if (a.length < 2 || b.length < 2 || c.length < 2) return
         if (!isWordy(a, arabic) || !isWordy(b, arabic) || !isWordy(c, arabic)) return
         val h = Dict.fold(a, arabic) + "\u0000" + Dict.fold(b, arabic)
@@ -557,6 +570,7 @@ object UserDict {
 
     /** Remembers that [bad] should have been [good]. */
     fun learnFix(bad: String, good: String, arabic: Boolean) {
+        if (blocked) return
         if (bad.length < 2 || good.length < 2) return
         if (bad.length > 24 || good.length > 24) return
         if (!isWordy(bad, arabic) || !isWordy(good, arabic)) return

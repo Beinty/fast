@@ -419,7 +419,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // the blue key says what this field actually does
         // a password or a one-time code is the one thing a clipboard history
         // must not keep: it outlives its use by hours and sits in a list
-        Clip.blocked = isSecretField(info)
+        val secret = isSecretField(info)
+        Clip.blocked = secret
+        UserDict.blocked = secret
         val act = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
         KbLayout.actionIcon =
             if (act == EditorInfo.IME_ACTION_SEARCH) Ico.SEARCH else Ico.ENTER
