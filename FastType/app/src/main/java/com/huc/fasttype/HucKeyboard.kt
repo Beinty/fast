@@ -364,7 +364,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (text.isEmpty()) return
         val ic = currentInputConnection ?: run { VoiceResult.pending = text; return }
         ic.beginBatchEdit()
-        ic.commitText("$text ", 1)
+        put(ic, "$text ")
         ic.endBatchEdit()
         resetWord()
         refreshSugg()
@@ -462,17 +462,105 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         super.onUpdateSelection(
             oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd
         )
-        if (transOn) return
-        if (newSelStart == 0 && newSelEnd == 0) {
-            resetWord()
-            lastWord = ""
-            prevWord = ""
-            offered = null
-            lastDone = ""
-            undoTyped = null
-            undoFixed = null
+        // While dictation is running the text is marked unfinished and the app
+        // moves the cursor about inside it; none of that is him moving it.
+        if (transOn || composing) { lostPlace(); return }
+
+        // Only a cursor at the very start of the field used to count as having
+        // moved. Every other move was ignored — including the one he actually
+        // makes, a tap into the middle of a sentence to go back and fix a word.
+        // The keyboard went on believing the cursor was still at the end of the
+        // word it had been typing, with that word still in its buffer, and the
+        // next correction deleted that many characters from wherever the cursor
+        // now was. What it ate was the word in front of the one he meant.
+        val jumped = newSelStart != newSelEnd ||
+            (expectSel >= 0 && newSelStart != expectSel) ||
+            (newSelStart == 0 && newSelEnd == 0)
+        expectSel = newSelStart
+        if (jumped) {
+            forgetPlace()
             scheduleSugg()
         }
+    }
+
+    /**
+     * Where the cursor should be if nothing but this keyboard has moved it.
+     *
+     * -1 means we have lost track, which is not the same as "it moved": every
+     * site that writes to the field says so through [put], [cut] or [replace],
+     * and a path whose effect cannot be worked out marks the position unknown
+     * instead of guessing. Unknown never reports a jump, so being careful here
+     * costs a missed reset at worst, never a wrongly destroyed word.
+     */
+    private var expectSel = -1
+
+    private fun wrote(delta: Int) {
+        if (expectSel >= 0) expectSel += delta
+    }
+
+    /** The cursor has moved by an amount we cannot work out — stop guessing. */
+    private fun lostPlace() {
+        expectSel = -1
+    }
+
+    /** Writes to the field and keeps the expected cursor in step. */
+    private fun put(ic: android.view.inputmethod.InputConnection, text: CharSequence) {
+        ic.commitText(text, 1)
+        wrote(text.length)
+    }
+
+    private fun cut(ic: android.view.inputmethod.InputConnection, n: Int) {
+        ic.deleteSurroundingText(n, 0)
+        wrote(-n)
+    }
+
+    /**
+     * Everything the keyboard believes about the word in hand, dropped.
+     *
+     * The cursor has gone somewhere this keyboard did not put it. What is in the
+     * buffer belongs to a place on the screen that is no longer where he is
+     * writing, and acting on it is how a repair lands on the wrong word.
+     */
+    private fun forgetPlace() {
+        resetWord()
+        lastWord = ""
+        prevWord = ""
+        offered = null
+        lastDone = ""
+        eraseCount = 0
+        repairFrom = null
+        undoTyped = null
+        undoFixed = null
+    }
+
+    /**
+     * Replaces the characters before the cursor, but only if they are still the
+     * ones we think they are.
+     *
+     * Every replacement the keyboard makes — a correction, a shortcut, a tap on
+     * the strip — works by deleting a length it remembers and writing over it.
+     * That is safe exactly as long as the cursor is where the keyboard left it,
+     * and nothing inside the keyboard can be sure of that: another app can move
+     * it, and so can a finger. So the text is read back and compared first. One
+     * round trip, only at the moment of a replacement, and it leaves the one
+     * destructive call in the keyboard unable to aim at the wrong word.
+     */
+    private fun replace(
+        ic: android.view.inputmethod.InputConnection,
+        expect: String, with: String
+    ): Boolean {
+        if (expect.isEmpty()) {
+            put(ic, with)
+            return true
+        }
+        val there = ic.getTextBeforeCursor(expect.length, 0)?.toString()
+        if (there != expect) return false
+        ic.beginBatchEdit()
+        ic.deleteSurroundingText(expect.length, 0)
+        ic.commitText(with, 1)
+        ic.endBatchEdit()
+        wrote(with.length - expect.length)
+        return true
     }
 
     override fun onFinishInput() {
@@ -518,8 +606,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             lastSpaceAt = now
             if (quick && buffer.isEmpty() && endsWithLetterThenSpace(ic)) {
                 ic.beginBatchEdit()
-                ic.deleteSurroundingText(1, 0)
-                ic.commitText(". ", 1)
+                cut(ic, 1)
+                put(ic, ". ")
                 ic.endBatchEdit()
                 lastSpaceAt = 0L
                 lastWord = ""
@@ -538,7 +626,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // corrector is watching: leaving it out of the buffer keeps "كَتب" the word
         // "كتب" as far as spelling is concerned, which is what it is.
         if (s.length == 1 && isMark(s[0])) {
-            ic.commitText(s, 1)
+            put(ic, s)
             feedback()
             afterType()
             return
@@ -548,11 +636,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         if (isBreak && Store.kbExpand) {
             val hit = matchShortcut()
-            if (hit != null) {
-                ic.beginBatchEdit()
-                ic.deleteSurroundingText(hit.trigger.length, 0)
-                ic.commitText(hit.phrase + s, 1)
-                ic.endBatchEdit()
+            if (hit != null && replace(ic, hit.trigger, hit.phrase + s)) {
                 resetWord()
                 feedback()
                 scheduleSugg()
@@ -622,12 +706,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             lastDone = learnt
             eraseCount = 0
 
-            if (fixed != null) {
+            if (fixed != null && replace(ic, typed, fixed + s)) {
                 offered = null
-                ic.beginBatchEdit()
-                ic.deleteSurroundingText(typed.length, 0)
-                ic.commitText(fixed + s, 1)
-                ic.endBatchEdit()
                 undoTyped = typed
                 undoFixed = fixed
                 // worth remembering straight away; one backspace takes it back out
@@ -644,7 +724,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
         }
 
-        ic.commitText(s, 1)
+        put(ic, s)
 
         if (isBreak) resetWord()
         else {
@@ -658,13 +738,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
             if (Store.kbExpandInstant && Store.kbExpand) {
                 val hit = matchShortcut()
-                if (hit != null) {
-                    ic.beginBatchEdit()
-                    ic.deleteSurroundingText(hit.trigger.length, 0)
-                    ic.commitText(hit.phrase, 1)
-                    ic.endBatchEdit()
-                    resetWord()
-                }
+                if (hit != null && replace(ic, hit.trigger, hit.phrase)) resetWord()
             }
         }
 
@@ -708,8 +782,8 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         undoTyped = null
         undoFixed = null
         ic.beginBatchEdit()
-        ic.deleteSurroundingText(1, 0)
-        ic.commitText(s, 1)
+        cut(ic, 1)
+        put(ic, s)
         ic.endBatchEdit()
         if (buffer.isNotEmpty()) {
             buffer.setLength(buffer.length - 1)
@@ -758,10 +832,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             repairFrom = null
             lastDone = t
             eraseCount = 0
-            ic.beginBatchEdit()
-            ic.deleteSurroundingText(f.length + 1, 0)
-            ic.commitText(t, 1)
-            ic.endBatchEdit()
+            if (!replace(ic, f + " ", t)) {
+                // the repaired word is not under the cursor any more, so there is
+                // nothing here to undo; a plain backspace is what he asked for
+                forgetPlace()
+                cut(ic, 1)
+                feedback()
+                scheduleSugg()
+                return
+            }
             resetWord()
             buffer.append(t)
             feedback()
@@ -777,7 +856,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 lastWord = ""
                 prevWord = ""
                 offered = null
+                // a selection is being replaced and its length is the app's
+                // business, not ours, so the cursor stops being predictable
                 ic.commitText("", 1)
+                lostPlace()
                 resetWord()
                 feedback()
                 scheduleSugg()
@@ -785,7 +867,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             }
         }
 
-        ic.deleteSurroundingText(1, 0)
+        cut(ic, 1)
         // Deleting throws away the word the next-word guesses were based on. Leaving
         // them up meant the strip still offered words over an empty message box.
         lastWord = ""
@@ -833,7 +915,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val queued = Clip.queueNext()
         if (queued != null) {
             releaseComposing(ic)
-            ic.commitText(queued, 1)
+            put(ic, queued)
             feedback()
             if (Clip.queue.isEmpty()) kv?.setClipQueueOff()
             refreshSugg()
@@ -846,7 +928,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             return
         }
         releaseComposing(ic)
-        ic.commitText(t, 1)
+        put(ic, t)
         Clip.used()
         resetWord()
         lastWord = ""
@@ -876,7 +958,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         kv?.rebuild()
         if (ic != null) {
             releaseComposing(ic)
-            ic.commitText(t, 1)
+            put(ic, t)
         }
         Clip.used()
         resetWord()
@@ -1018,7 +1100,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         kv?.rebuild()
         if (ic != null) {
             releaseComposing(ic)
-            ic.commitText(text, 1)
+            put(ic, text)
         }
         Clip.used()
         resetWord()
@@ -1037,7 +1119,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         while (i > 0 && before[i - 1] == ' ') i--
         while (i > 0 && before[i - 1] != ' ' && before[i - 1] != '\n') i--
         val n = (before.length - i).coerceAtLeast(1)
-        ic.deleteSurroundingText(n, 0)
+        cut(ic, n)
         resetWord()
         lastWord = ""
         prevWord = ""
@@ -1115,10 +1197,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onSuggestionTap() {
         val hit = pendingShortcut ?: return
         val ic = currentInputConnection ?: return
-        ic.beginBatchEdit()
-        ic.deleteSurroundingText(hit.trigger.length, 0)
-        ic.commitText(hit.phrase, 1)
-        ic.endBatchEdit()
+        if (!replace(ic, hit.trigger, hit.phrase)) forgetPlace()
         resetWord()
         refreshSugg()
     }
@@ -1135,10 +1214,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // along with whatever ended it
         val off = offered
         if (off != null && index == 0 && word == off && buffer.isEmpty()) {
-            ic.beginBatchEdit()
-            ic.deleteSurroundingText(offeredFor.length + offeredEnd.length, 0)
-            ic.commitText(off + offeredEnd, 1)
-            ic.endBatchEdit()
+            if (!replace(ic, offeredFor + offeredEnd, off + offeredEnd)) {
+                offered = null
+                forgetPlace()
+                refreshSugg()
+                return
+            }
             if (Store.kbLearn) {
                 UserDict.learnFix(offeredFor, off, arabic)
                 UserDict.seen(off, arabic)
@@ -1155,12 +1236,17 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         val whole = suggKinds.getOrNull(index) ?: false
-        ic.beginBatchEdit()
-        // a completion replaces what is half-typed; a next word just goes after it
-        if (!whole && buffer.isNotEmpty()) ic.deleteSurroundingText(buffer.length, 0)
-        else if (whole && buffer.isNotEmpty()) ic.commitText(" ", 1)
-        ic.commitText("$word ", 1)
-        ic.endBatchEdit()
+        val half = buffer.toString()
+        if (!whole && half.isNotEmpty()) {
+            // a completion replaces what is half typed — and only if that really
+            // is what sits under the cursor
+            if (!replace(ic, half, "$word ")) { forgetPlace(); refreshSugg(); return }
+        } else {
+            ic.beginBatchEdit()
+            if (whole && half.isNotEmpty()) put(ic, " ")
+            put(ic, "$word ")
+            ic.endBatchEdit()
+        }
         if (Store.kbLearn) {
             UserDict.seen(word, arabic)
             val prev = if (whole && buffer.isNotEmpty()) buffer.toString() else lastWord
@@ -1426,6 +1512,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 if (before.isNotEmpty()) ic.deleteSurroundingText(before.length, 0)
                 ic.commitText(out, 1)
             }
+            lostPlace()
             ic.endBatchEdit()
         } catch (_: Throwable) {
         }
@@ -1686,6 +1773,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             ic.beginBatchEdit()
             if (composing) ic.finishComposingText()
             if (voiceLocked.isNotEmpty()) ic.commitText(" ", 1)
+            lostPlace()
             voiceLocked = ""
             ic.setComposingText(text, 1)
             ic.endBatchEdit()
@@ -1742,6 +1830,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         ic.beginBatchEdit()
         if (composing) ic.finishComposingText()
         ic.commitText(" ", 1)
+        lostPlace()
         ic.endBatchEdit()
         composing = false
         voiceLocked = ""
