@@ -1880,6 +1880,19 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     // ---------------- shortcuts ----------------
 
+    /**
+     * The shortcut he has just finished typing, if the word he typed is one.
+     *
+     * The word has to BE the trigger, not end with it. The old rule accepted any
+     * trigger sitting at the end of the word as long as the character in front of
+     * it was not a letter — which sounds like the same thing and is not, because
+     * the only text it ever looked at was the word being typed. A trigger that
+     * happened to be the tail of a longer word matched, and the expansion was
+     * glued onto what he had written: "اكلك" and a phone number, run together.
+     *
+     * One word, nothing else on it, then space. That is the whole rule, and it
+     * is the rule he described wanting back.
+     */
     private fun matchShortcut(): Shortcut? {
         val n = buffer.length
         if (n == 0) return null
@@ -1887,10 +1900,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val cands = Store.byLast[buffer[n - 1]] ?: return null
         val body = buffer.toString()
         for (s in cands) {
-            if (!body.endsWith(s.trigger)) continue
-            val start = body.length - s.trigger.length
-            if (start > 0 && !isBoundary(body[start - 1])) continue
-            return s
+            if (body == s.trigger) return s
         }
         return null
     }
@@ -2043,8 +2053,6 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private fun isWordBreak(c: Char): Boolean =
         c == ' ' || c == '\n' || c == '\t' || c == '.' || c == ',' || c == '!' ||
             c == '?' || c == '؟' || c == '،' || c == ':' || c == ';' || c == '-'
-
-    private fun isBoundary(c: Char): Boolean = !c.isLetterOrDigit() && c != '_'
 
     // ---------------- feedback ----------------
 
