@@ -234,19 +234,18 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /**
      * Below this a correction is offered rather than applied.
      *
-     * Set where it pays to stop. Taking five thousand real slips and sorting every
-     * repair by confidence, the question at each step down is how many more right
-     * repairs that step buys and how many more wrong ones it costs. From 0.95 down
-     * to 0.75 each step buys two right for one wrong. Below 0.72 it inverts: the
-     * next repair admitted is likelier to be wrong than right. So that is the line.
+     * It was set where it stopped paying: sorting five thousand real repairs by
+     * confidence, every step down from 0.95 to 0.75 bought two right repairs for
+     * one wrong, and below 0.72 the next repair admitted was likelier to be
+     * wrong than right. That reasoning was sound and the answer was still too
+     * low to live with — at 0.72 better than one replaced word in four is the
+     * wrong word, and a wrong one costs far more than its share of the
+     * arithmetic. A repair below the line is not lost; it stands first on the
+     * strip, where one tap takes it and fixes it for good.
      *
-     * A repair below it is not lost — it stands first in the strip, and one tap
-     * both fixes the word and teaches it for good. A wrong auto-replacement costs
-     * a backspace and the irritation of having been overruled; a repair left in
-     * the strip costs a tap. They are not the same price, so the line is not at
-     * even odds.
+     * So it is his dial now, and it starts at 0.85.
      */
-    private val SURE = 0.72f
+    private val SURE: Float get() = Store.kbSure / 100f
     private var lastSpaceAt = 0L
     /** For each strip zone: true when it is a new word, false when it completes one. */
     private var suggKinds: List<Boolean> = emptyList()

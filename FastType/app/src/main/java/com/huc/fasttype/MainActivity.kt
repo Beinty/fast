@@ -1287,6 +1287,14 @@ class MainActivity : Activity() {
                 Store.setKbFlag(this, "correct", it); syncPreview()
             }, lp(true, bottom = dp(8))
         )
+        // The number is how sure it must be before it changes a word by itself.
+        // Higher means it changes fewer words and gets more of them right; what
+        // it does not change stands first on the strip for one tap.
+        p.addView(sliderRow(
+            "متى يبدّل لوحده (أعلى = أقل تبديل وأدق)", Store.kbSure, 60, 95, 5
+        ) {
+            Store.setKbInt(this, "sure", it); syncPreview()
+        }, lp(true, bottom = dp(8)))
         p.addView(
             switchRow(
                 "مسافتين = نقطة", "ضغطتين سريعتين على المسافة تحطّ نقطة ومسافة",
