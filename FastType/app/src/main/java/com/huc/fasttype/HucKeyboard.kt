@@ -473,34 +473,77 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // word it had been typing, with that word still in its buffer, and the
         // next correction deleted that many characters from wherever the cursor
         // now was. What it ate was the word in front of the one he meant.
-        val jumped = newSelStart != newSelEnd ||
-            (expectSel >= 0 && newSelStart != expectSel) ||
-            (newSelStart == 0 && newSelEnd == 0)
-        expectSel = newSelStart
+        // Nothing was known about where the cursor was, so this report is the
+        // first thing we know. It tells us nothing is stale, only where we are.
+        if (expectN == 0) {
+            pushExpect(newSelStart)
+            if (newSelStart == newSelEnd) return
+        }
+
+        val jumped = newSelStart != newSelEnd || !ours(newSelStart)
         if (jumped) {
+            lostPlace()
+            pushExpect(newSelStart)
             forgetPlace()
             scheduleSugg()
         }
     }
 
     /**
-     * Where the cursor should be if nothing but this keyboard has moved it.
+     * Every place this keyboard has told the field to put the cursor, newest last.
      *
-     * -1 means we have lost track, which is not the same as "it moved": every
-     * site that writes to the field says so through [put], [cut] or [replace],
-     * and a path whose effect cannot be worked out marks the position unknown
-     * instead of guessing. Unknown never reports a jump, so being careful here
-     * costs a missed reset at worst, never a wrongly destroyed word.
+     * One expected position is not enough, and that was my mistake two days ago.
+     * The app reports selection changes late and in its own time: type three
+     * letters quickly and the three reports can arrive after all three edits are
+     * done, each naming a position the keyboard has already moved past. Compared
+     * against a single "expected" number, every one of those looks like him
+     * tapping somewhere else — so the keyboard threw away the word in hand on
+     * almost every keystroke, which is why a shortcut only fired after a couple
+     * of backspaces had let it catch up, and why typing went heavy: each false
+     * alarm rebuilt the suggestion strip.
+     *
+     * So the recent few are kept. A report naming any of them is this keyboard's
+     * own work arriving late; anything else is a cursor that moved on its own.
      */
-    private var expectSel = -1
+    private val expect = IntArray(12)
+    private var expectN = 0
+
+    private fun pushExpect(at: Int) {
+        if (expectN == expect.size) {
+            System.arraycopy(expect, 1, expect, 0, expect.size - 1)
+            expectN--
+        }
+        expect[expectN++] = at
+    }
+
+    /** The position the keyboard believes the cursor is at, or -1 if unknown. */
+    private val expectSel: Int
+        get() = if (expectN == 0) -1 else expect[expectN - 1]
 
     private fun wrote(delta: Int) {
-        if (expectSel >= 0) expectSel += delta
+        val at = expectSel
+        if (at >= 0) pushExpect((at + delta).coerceAtLeast(0))
     }
 
     /** The cursor has moved by an amount we cannot work out — stop guessing. */
     private fun lostPlace() {
-        expectSel = -1
+        expectN = 0
+    }
+
+    /**
+     * True when [at] is a place this keyboard put the cursor. Everything older
+     * than the match is dropped, so a report can only be used once.
+     */
+    private fun ours(at: Int): Boolean {
+        for (i in 0 until expectN) {
+            if (expect[i] == at) {
+                val keep = expectN - i
+                System.arraycopy(expect, i, expect, 0, keep)
+                expectN = keep
+                return true
+            }
+        }
+        return false
     }
 
     /** Writes to the field and keeps the expected cursor in step. */
