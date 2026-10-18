@@ -678,7 +678,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val isBreak = s.length == 1 && isWordBreak(s[0])
 
         if (isBreak && Store.kbExpand) {
-            val hit = matchShortcut()
+            // the field, not the buffer: if the word on screen is a trigger it
+            // expands, whatever this keyboard thought it had typed
+            val hit = matchShortcutNow(ic)
             if (hit != null && replace(ic, hit.trigger, hit.phrase + s)) {
                 resetWord()
                 feedback()
@@ -1936,18 +1938,64 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      * One word, nothing else on it, then space. That is the whole rule, and it
      * is the rule he described wanting back.
      */
-    private fun matchShortcut(): Shortcut? {
-        val n = buffer.length
-        if (n == 0) return null
-        // only triggers ending in the letter just typed can possibly have completed
-        val cands = Store.byLast[buffer[n - 1]] ?: return null
-        val body = buffer.toString()
-        for (s in cands) {
-            if (body == s.trigger) return s
-        }
+    /**
+     * The word sitting before the cursor, read off the field rather than
+     * remembered.
+     *
+     * The buffer is this keyboard's note of what it has typed, and a note can be
+     * wrong: the cursor moves, the app rewrites the box, the keyboard opens in
+     * the middle of a line. When it is wrong the word on screen and the word in
+     * the buffer disagree, and everything keyed off the buffer quietly stops —
+     * which is why "ان" showed its shortcut on one try and nothing on the next
+     * with identical text on screen. The field is the truth. One read of a few
+     * characters is nothing next to getting this wrong.
+     */
+    private fun wordBefore(ic: android.view.inputmethod.InputConnection): String {
+        val before = ic.getTextBeforeCursor(40, 0) ?: return ""
+        var i = before.length
+        while (i > 0 && !isWordBreak(before[i - 1])) i--
+        return before.substring(i)
+    }
+
+    /**
+     * The shortcut he has just finished typing, if the word he typed is one.
+     *
+     * The word has to BE the trigger, not end with it: one word, nothing else on
+     * it, then space.
+     */
+    private fun matchFor(word: String): Shortcut? {
+        if (word.isEmpty()) return null
+        val cands = Store.byLast[word[word.length - 1]] ?: return null
+        for (s in cands) if (word == s.trigger) return s
         return null
     }
 
+    /** What the strip shows: the buffer is enough, and it is asked on every key. */
+    private fun matchShortcut(): Shortcut? = matchFor(buffer.toString())
+
+    /**
+     * What actually expands, at the moment he presses space. Here the buffer is
+     * only a guess, so the field is consulted whenever the guess finds nothing.
+     */
+    private fun matchShortcutNow(ic: android.view.inputmethod.InputConnection): Shortcut? {
+        matchFor(buffer.toString())?.let { return it }
+        val real = wordBefore(ic)
+        if (real.isEmpty() || real == buffer.toString()) return null
+        return matchFor(real)
+    }
+
+
+    /**
+     * The strip, rebuilt.
+     *
+     * Only the cheap half runs here. Working out what to offer means searching a
+     * 215,000 word dictionary and two memory-mapped tables of a hundred thousand
+     * phrases, and on a one-letter prefix that is a long walk — which was being
+     * taken on the typing thread, between his finger landing and the letter
+     * appearing. It happens on the worker thread now and lands when it lands;
+     * the only thing that waits for it is the strip, which has nothing to say
+     * until it is done anyway.
+     */
     private fun refreshSugg() {
         val v = kv ?: return
         if (voice?.isListening == true) return
@@ -1979,12 +2027,38 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (key == suggKey) return
         suggKey = key
 
+        // everything the answer depends on, taken now: by the time the worker
+        // runs he may well have typed another letter
+        val lastW = lastWord
+        val prevW = prevWord
+        val off = offered
+        val ar = arabic
+        bg.post {
+            val out = buildSuggs(word, lastW, prevW, off, ar)
+            ui.post {
+                // he has typed on since; that answer is for a word he has left
+                if (suggKey != key) return@post
+                val view = kv ?: return@post
+                suggKinds = out.second
+                if (view.suggText.isNotEmpty() || view.suggs != out.first) {
+                    view.suggText = ""
+                    view.suggNew = out.second
+                    view.suggs = out.first
+                    view.stripChanged()
+                }
+            }
+        }
+    }
+
+    /** Pure: the same inputs always give the same strip. Runs off the UI thread. */
+    private fun buildSuggs(
+        word: String, lastW: String, prevW: String, off: String?, ar: Boolean
+    ): Pair<List<String>, List<Boolean>> {
         val zones = ArrayList<String>(MAX_SUGG)
         val kinds = ArrayList<Boolean>(MAX_SUGG)  // true = a whole new word
 
         // a repair the engine was not sure enough to make goes first, where one
         // tap takes it and ignoring it costs nothing
-        val off = offered
         if (off != null && word.isEmpty()) {
             zones.add(off)
             kinds.add(true)
@@ -1997,24 +2071,24 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             // screen. While a word is half typed those two used to be asked apart —
             // and so the strongest thing the keyboard knew went unused at exactly
             // the moment it was most use.
-            if (word.isNotEmpty() && lastWord.isNotEmpty()) {
+            if (word.isNotEmpty() && lastW.isNotEmpty()) {
                 val mine = if (Store.kbLearn)
-                    UserDict.nextWith(prevWord, lastWord, word, arabic, MAX_SUGG)
+                    UserDict.nextWith(prevW, lastW, word, ar, MAX_SUGG)
                 else emptyList()
                 for (w in mine +
-                    Dict.nextAfterPrefix(prevWord, lastWord, word, arabic, MAX_SUGG)) {
+                    Dict.nextAfterPrefix(prevW, lastW, word, ar, MAX_SUGG)) {
                     if (zones.size >= MAX_SUGG) break
                     if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
                 }
             }
 
             // once nothing is being typed, what follows the finished sentence
-            if (word.isEmpty() && lastWord.isNotEmpty()) {
+            if (word.isEmpty() && lastW.isNotEmpty()) {
                 val mine = if (Store.kbLearn)
-                    UserDict.nextTri(prevWord, lastWord, arabic, 3) +
-                        UserDict.next(lastWord, arabic, 4)
+                    UserDict.nextTri(prevW, lastW, ar, 3) +
+                        UserDict.next(lastW, ar, 4)
                 else emptyList()
-                for (w in mine + Dict.nextAfter(prevWord, lastWord, arabic, 6)) {
+                for (w in mine + Dict.nextAfter(prevW, lastW, ar, 6)) {
                     if (zones.size >= MAX_SUGG) break
                     if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
                 }
@@ -2033,13 +2107,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 }
                 // a line he writes often, offered whole rather than a word at a time
                 if (Store.kbLearn && zones.size < MAX_SUGG) {
-                    UserDict.phrase(word, arabic)?.let {
+                    UserDict.phrase(word, ar)?.let {
                         if (!zones.contains(it)) { zones.add(it); kinds.add(false) }
                     }
                 }
                 val mine =
-                    if (Store.kbLearn) UserDict.predict(word, arabic, 4) else emptyList()
-                for (w in mine + Dict.predict(word, arabic, MAX_SUGG)) {
+                    if (Store.kbLearn) UserDict.predict(word, ar, 4) else emptyList()
+                for (w in mine + Dict.predict(word, ar, MAX_SUGG)) {
                     if (zones.size >= MAX_SUGG) break
                     if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
                 }
@@ -2050,26 +2124,20 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
             // is worth nothing once the two sources above have had their pick — it
             // used to come first, and it was taking their places.
             if (word.isNotEmpty() && zones.size < MAX_SUGG &&
-                (Dict.known(word, arabic) || UserDict.isOwn(word, arabic))
+                (Dict.known(word, ar) || UserDict.isOwn(word, ar))
             ) {
                 val mine = if (Store.kbLearn)
-                    UserDict.nextTri(lastWord, word, arabic, 3) +
-                        UserDict.next(word, arabic, 4)
+                    UserDict.nextTri(lastW, word, ar, 3) +
+                        UserDict.next(word, ar, 4)
                 else emptyList()
-                for (w in mine + Dict.nextAfter(lastWord, word, arabic, 6)) {
+                for (w in mine + Dict.nextAfter(lastW, word, ar, 6)) {
                     if (zones.size >= MAX_SUGG) break
                     if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
                 }
             }
         }
 
-        suggKinds = kinds
-        if (v.suggText.isNotEmpty() || v.suggs != zones) {
-            v.suggText = ""
-            v.suggNew = kinds
-            v.suggs = zones
-            v.stripChanged()
-        }
+        return zones to kinds
     }
 
     /** A combining Arabic vowel mark, which sits on a letter rather than beside it. */
