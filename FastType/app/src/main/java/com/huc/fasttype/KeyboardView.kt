@@ -1613,7 +1613,10 @@ class KeyboardView(context: Context) : View(context) {
         // ---- the end key: a gear where the microphone used to be ----
         if (micInStrip) {
             val r = micW * 0.46f
-            if (listening && !toolsOpen) {
+            // The ring used to go out the moment the tools opened, so a running
+            // recording looked finished exactly when the button that stops it had
+            // become the only way to stop it. It stays.
+            if (listening) {
                 edgePaint.style = Paint.Style.STROKE
                 edgePaint.color = REC
                 edgePaint.strokeWidth = dp(2f)
@@ -3100,7 +3103,13 @@ class KeyboardView(context: Context) : View(context) {
                     invalidateStrip()
                     if (dragged || hadHold) return true
                     when {
-                        z == -2 -> setToolsOpen(!toolsOpen)
+                        // While it is recording, this is the stop button. The
+                        // recording button lives on the strip, and opening the
+                        // tools replaces the strip — so the one thing that could
+                        // stop a recording vanished the moment he reached for it,
+                        // and the microphone stayed on with nothing to turn it off.
+                        z == -2 ->
+                            if (listening) listener?.onMic() else setToolsOpen(!toolsOpen)
                         z == -3 -> listener?.onClipTap()
                         z <= -4 && z >= -(3 + TOOL_ICONS.size) -> {
                             setToolsOpen(false)
