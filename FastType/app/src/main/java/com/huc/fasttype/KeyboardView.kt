@@ -866,14 +866,24 @@ class KeyboardView(context: Context) : View(context) {
      * line a chore, so the original pace is back and the wait in front of it
      * stays long.
      */
+    /**
+     * Holding delete.
+     *
+     * The wait before the first repeat was 400ms, which is a long time to sit
+     * with a finger down wondering whether the key has registered. 260 is about
+     * where a hold stops reading as a tap, and it is what the stock keyboards
+     * use. After that it accelerates, and once it has eaten a dozen letters it
+     * stops going letter by letter and takes whole words, which is both faster
+     * and easier to stop in the right place than forty letters a second.
+     */
     private val repeatRunnable = object : Runnable {
         override fun run() {
             if (!repeating) return
             repeatTicks++
             val delay = when {
-                repeatTicks > 44 -> { listener?.onDeleteWord(); 70L }
-                repeatTicks > 16 -> { listener?.onDelete(); 16L }
-                else -> { listener?.onDelete(); 28L }
+                repeatTicks > 30 -> { listener?.onDeleteWord(); 60L }
+                repeatTicks > 10 -> { listener?.onDelete(); 18L }
+                else -> { listener?.onDelete(); 26L }
             }
             handler.postDelayed(this, delay)
         }
@@ -2834,7 +2844,7 @@ class KeyboardView(context: Context) : View(context) {
                     repeatTicks = 0
                     listener?.onRepeatState(true)
                     // the one guard that costs nothing when the press is meant
-                    handler.postDelayed(repeatRunnable, 400)
+                    handler.postDelayed(repeatRunnable, 260)
                 }
                 return true
             }

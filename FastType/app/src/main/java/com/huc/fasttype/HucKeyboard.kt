@@ -381,6 +381,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     override fun onDestroy() {
         try { worker.quitSafely() } catch (_: Throwable) {}
+        try { tap.quitSafely() } catch (_: Throwable) {}
         try {
             clipWatcher?.let {
                 (getSystemService(android.content.Context.CLIPBOARD_SERVICE)
@@ -931,8 +932,14 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 eraseCount = 0
             }
         }
-        feedback()
-        scheduleSugg()
+        // A held delete fires fifty times a second. Clicking fifty times a second
+        // is a rattle, not a click, and rebuilding the strip fifty times for a
+        // word that is disappearing is work nobody asked for. Both wait for the
+        // finger to come up, where onRepeatState refreshes the strip once.
+        if (!repeatingDel) {
+            feedback()
+            scheduleSugg()
+        }
     }
 
     /** Deletes back to the start of the previous word, for a long backspace hold. */
@@ -2176,23 +2183,69 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     /** Looked up once; fetching a system service on every keystroke is not free. */
     private var audio: AudioManager? = null
 
+    /**
+     * The click and the buzz, on a thread of their own.
+     *
+     * Both are calls across into the system, and both were being made on the
+     * thread that draws the keys, in the middle of handling the touch — so every
+     * letter waited on the audio service before it could be painted. Neither has
+     * anything to tell us and neither needs to happen in any particular order
+     * against the text, so neither belongs in the way.
+     *
+     * A thread of its own rather than the worker that thinks about words: a
+     * click that arrives late because a dictionary search was running in front
+     * of it is worse than no click.
+     */
+    private val tap by lazy {
+        android.os.HandlerThread("huc-tap", android.os.Process.THREAD_PRIORITY_URGENT_AUDIO)
+            .also { it.start() }
+    }
+    private val tapper by lazy { Handler(tap.looper) }
+
     private fun feedback() {
-        if (Store.kbSound) {
-            try {
-                val am = audio
-                    ?: (getSystemService(Context.AUDIO_SERVICE) as AudioManager).also { audio = it }
-                am.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, 0.35f)
-            } catch (_: Exception) {
+        val sound = Store.kbSound
+        val buzz = Store.kbVibrate
+        if (!sound && !buzz) return
+        try {
+            tapper.post {
+                if (sound) {
+                    try {
+                        val am = audio ?: (getSystemService(Context.AUDIO_SERVICE)
+                            as AudioManager).also { audio = it }
+                        am.playSoundEffect(AudioManager.FX_KEYPRESS_STANDARD, 0.35f)
+                    } catch (_: Throwable) {
+                    }
+                }
+                if (buzz) buzz()
             }
+        } catch (_: Throwable) {
         }
-        if (Store.kbVibrate) {
-            try {
-                kv?.performHapticFeedback(
-                    HapticFeedbackConstants.KEYBOARD_TAP,
-                    HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
+    }
+
+    /**
+     * The buzz, driven straight off the vibrator.
+     *
+     * performHapticFeedback is a View method and a View may only be touched on
+     * the thread that drew it, so it cannot come here. The vibrator is a system
+     * service and can be called from anywhere, and on 29 and up it has the
+     * system's own key-click waveform, which is the same buzz by another road.
+     */
+    private var buzzer: android.os.Vibrator? = null
+
+    private fun buzz() {
+        try {
+            val v = buzzer ?: (getSystemService(Context.VIBRATOR_SERVICE)
+                as android.os.Vibrator).also { buzzer = it }
+            if (!v.hasVibrator()) return
+            val fx = if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.os.VibrationEffect.createPredefined(
+                    android.os.VibrationEffect.EFFECT_CLICK
                 )
-            } catch (_: Exception) {
+            } else {
+                android.os.VibrationEffect.createOneShot(12L, 60)
             }
+            v.vibrate(fx)
+        } catch (_: Throwable) {
         }
     }
 }
