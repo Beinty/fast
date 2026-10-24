@@ -679,7 +679,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (isBreak && Store.kbExpand) {
             // the field, not the buffer: if the word on screen is a trigger it
             // expands, whatever this keyboard thought it had typed
-            val hit = matchShortcutNow(ic)
+            val hit = matchShortcutIn(ic)
             if (hit != null && replace(ic, hit.trigger, hit.phrase + s)) {
                 resetWord()
                 feedback()
@@ -781,7 +781,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 while (nearBuf.size > buffer.length) nearBuf.removeAt(0)
             }
             if (Store.kbExpandInstant && Store.kbExpand) {
-                val hit = matchShortcut()
+                val hit = matchShortcutIn(ic)
                 if (hit != null && replace(ic, hit.trigger, hit.phrase)) resetWord()
             }
         }
@@ -1969,18 +1969,25 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         return null
     }
 
-    /** What the strip shows: the buffer is enough, and it is asked on every key. */
-    private fun matchShortcut(): Shortcut? = matchFor(buffer.toString())
-
     /**
-     * What actually expands, at the moment he presses space. Here the buffer is
-     * only a guess, so the field is consulted whenever the guess finds nothing.
+     * The shortcut for the word that is really on screen.
+     *
+     * The buffer is not consulted at all any more, and that is the whole of this
+     * fix. It used to be tried first and trusted when it matched, so a stale
+     * fragment left in it could name a trigger that the word on screen was not:
+     * with "رحرق" written and "رق" left over in the buffer, the keyboard offered
+     * the shortcut and, on space, took it. The read-back that is supposed to
+     * stop exactly that could not — it checks the two characters the trigger is
+     * long, and the last two characters of "رحرق" are "رق". It was asking
+     * whether the trigger is there, when the question is whether the word IS the
+     * trigger.
+     *
+     * So the word is read off the field and must equal the trigger entire. One
+     * read of forty characters, against a feature that otherwise eats his words.
      */
-    private fun matchShortcutNow(ic: android.view.inputmethod.InputConnection): Shortcut? {
-        matchFor(buffer.toString())?.let { return it }
-        val real = wordBefore(ic)
-        if (real.isEmpty() || real == buffer.toString()) return null
-        return matchFor(real)
+    private fun matchShortcutIn(ic: android.view.inputmethod.InputConnection?): Shortcut? {
+        if (ic == null) return null
+        return matchFor(wordBefore(ic))
     }
 
 
@@ -2000,7 +2007,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (voice?.isListening == true) return
         v.statusOnly = false
 
-        val hit = if (Store.kbExpand) matchShortcut() else null
+        val hit = if (Store.kbExpand) matchShortcutIn(currentInputConnection) else null
         pendingShortcut = hit
 
         // a matching shortcut owns the whole strip — it is the stronger signal
