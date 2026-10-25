@@ -324,7 +324,11 @@ class MainActivity : Activity() {
         status.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
         status.setPadding(dp(12), dp(12), dp(12), dp(12))
         status.background = round(CARD)
-        status.setOnClickListener { openAccessibilitySettings() }
+        status.setOnClickListener {
+            // the line says what is wrong; the tap should fix that same thing
+            if (isServiceOn() && !permsOk()) requestPermissions(PERMS, REQ_PERMS)
+            else openAccessibilitySettings()
+        }
         p.addView(status, lp(true, bottom = dp(10)))
 
         p.addView(
@@ -685,11 +689,46 @@ class MainActivity : Activity() {
     private fun refreshStatus() {
         if (!::status.isInitialized) return
         val on = isServiceOn()
-        status.text = if (on)
-            "الخدمة شغالة — الاستبدال فعّال"
+
+        // Both the replacement and the caller's name live inside this one
+        // service, and Android switches it off on its own — after an update,
+        // after a restart, or when the phone decides to save power. He had no
+        // way of connecting a silent ringtone to a line that only ever spoke
+        // about replacement, so the line now names everything that stopped.
+        if (!on) {
+            status.text = if (Store.callerSpeak)
+                "الخدمة متوقفة — الاستبدال ونطق اسم المتصل الاثنين واقفين.\n" +
+                    "اضغط هنا وفعّل إمكانية الوصول.\n" +
+                    "تنطفي لحالها بعد كل تحديث للتطبيق."
+            else
+                "الخدمة متوقفة — اضغط هنا لتفعيل إمكانية الوصول"
+            status.setTextColor(RED)
+            return
+        }
+
+        // Running, but the name cannot be said without the number and the
+        // contacts to look it up in.
+        val miss = ArrayList<String>(2)
+        if (Store.callerSpeak) {
+            if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE)
+                != PackageManager.PERMISSION_GRANTED
+            ) miss.add("حالة الهاتف")
+            if (checkSelfPermission(Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED
+            ) miss.add("جهات الاتصال")
+        }
+        if (miss.isNotEmpty()) {
+            status.text = "الخدمة شغالة، بس نطق اسم المتصل ناقصه إذن: " +
+                miss.joinToString(" و") + "."
+            status.setTextColor(RED)
+            return
+        }
+
+        status.text = if (Store.callerSpeak)
+            "الخدمة شغالة — الاستبدال ونطق اسم المتصل فعّالين"
         else
-            "الخدمة متوقفة — اضغط هنا لتفعيل إمكانية الوصول"
-        status.setTextColor(if (on) ACC else RED)
+            "الخدمة شغالة — الاستبدال فعّال"
+        status.setTextColor(ACC)
     }
 
     private fun isServiceOn(): Boolean {
