@@ -141,6 +141,7 @@ object UserDict {
         if (loaded) return
         loaded = true
         ctx = c.applicationContext
+        seedPieces()
         Learn.open(c)
         val fresh = Learn.empty()
         if (!fresh) {
@@ -320,7 +321,7 @@ object UserDict {
     /** Punctuation, then the word that followed it: "." -> "com". */
     private val nextPart = HashMap<String, HashMap<String, Int>>(64)
 
-    private const val PIECE_AFTER = 2
+    private const val PIECE_AFTER = 1
     private const val PIECE_MAX = 600
 
     private fun isMark(c: Char) =
@@ -344,6 +345,30 @@ object UserDict {
         var n = PIECE_AFTER - 1
         for ((v, c) in inner) if (c > n) { n = c; top = v }
         return top
+    }
+
+    /**
+     * The joins that are not his habits but the shape of the thing itself.
+     *
+     * Every address on earth starts "https://" and most end ".com". Waiting for
+     * him to type each one twice before offering it is waiting to be taught what
+     * was never in question. These go in at one sighting, so the first time he
+     * writes something of his own it ties, and the second time it wins.
+     */
+    private fun seedPieces() {
+        bump(nextSep, "https", "://")
+        bump(nextSep, "http", "://")
+        bump(nextSep, "www", ".")
+        bump(nextPart, ".", "com")
+    }
+
+    /** The joins only, without putting a half-typed address in the token store. */
+    fun seenPieces(raw: String) {
+        if (blocked) return
+        val t = raw.trim().trimEnd('.', ',', '!', '?', ';', ':')
+        if (!isToken(t)) return
+        learnPieces(t)
+        learnShape(t)
     }
 
     /** Splits a token into alternating words and punctuation, and learns the joins. */

@@ -617,6 +617,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     }
 
     override fun onFinishInput() {
+        // He pressed send, or left the field. For an address that is the end of
+        // it — far more often than a space ever is.
+        if (Store.kbLearn) currentInputConnection?.let { learnTokenBeforeCursor(it) }
         if (composing) {
             composing = false
             try {
@@ -734,6 +737,11 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 // half is worth keeping. Only on a space or a newline, which is
                 // where the whole thing has actually ended.
                 if (s == " " || s == "\n") learnTokenBeforeCursor(ic)
+                // The joins, though, are right even half way through: "https://"
+                // is the same join whether or not the address after it is
+                // finished, and an address is far more often ended by sending the
+                // message than by a space.
+                else piecesBeforeCursor(ic)
                 // A word we were about to correct and only held back on is not a
                 // word of his. Counting it here is how a slip the engine already
                 // had an answer for climbed into his vocabulary and put itself
@@ -2214,6 +2222,18 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      * Takes the run of non-space characters just typed and offers it to the
      * token store, which decides whether it is the kind of thing worth keeping.
      */
+    private fun piecesBeforeCursor(ic: InputConnection) {
+        try {
+            val before = ic.getTextBeforeCursor(80, 0)?.toString() ?: return
+            if (before.isEmpty()) return
+            var i = before.length
+            while (i > 0 && !before[i - 1].isWhitespace()) i--
+            if (i >= before.length) return
+            UserDict.seenPieces(before.substring(i))
+        } catch (_: Throwable) {
+        }
+    }
+
     private fun learnTokenBeforeCursor(ic: InputConnection) {
         try {
             val before = ic.getTextBeforeCursor(80, 0)?.toString() ?: return
