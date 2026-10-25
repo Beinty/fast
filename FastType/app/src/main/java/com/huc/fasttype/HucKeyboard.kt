@@ -251,6 +251,16 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     private var suggKinds: List<Boolean> = emptyList()
     private var suggKey = ""
 
+    /**
+     * For each suggestion, the text under the cursor it replaces — empty where
+     * the ordinary rules apply.
+     *
+     * A piece of an address is not a word: "." and ":" end the word being typed,
+     * so by the time he is at "https:" the keyboard's own buffer is empty and
+     * there is nothing for a completion to replace. This carries the span.
+     */
+    private var suggCut: List<String> = emptyList()
+
     /** How many guesses the scrolling strip may hold. */
     private val MAX_SUGG = 12
 
@@ -792,6 +802,21 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         afterType()
     }
 
+    /**
+     * The run under the cursor, punctuation and all.
+     *
+     * The buffer holds letters only: a dot or a colon ends a word, so it is
+     * emptied the moment he types one. An address is mostly those, and this is
+     * what reads it back — "https:" where the buffer has nothing to say.
+     */
+    private fun tokenBefore(ic: android.view.inputmethod.InputConnection?): String {
+        val before = ic?.getTextBeforeCursor(64, 0) ?: return ""
+        var i = before.length
+        while (i > 0 && !before[i - 1].isWhitespace()) i--
+        if (i >= before.length) return ""
+        return before.subSequence(i, before.length).toString()
+    }
+
     /** True when the text reads "…letter space", the only case worth replacing. */
     private fun endsWithLetterThenSpace(
         ic: android.view.inputmethod.InputConnection
@@ -1288,17 +1313,25 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         val whole = suggKinds.getOrNull(index) ?: false
         val half = buffer.toString()
-        if (!whole && half.isNotEmpty()) {
+        // Half an address is still being written: a space after "https://" would
+        // put one in the middle of the thing he is in the middle of typing.
+        val end = if (word.isNotEmpty() && !word.last().isLetterOrDigit()) "" else " "
+        // A piece of an address says for itself what it stands in place of: the
+        // dot or the colon ended the word, so the buffer no longer knows.
+        val cut = suggCut.getOrNull(index) ?: ""
+        if (cut.isNotEmpty()) {
+            if (!replace(ic, cut, "$word$end")) { forgetPlace(); refreshSugg(); return }
+        } else if (!whole && half.isNotEmpty()) {
             // a completion replaces what is half typed — and only if that really
             // is what sits under the cursor
-            if (!replace(ic, half, "$word ")) { forgetPlace(); refreshSugg(); return }
+            if (!replace(ic, half, "$word$end")) { forgetPlace(); refreshSugg(); return }
         } else {
             ic.beginBatchEdit()
             if (whole && half.isNotEmpty()) put(ic, " ")
-            put(ic, "$word ")
+            put(ic, "$word$end")
             ic.endBatchEdit()
         }
-        if (Store.kbLearn) {
+        if (Store.kbLearn && end.isNotEmpty()) {
             UserDict.seen(word, arabic)
             val prev = if (whole && buffer.isNotEmpty()) buffer.toString() else lastWord
             if (prev.isNotEmpty()) UserDict.seenPair(prev, word, arabic)
@@ -1306,6 +1339,9 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // a whole line leaves its last word behind as the context for the next one
         lastWord = if (word.indexOf(' ') >= 0) word.substringAfterLast(' ') else word
         resetWord()
+        // He is mid-address, so the next letters belong to the same run: leaving
+        // them to the buffer alone would lose everything before the colon.
+        if (end.isEmpty()) lastWord = ""
         undoTyped = null
         undoFixed = null
         feedback()
@@ -2032,11 +2068,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         }
 
         val word = buffer.toString()
+        val tok = tokenBefore(currentInputConnection)
 
         // the strip is asked to refresh far more often than its answer changes,
         // so an identical question is answered from the last result
         val key = word + "\u0001" + lastWord + "\u0001" + prevWord +
-            "\u0001" + (offered ?: "") + if (arabic) "|ar" else "|en"
+            "\u0001" + tok + "\u0001" + (offered ?: "") +
+            if (arabic) "|ar" else "|en"
         if (key == suggKey) return
         suggKey = key
 
@@ -2047,12 +2085,13 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val off = offered
         val ar = arabic
         bg.post {
-            val out = buildSuggs(word, lastW, prevW, off, ar)
+            val out = buildSuggs(word, tok, lastW, prevW, off, ar)
             ui.post {
                 // he has typed on since; that answer is for a word he has left
                 if (suggKey != key) return@post
                 val view = kv ?: return@post
                 suggKinds = out.second
+                suggCut = out.third
                 if (view.suggText.isNotEmpty() || view.suggs != out.first) {
                     view.suggText = ""
                     view.suggNew = out.second
@@ -2065,17 +2104,31 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     /** Pure: the same inputs always give the same strip. Runs off the UI thread. */
     private fun buildSuggs(
-        word: String, lastW: String, prevW: String, off: String?, ar: Boolean
-    ): Pair<List<String>, List<Boolean>> {
+        word: String, tok: String, lastW: String, prevW: String,
+        off: String?, ar: Boolean
+    ): Triple<List<String>, List<Boolean>, List<String>> {
         val zones = ArrayList<String>(MAX_SUGG)
         val kinds = ArrayList<Boolean>(MAX_SUGG)  // true = a whole new word
+        val cuts = ArrayList<String>(MAX_SUGG)    // what each one replaces, or ""
+
+        fun offer(text: String, whole: Boolean, cut: String = "") {
+            if (zones.size >= MAX_SUGG || text.isEmpty()) return
+            if (zones.contains(text)) return
+            zones.add(text); kinds.add(whole); cuts.add(cut)
+        }
+
+        // The pieces of an address go first and are kept out of the cache key's
+        // way: they come from the run under the cursor, which outlives the word
+        // buffer, so they are the only thing on the strip once he has typed the
+        // dot or the colon that ended the word.
+        if (Store.kbPredict && Store.kbLearn && tok.isNotEmpty()) {
+            UserDict.piecesFor(tok)?.let { offer(it, false, tok) }
+            UserDict.shapeFor(tok)?.let { offer(it, false, tok) }
+        }
 
         // a repair the engine was not sure enough to make goes first, where one
         // tap takes it and ignoring it costs nothing
-        if (off != null && word.isEmpty()) {
-            zones.add(off)
-            kinds.add(true)
-        }
+        if (off != null && word.isEmpty()) offer(off, true)
 
         if (Store.kbPredict) {
             // what usually follows the finished word comes first — it is the stronger
@@ -2091,7 +2144,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 for (w in mine +
                     Dict.nextAfterPrefix(prevW, lastW, word, ar, MAX_SUGG)) {
                     if (zones.size >= MAX_SUGG) break
-                    if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
+                    if (w != word) offer(w, false)
                 }
             }
 
@@ -2103,7 +2156,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 else emptyList()
                 for (w in mine + Dict.nextAfter(prevW, lastW, ar, 6)) {
                     if (zones.size >= MAX_SUGG) break
-                    if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
+                    offer(w, true)
                 }
             }
 
@@ -2112,37 +2165,22 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 // An address or number he has typed before, offered first: it is
                 // the longest thing on the strip and the one he would otherwise
                 // have to get exactly right by hand.
-                if (Store.kbLearn) {
-                    // The whole address, when he has typed this one before.
-                    for (t in UserDict.tokensFor(word, 2)) {
-                        if (zones.size >= MAX_SUGG) break
-                        if (!zones.contains(t)) { zones.add(t); kinds.add(false) }
-                    }
-                    // The next piece, when he has not — "https" wants "://"
-                    // whether or not he has ever typed this particular site.
-                    UserDict.piecesFor(word)?.let {
-                        if (zones.size < MAX_SUGG && !zones.contains(it)) {
-                            zones.add(it); kinds.add(false)
-                        }
-                    }
-                    // The same digits, spaced the way he spaces them.
-                    UserDict.shapeFor(word)?.let {
-                        if (zones.size < MAX_SUGG && !zones.contains(it)) {
-                            zones.add(it); kinds.add(false)
-                        }
-                    }
-                }
+                // The whole address, when he has typed this one before: the
+                // longest thing on the strip and the one he would otherwise have
+                // to get exactly right by hand.
+                if (Store.kbLearn) for (t in UserDict.tokensFor(word, 2)) offer(t, false)
                 // a line he writes often, offered whole rather than a word at a time
-                if (Store.kbLearn && zones.size < MAX_SUGG) {
-                    UserDict.phrase(word, ar)?.let {
-                        if (!zones.contains(it)) { zones.add(it); kinds.add(false) }
-                    }
-                }
+                if (Store.kbLearn) UserDict.phrase(word, ar)?.let { offer(it, false) }
+
                 val mine =
                     if (Store.kbLearn) UserDict.predict(word, ar, 4) else emptyList()
                 for (w in mine + Dict.predict(word, ar, MAX_SUGG)) {
                     if (zones.size >= MAX_SUGG) break
-                    if (w != word && !zones.contains(w)) { zones.add(w); kinds.add(false) }
+                    // A completion he has only ever written with punctuation after
+                    // it arrives with that punctuation: offering him "https" while
+                    // he is at "ht" is offering him the easy half.
+                    val g = (if (Store.kbLearn) UserDict.glued(w) else null) ?: w
+                    if (g != word) offer(g, false)
                 }
             }
 
@@ -2159,12 +2197,12 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 else emptyList()
                 for (w in mine + Dict.nextAfter(lastW, word, ar, 6)) {
                     if (zones.size >= MAX_SUGG) break
-                    if (!zones.contains(w)) { zones.add(w); kinds.add(true) }
+                    offer(w, true)
                 }
             }
         }
 
-        return zones to kinds
+        return Triple(zones, kinds, cuts)
     }
 
     /** A combining Arabic vowel mark, which sits on a letter rather than beside it. */

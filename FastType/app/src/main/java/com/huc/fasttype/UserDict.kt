@@ -377,15 +377,49 @@ object UserDict {
      */
     fun piecesFor(typed: String): String? {
         if (typed.length < 2 || typed.length > 64) return null
+        // the run his finger is in the middle of, and the run before it
         var i = typed.length
         val lastIsMark = isMark(typed[i - 1])
         while (i > 0 && isMark(typed[i - 1]) == lastIsMark) i--
         val tail = typed.substring(i)
         if (tail.isEmpty()) return null
-        val add = (if (lastIsMark) best(nextPart, tail) else best(nextSep, tail))
-            ?: return null
-        if (add.isEmpty()) return null
+
+        // A word: what punctuation he always writes after it. "https" -> "://".
+        if (!lastIsMark) {
+            val add = best(nextSep, tail) ?: return null
+            return typed + add
+        }
+
+        // Part way through the punctuation itself — the ":" of "://". The word
+        // in front of it knows the whole run, so it gets finished here rather
+        // than waiting for him to find the second slash.
+        var j = i
+        while (j > 0 && !isMark(typed[j - 1])) j--
+        val head = typed.substring(j, i)
+        val headSep = if (head.isEmpty()) null else best(nextSep, head)
+        if (headSep != null && headSep.length > tail.length && headSep.startsWith(tail))
+            return typed.substring(0, i) + headSep
+
+        // The word that follows the punctuation: "." -> "com". Only inside
+        // something already shaped like an address, or a full stop at the end of
+        // an ordinary sentence would be offered a domain.
+        val shaped = headSep != null || (0 until j).any { isMark(typed[it]) }
+        if (!shaped) return null
+        val add = best(nextPart, tail) ?: return null
         return typed + add
+    }
+
+    /**
+     * The same join, but on a word he has not finished typing.
+     *
+     * The strip offers "https" while he is still at "ht". Offering it bare is
+     * offering him the easy half: he has to find the colon and both slashes
+     * himself. This hands over the whole of it.
+     */
+    fun glued(w: String): String? {
+        if (w.length < 2 || w.length > 40) return null
+        val sep = best(nextSep, w) ?: return null
+        return w + sep
     }
 
     // ---- the shape he writes numbers in ------------------------------------
