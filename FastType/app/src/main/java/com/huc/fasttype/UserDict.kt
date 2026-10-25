@@ -150,6 +150,13 @@ object UserDict {
             Learn.loadRejects { k, n -> rejects[k] = n }
             // small, and the whole point is that it survives a restart
             Learn.loadTokens { k, n -> tokens[k] = n }
+            // The pieces and the number layouts are not stored: they are worked
+            // out from the addresses themselves, so they come back with them and
+            // there is no second copy to keep in step.
+            for ((k, n) in tokens) {
+                var i = 0
+                while (i < n && i < 4) { learnPieces(k); learnShape(k); i++ }
+            }
             tick = Learn.tick()
         }
         try {
@@ -292,9 +299,171 @@ object UserDict {
         if (!isToken(t)) return
         tokens[t] = (tokens[t] ?: 0) + 1
         Learn.touchTok(t)
+        learnPieces(t)
+        learnShape(t)
         dirty = true
         maybeFlush()
         if (tokens.size > TOKEN_MAX) trimTokens()
+    }
+
+    // ---- the pieces an address is built of ---------------------------------
+    //
+    // Remembering "https://hamzamr.com" whole is remembering one address. The
+    // useful thing is smaller: that "https" is followed by "://", that a name
+    // with a dot after it is followed by "com", that his own "@" is followed by
+    // the one mail host he uses. Those carry over to addresses he has never
+    // typed, which a remembered string cannot do.
+
+    /** A word, then the punctuation that followed it: "https" -> "://". */
+    private val nextSep = HashMap<String, HashMap<String, Int>>(64)
+
+    /** Punctuation, then the word that followed it: "." -> "com". */
+    private val nextPart = HashMap<String, HashMap<String, Int>>(64)
+
+    private const val PIECE_AFTER = 2
+    private const val PIECE_MAX = 600
+
+    private fun isMark(c: Char) =
+        c == '@' || c == '.' || c == '_' || c == '-' || c == '+' || c == '/' || c == ':'
+
+    private fun bump(m: HashMap<String, HashMap<String, Int>>, k: String, v: String) {
+        if (k.isEmpty() || v.isEmpty()) return
+        val inner = m.getOrPut(k) { HashMap(4) }
+        inner[v] = (inner[v] ?: 0) + 1
+        if (m.size > PIECE_MAX) {
+            // the coldest keys go; a key is only as warm as its best answer
+            val cold = m.entries.sortedBy { e -> e.value.values.maxOrNull() ?: 0 }
+                .take(m.size - PIECE_MAX * 3 / 4).map { it.key }
+            for (c in cold) m.remove(c)
+        }
+    }
+
+    private fun best(m: HashMap<String, HashMap<String, Int>>, k: String): String? {
+        val inner = m[k] ?: return null
+        var top: String? = null
+        var n = PIECE_AFTER - 1
+        for ((v, c) in inner) if (c > n) { n = c; top = v }
+        return top
+    }
+
+    /** Splits a token into alternating words and punctuation, and learns the joins. */
+    private fun learnPieces(t: String) {
+        var i = 0
+        var prevWord = ""
+        var prevSep = ""
+        while (i < t.length) {
+            val start = i
+            val mark = isMark(t[i])
+            while (i < t.length && isMark(t[i]) == mark) i++
+            val piece = t.substring(start, i)
+            if (mark) {
+                if (prevWord.isNotEmpty()) bump(nextSep, prevWord, piece)
+                prevSep = piece
+                prevWord = ""
+            } else {
+                if (prevSep.isNotEmpty()) bump(nextPart, prevSep, piece)
+                prevWord = piece
+                prevSep = ""
+            }
+        }
+        dirty = true
+    }
+
+    /**
+     * What he would type next, given what is under his finger right now.
+     *
+     * Returns the whole token as it would then read, so the strip can offer it
+     * as one tap rather than a punctuation mark on its own.
+     */
+    fun piecesFor(typed: String): String? {
+        if (typed.length < 2 || typed.length > 64) return null
+        var i = typed.length
+        val lastIsMark = isMark(typed[i - 1])
+        while (i > 0 && isMark(typed[i - 1]) == lastIsMark) i--
+        val tail = typed.substring(i)
+        if (tail.isEmpty()) return null
+        val add = (if (lastIsMark) best(nextPart, tail) else best(nextSep, tail))
+            ?: return null
+        if (add.isEmpty()) return null
+        return typed + add
+    }
+
+    // ---- the shape he writes numbers in ------------------------------------
+    //
+    // He writes a phone number as "0770 000 0252". What is worth keeping is not
+    // that number, it is the spacing: four, three, four. Then any eleven digits
+    // he types can be offered back the way he writes them.
+
+    /** Digit count -> how he lays that many digits out, and how often. */
+    private val shapes = HashMap<Int, HashMap<String, Int>>(16)
+
+    private const val SHAPE_AFTER = 2
+
+    /** "4 3 4" with the separators kept: "4| |3| |4". */
+    private fun shapeOf(t: String): String? {
+        val sb = StringBuilder(16)
+        var i = 0
+        var digits = 0
+        while (i < t.length) {
+            if (t[i].isDigit()) {
+                val start = i
+                while (i < t.length && t[i].isDigit()) i++
+                val n = i - start
+                digits += n
+                sb.append(n)
+            } else {
+                val start = i
+                while (i < t.length && !t[i].isDigit()) {
+                    if (t[i].isLetter()) return null      // not a plain number
+                    i++
+                }
+                sb.append('|').append(t, start, i).append('|')
+            }
+        }
+        // a run of digits with nothing between them is not a layout
+        if (digits < 6 || sb.indexOf("|") < 0) return null
+        return sb.toString()
+    }
+
+    private fun learnShape(t: String) {
+        val sh = shapeOf(t) ?: return
+        val digits = t.count { it.isDigit() }
+        val inner = shapes.getOrPut(digits) { HashMap(4) }
+        inner[sh] = (inner[sh] ?: 0) + 1
+        dirty = true
+    }
+
+    /** The same digits, laid out the way he lays them out. Null if he has no habit. */
+    fun shapeFor(digitsOnly: String): String? {
+        if (digitsOnly.length < 6 || digitsOnly.length > 24) return null
+        for (c in digitsOnly) if (!c.isDigit()) return null
+        val inner = shapes[digitsOnly.length] ?: return null
+        var sh: String? = null
+        var n = SHAPE_AFTER - 1
+        for ((k, c) in inner) if (c > n) { n = c; sh = k }
+        val pat = sh ?: return null
+
+        val out = StringBuilder(digitsOnly.length + 8)
+        var at = 0
+        var i = 0
+        while (i < pat.length) {
+            val c = pat[i]
+            if (c == '|') {
+                val end = pat.indexOf('|', i + 1)
+                if (end < 0) return null
+                out.append(pat, i + 1, end)
+                i = end + 1
+            } else {
+                val take = c - '0'
+                if (at + take > digitsOnly.length) return null
+                out.append(digitsOnly, at, at + take)
+                at += take
+                i++
+            }
+        }
+        if (at != digitsOnly.length) return null
+        val res = out.toString()
+        return if (res == digitsOnly) null else res
     }
 
     private fun trimTokens() {

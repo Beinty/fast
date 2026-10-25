@@ -2113,9 +2113,23 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
                 // the longest thing on the strip and the one he would otherwise
                 // have to get exactly right by hand.
                 if (Store.kbLearn) {
+                    // The whole address, when he has typed this one before.
                     for (t in UserDict.tokensFor(word, 2)) {
                         if (zones.size >= MAX_SUGG) break
                         if (!zones.contains(t)) { zones.add(t); kinds.add(false) }
+                    }
+                    // The next piece, when he has not — "https" wants "://"
+                    // whether or not he has ever typed this particular site.
+                    UserDict.piecesFor(word)?.let {
+                        if (zones.size < MAX_SUGG && !zones.contains(it)) {
+                            zones.add(it); kinds.add(false)
+                        }
+                    }
+                    // The same digits, spaced the way he spaces them.
+                    UserDict.shapeFor(word)?.let {
+                        if (zones.size < MAX_SUGG && !zones.contains(it)) {
+                            zones.add(it); kinds.add(false)
+                        }
                     }
                 }
                 // a line he writes often, offered whole rather than a word at a time
