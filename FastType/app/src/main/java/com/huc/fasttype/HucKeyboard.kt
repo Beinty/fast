@@ -261,6 +261,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
      */
     private var suggCut: List<String> = emptyList()
 
+    /**
+     * The last run seen under the cursor.
+     *
+     * A phone number is not ended by a space, it is ended by sending the
+     * message — and by then the field is empty and there is nothing left to read
+     * back. This is what there was a moment before.
+     */
+    private var lastRun = ""
+
     /** How many guesses the scrolling strip may hold. */
     private val MAX_SUGG = 12
 
@@ -476,6 +485,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         // moves the cursor about inside it; none of that is him moving it.
         if (transOn || composing) { lostPlace(); return }
 
+        // The field just went empty: he sent it. Whatever was under the cursor a
+        // moment ago was finished, and this is the only notice we get.
+        if (newSelStart == 0 && newSelEnd == 0 && oldSelStart > 0 &&
+            lastRun.isNotEmpty()
+        ) {
+            if (Store.kbLearn) UserDict.seenToken(lastRun)
+            lastRun = ""
+        }
+
         // Only a cursor at the very start of the field used to count as having
         // moved. Every other move was ignored — including the one he actually
         // makes, a tap into the middle of a sentence to go back and fix a word.
@@ -619,7 +637,10 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
     override fun onFinishInput() {
         // He pressed send, or left the field. For an address that is the end of
         // it — far more often than a space ever is.
-        if (Store.kbLearn) currentInputConnection?.let { learnTokenBeforeCursor(it) }
+        if (Store.kbLearn) {
+            currentInputConnection?.let { learnTokenBeforeCursor(it) }
+            if (lastRun.isNotEmpty()) { UserDict.seenToken(lastRun); lastRun = "" }
+        }
         if (composing) {
             composing = false
             try {
@@ -2077,12 +2098,15 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
         val word = buffer.toString()
         val tok = tokenBefore(currentInputConnection)
+        // The number page has its own subject, and words are not it
+        val nums = v.page == Pages.SYM1 || v.page == Pages.SYM2 || v.page == Pages.NPAD
+        if (tok.isNotEmpty()) lastRun = tok
 
         // the strip is asked to refresh far more often than its answer changes,
         // so an identical question is answered from the last result
         val key = word + "\u0001" + lastWord + "\u0001" + prevWord +
             "\u0001" + tok + "\u0001" + (offered ?: "") +
-            if (arabic) "|ar" else "|en"
+            (if (nums) "|#" else "") + if (arabic) "|ar" else "|en"
         if (key == suggKey) return
         suggKey = key
 
@@ -2093,7 +2117,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         val off = offered
         val ar = arabic
         bg.post {
-            val out = buildSuggs(word, tok, lastW, prevW, off, ar)
+            val out = buildSuggs(word, tok, nums, lastW, prevW, off, ar)
             ui.post {
                 // he has typed on since; that answer is for a word he has left
                 if (suggKey != key) return@post
@@ -2112,7 +2136,7 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
 
     /** Pure: the same inputs always give the same strip. Runs off the UI thread. */
     private fun buildSuggs(
-        word: String, tok: String, lastW: String, prevW: String,
+        word: String, tok: String, nums: Boolean, lastW: String, prevW: String,
         off: String?, ar: Boolean
     ): Triple<List<String>, List<Boolean>, List<String>> {
         val zones = ArrayList<String>(MAX_SUGG)
@@ -2132,6 +2156,22 @@ class HucKeyboard : InputMethodService(), KeyboardView.Listener, Voice.Sink {
         if (Store.kbPredict && Store.kbLearn && tok.isNotEmpty()) {
             UserDict.piecesFor(tok)?.let { offer(it, false, tok) }
             UserDict.shapeFor(tok)?.let { offer(it, false, tok) }
+        }
+
+        // The number page. A dictionary of 215,000 words has nothing to say to a
+        // man typing a phone number, which is why the strip sat empty there —
+        // every source feeding it was looking words up. These look numbers up.
+        if (Store.kbPredict && Store.kbLearn) {
+            val digits = tok.isNotEmpty() && tok.all { it.isDigit() }
+            if (digits) {
+                // a number of his that starts the way this one does
+                for (t in UserDict.numbersFor(tok, 3)) offer(t, false, tok)
+            } else if (nums && tok.isEmpty()) {
+                // nothing typed yet on a page whose whole subject is numbers:
+                // the ones he writes most, and the date, which he writes daily
+                offer(UserDict.todayLikeHis(), true)
+                for (t in UserDict.numbersFor("", 3)) offer(t, true)
+            }
         }
 
         // a repair the engine was not sure enough to make goes first, where one

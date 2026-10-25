@@ -456,7 +456,7 @@ object UserDict {
     /** Digit count -> how he lays that many digits out, and how often. */
     private val shapes = HashMap<Int, HashMap<String, Int>>(16)
 
-    private const val SHAPE_AFTER = 2
+    private const val SHAPE_AFTER = 1
 
     /** "4 3 4" with the separators kept: "4| |3| |4". */
     private fun shapeOf(t: String): String? {
@@ -550,6 +550,47 @@ object UserDict {
         hits.sortWith(compareByDescending<Pair<String, Int>> { it.second }
             .thenBy { it.first.length })
         return hits.take(max).map { it.first }
+    }
+
+    /**
+     * Numbers he has written, newest habits first.
+     *
+     * Separate from tokensFor because a number is not a word: it is exact, it is
+     * long, and getting one digit of it wrong is worse than not offering it. One
+     * sighting is enough — he does not type his own phone number by accident —
+     * where a word would have to earn its place twice.
+     *
+     * An empty prefix asks for the ones he writes most, which is what the number
+     * page has to say before he has typed anything on it.
+     */
+    fun numbersFor(prefix: String, max: Int): List<String> {
+        if (tokens.isEmpty()) return emptyList()
+        for (c in prefix) if (!c.isDigit()) return emptyList()
+        val hits = ArrayList<Pair<String, Int>>(4)
+        for ((k, n) in tokens) {
+            if (k.length <= prefix.length) continue
+            var digits = 0
+            var other = 0
+            for (c in k) if (c.isDigit()) digits++ else other++
+            // a phone number, a date, a price — not an address that has a 2 in it
+            if (digits < 4 || other > digits) continue
+            if (prefix.isNotEmpty() && !k.startsWith(prefix)) continue
+            hits.add(k to n)
+        }
+        if (hits.isEmpty()) return emptyList()
+        hits.sortWith(compareByDescending<Pair<String, Int>> { it.second }
+            .thenBy { it.first.length })
+        return hits.take(max).map { it.first }
+    }
+
+    /** Today, laid out the way he lays out eight digits. */
+    fun todayLikeHis(): String {
+        val c = java.util.Calendar.getInstance()
+        val d = c.get(java.util.Calendar.DAY_OF_MONTH)
+        val m = c.get(java.util.Calendar.MONTH) + 1
+        val y = c.get(java.util.Calendar.YEAR)
+        val bare = String.format("%02d%02d%04d", d, m, y)
+        return shapeFor(bare) ?: "$d/$m/$y"
     }
 
     fun seen(word: String, arabic: Boolean) {
