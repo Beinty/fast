@@ -435,6 +435,11 @@ def on_message(msg):
     name = " ".join(x for x in [fr.get("first_name"), fr.get("last_name")] if x)
     q("UPDATE users SET name=?, username=? WHERE uid=?", (name, fr.get("username") or "", uid))
 
+    if not ADMIN_IDS and text.startswith("/start"):
+        ADMIN_IDS.add(uid)
+        put_set("admins", uid)
+        send(uid, "أصبحت مشرف هذا البوت.")
+
     if uid in ADMIN_IDS:
         if admin_state.get(uid) == "add" and not text.startswith("/"):
             admin_state.pop(uid, None)
@@ -614,8 +619,10 @@ def main():
         write_config()
         print("config written:", MTP_CONFIG)
         return
-    if not BOT_TOKEN or not ADMIN_IDS or not SERVER_ADDR:
-        sys.exit("BOT_TOKEN, ADMIN_IDS and SERVER_ADDR must be set in /etc/tgproxy/env")
+    if not BOT_TOKEN or not SERVER_ADDR:
+        sys.exit("BOT_TOKEN and SERVER_ADDR must be set in /etc/tgproxy/env")
+    # no admin configured: the first person to send /start becomes admin
+    ADMIN_IDS.update(int(x) for x in get_set("admins", "").split(",") if x.strip())
     write_config()
     threading.Thread(target=expire_job, daemon=True).start()
     poll()

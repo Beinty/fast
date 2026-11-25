@@ -1,10 +1,11 @@
 #!/bin/bash
-# One-time installer. Usage: bash install.sh BOT_TOKEN ADMIN_ID
+# One-time installer. Usage: bash install.sh BOT_TOKEN [ADMIN_ID]
+# Without ADMIN_ID the first person to send /start to the bot becomes admin.
 set -e
 TOKEN="${1:-}"
 ADMIN="${2:-}"
-if [ -z "$TOKEN" ] || [ -z "$ADMIN" ]; then
-  echo "Usage: bash install.sh BOT_TOKEN ADMIN_ID"; exit 1
+if [ -z "$TOKEN" ]; then
+  echo "Usage: bash install.sh BOT_TOKEN [ADMIN_ID]"; exit 1
 fi
 
 echo "[1/5] Packages"
@@ -87,6 +88,7 @@ OnUnitActiveSec=1min
 WantedBy=timers.target
 EOF
 
+git -C /opt/tgproxy/repo remote -v | head -1
 install -m755 /opt/tgproxy/repo/deploy.sh /usr/local/bin/tgproxy-deploy
 install -m755 /opt/tgproxy/repo/rollback.sh /usr/local/bin/tgproxy-rollback
 systemctl daemon-reload
