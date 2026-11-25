@@ -293,7 +293,8 @@ def panel():
     pending = q("SELECT COUNT(*) c FROM requests", one=True)["c"]
     text = ("لوحة التحكم\n\nالمستخدمون: %d\nمتصلون الآن: %s\nالاستهلاك هذا الشهر: %s"
             % (total, online, gb(int(get_set("tr_acc", 0)))))
-    rows = [[btn("إضافة مستخدم", "add"), btn("المستخدمون", "ul:0")],
+    rows = [[btn("رابطي — بلا حدود", "mine")],
+            [btn("إضافة مستخدم", "add"), btn("المستخدمون", "ul:0")],
             [btn("الإحصائيات", "st"), btn("الإعدادات", "set")]]
     if pending:
         rows.append([btn("طلبات الوصول (%d)" % pending, "rql")])
@@ -376,6 +377,24 @@ def requests_screen():
         lines.append([btn("✓ %s" % nm[:28], "acc:%d" % r["uid"]), btn("✕", "rej:%d" % r["uid"])])
     lines.append([btn("رجوع", "p")])
     return "طلبات الوصول (%d)" % len(rows), kb(lines)
+
+
+def admin_link(uid):
+    """Admin's own proxy access: no device limit, never expires."""
+    u = q("SELECT * FROM users WHERE uid=?", (uid,), one=True)
+    if not u:
+        q("INSERT INTO users(uid,name,username,secret,max_ips,expires,active,created) VALUES(?,?,?,?,0,0,1,?)",
+          (uid, "الإدارة", "", secrets.token_hex(16), int(time.time())))
+        apply_config()
+    elif u["max_ips"] != 0 or u["expires"] != 0 or u["active"] != 1:
+        q("UPDATE users SET max_ips=0, expires=0, active=1 WHERE uid=?", (uid,))
+        apply_config()
+    u = q("SELECT * FROM users WHERE uid=?", (uid,), one=True)
+    lk = link(u)
+    return ("رابطك الخاص\n\nالأجهزة: بلا حد\nالصلاحية: بلا انتهاء\n\nلا تشاركه مع أحد.",
+            kb([[{"text": "اتصال بالبروكسي", "url": lk}],
+                [{"text": "نسخ الرابط", "copy_text": {"text": lk}}],
+                [btn("رجوع", "p")]]))
 
 
 def user_home(uid):
@@ -518,6 +537,8 @@ def on_callback(cb):
         if data == "p":
             admin_state.pop(uid, None)
             show(panel())
+        elif data == "mine":
+            show(admin_link(uid))
         elif data == "add":
             admin_state[uid] = "add"
             edit(chat_id, mid, "أرسل معرّف المستخدم (ID)\nأو أعد توجيه رسالة منه.", kb([[btn("إلغاء", "p")]]))
