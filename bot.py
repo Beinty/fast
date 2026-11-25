@@ -8,6 +8,7 @@ import datetime
 import json
 import os
 import secrets
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -31,6 +32,19 @@ MTP_SERVICE = os.environ.get("MTP_SERVICE", "tgproxy-mtp")
 # ===============================================================================
 
 DB_PATH = os.path.join(DATA_DIR, "data.db")
+
+# Prefer IPv4: on servers with broken IPv6, urllib waits for the IPv6 connect
+# to time out before every Telegram request, so replies arrive late or not at all.
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _getaddrinfo_v4_first(host, *args, **kwargs):
+    res = _orig_getaddrinfo(host, *args, **kwargs)
+    v4 = [r for r in res if r[0] == socket.AF_INET]
+    return v4 or res
+
+
+socket.getaddrinfo = _getaddrinfo_v4_first
 PAGE = 8
 _lock = threading.RLock()
 _db = None
@@ -605,6 +619,7 @@ def poll():
             continue
         for upd in res:
             offset = upd["update_id"] + 1
+            t0 = time.time()
             try:
                 if "message" in upd:
                     on_message(upd["message"])
@@ -612,6 +627,7 @@ def poll():
                     on_callback(upd["callback_query"])
             except Exception:
                 traceback.print_exc()
+            log("update", upd["update_id"], "handled in %.1fs" % (time.time() - t0))
 
 
 def main():
